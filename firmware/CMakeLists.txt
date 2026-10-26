@@ -1,10 +1,9 @@
 cmake_minimum_required(VERSION 3.22)
 
-# Components directory within firmware folder
 set(EXTRA_COMPONENT_DIRS "${CMAKE_SOURCE_DIR}/components")
-
-# ESP32-S3 dedicated default configurations
 set(SDKCONFIG_DEFAULTS "${CMAKE_SOURCE_DIR}/sdkconfig.defaults")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(fishpump_firmware)
+project(fishpump_firmware VERSION 0.3.2)
+
+add_compile_definitions(APP_TEMPLATE_FIRMWARE_VERSION="v${PROJECT_VERSION}")
