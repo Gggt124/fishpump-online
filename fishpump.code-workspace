@@ -1,0 +1,15 @@
+{
+  "folders": [
+    {
+      "name": "🐟 Monorepo Root",
+      "path": "."
+    },
+    {
+      "name": "⚡ Firmware (ESP32-S3)",
+      "path": "firmware"
+    }
+  ],
+  "settings": {
+    "idf.saveScope": 1
+  }
+}
