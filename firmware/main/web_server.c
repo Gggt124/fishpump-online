@@ -260,25 +260,28 @@ static uint32_t increment_static_deadline_aborts(void) {
   return count;
 }
 
-#define SSE_MAX_CLIENTS APP_TEMPLATE_HTTP_MAX_OPEN_SOCKETS
-static int s_sse_clients[SSE_MAX_CLIENTS] = {-1, -1, -1, -1, -1, -1, -1};
+#define SSE_MAX_CLIENTS 3
+static int s_sse_clients[SSE_MAX_CLIENTS];
 static portMUX_TYPE s_sse_client_lock = portMUX_INITIALIZER_UNLOCKED;
 
-static void sse_register_client(int sockfd) {
+static bool sse_register_client(int sockfd) {
+  bool registered = false;
   taskENTER_CRITICAL(&s_sse_client_lock);
   for (size_t i = 0; i < SSE_MAX_CLIENTS; i++) {
     if (s_sse_clients[i] == sockfd) {
       taskEXIT_CRITICAL(&s_sse_client_lock);
-      return;
+      return true;
     }
   }
   for (size_t i = 0; i < SSE_MAX_CLIENTS; i++) {
     if (s_sse_clients[i] < 0) {
       s_sse_clients[i] = sockfd;
+      registered = true;
       break;
     }
   }
   taskEXIT_CRITICAL(&s_sse_client_lock);
+  return registered;
 }
 
 static void sse_unregister_client(int sockfd) {
@@ -4794,11 +4797,19 @@ static void sse_broadcast_work(void *arg) {
     memcpy(clients, s_sse_clients, sizeof(clients));
     taskEXIT_CRITICAL(&s_sse_client_lock);
 
+    char chunk_header[16];
+    int header_len = snprintf(chunk_header, sizeof(chunk_header), "%x\r\n",
+                              (unsigned int)item->len);
+
     for (size_t i = 0; i < SSE_MAX_CLIENTS; i++) {
       if (clients[i] >= 0) {
-        int ret = httpd_socket_send(s_server, clients[i], item->payload,
-                                    item->len, 0);
-        if (ret < 0) {
+        int ret1 = httpd_socket_send(s_server, clients[i], chunk_header,
+                                     header_len, 0);
+        int ret2 = httpd_socket_send(s_server, clients[i], item->payload,
+                                     item->len, 0);
+        int ret3 = httpd_socket_send(s_server, clients[i], "\r\n", 2, 0);
+
+        if (ret1 < 0 || ret2 < 0 || ret3 < 0) {
           ESP_LOGW(TAG, "SSE send failed on fd=%d (client disconnected)",
                    clients[i]);
           sse_unregister_client(clients[i]);
@@ -4898,6 +4909,20 @@ static void web_server_telemetry_cb(const telemetry_event_t *event,
 }
 
 static esp_err_t handle_api_events(httpd_req_t *req) {
+  int sockfd = httpd_req_to_sockfd(req);
+  if (sockfd < 0) {
+    return ESP_FAIL;
+  }
+
+  if (!sse_register_client(sockfd)) {
+    ESP_LOGW(TAG, "SSE client rejected on fd=%d: max SSE clients (%d) reached",
+             sockfd, SSE_MAX_CLIENTS);
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, "{\"ok\":false,\"error\":\"sse_clients_full\"}",
+                           HTTPD_RESP_USE_STRLEN);
+  }
+
   httpd_resp_set_type(req, "text/event-stream");
   httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-transform");
   httpd_resp_set_hdr(req, "Connection", "keep-alive");
@@ -4905,15 +4930,12 @@ static esp_err_t handle_api_events(httpd_req_t *req) {
 
   const char *init_msg = "event: connected\ndata: {\"status\":\"ok\"}\n\n";
   if (httpd_resp_send_chunk(req, init_msg, strlen(init_msg)) != ESP_OK) {
+    sse_unregister_client(sockfd);
     return ESP_FAIL;
   }
 
-  int sockfd = httpd_req_to_sockfd(req);
-  if (sockfd >= 0) {
-    sse_register_client(sockfd);
-    ESP_LOGI(TAG, "SSE client registered on fd=%d", sockfd);
-  }
-
+  ESP_LOGI(TAG, "SSE client registered on fd=%d (%u/%d active)", sockfd,
+           (unsigned int)sse_active_client_count(), SSE_MAX_CLIENTS);
   return ESP_OK;
 }
 
@@ -5228,6 +5250,12 @@ bool web_server_start(void) {
   if (s_server) {
     return true;
   }
+
+  taskENTER_CRITICAL(&s_sse_client_lock);
+  for (size_t i = 0; i < SSE_MAX_CLIENTS; i++) {
+    s_sse_clients[i] = -1;
+  }
+  taskEXIT_CRITICAL(&s_sse_client_lock);
 
   taskENTER_CRITICAL(&s_web_diag_lock);
   s_web_diag.server_start_attempts++;
