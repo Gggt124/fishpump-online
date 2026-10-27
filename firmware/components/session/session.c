@@ -95,23 +95,19 @@ bool session_create(const char *username, const char *client_ip,
   }
 
   if (target_idx >= 0 && target_idx < NUM_SLOTS) {
-    strncpy(s_slots[target_idx].token, hex_token,
-            sizeof(s_slots[target_idx].token) - 1);
-    s_slots[target_idx].token[sizeof(s_slots[target_idx].token) - 1] = '\0';
+    strlcpy(s_slots[target_idx].token, hex_token,
+            sizeof(s_slots[target_idx].token));
 
-    strncpy(s_slots[target_idx].username, username,
-            sizeof(s_slots[target_idx].username) - 1);
-    s_slots[target_idx].username[sizeof(s_slots[target_idx].username) - 1] =
-        '\0';
+    strlcpy(s_slots[target_idx].username, username,
+            sizeof(s_slots[target_idx].username));
 
-    strncpy(s_slots[target_idx].ip, client_ip,
-            sizeof(s_slots[target_idx].ip) - 1);
-    s_slots[target_idx].ip[sizeof(s_slots[target_idx].ip) - 1] = '\0';
+    strlcpy(s_slots[target_idx].ip, client_ip,
+            sizeof(s_slots[target_idx].ip));
 
     s_slots[target_idx].last_used = esp_timer_get_time();
     s_slots[target_idx].active = true;
 
-    strncpy(token_out, hex_token, SESSION_TOKEN_LEN);
+    strlcpy(token_out, hex_token, SESSION_TOKEN_LEN);
     xSemaphoreGive(s_session_mutex);
     return true;
   }

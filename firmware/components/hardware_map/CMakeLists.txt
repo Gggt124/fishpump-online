@@ -1,5 +1,6 @@
 idf_component_register(
     SRCS "hardware_map.c"
     INCLUDE_DIRS "include"
-    REQUIRES driver nvs_store
+    REQUIRES esp_driver_gpio
+    PRIV_REQUIRES nvs_store
 )

@@ -2547,11 +2547,11 @@ static esp_err_t handle_api_change_password(httpd_req_t *req) {
     cJSON *curr = cJSON_GetObjectItem(root, "current_password");
     cJSON *newp = cJSON_GetObjectItem(root, "new_password");
     if (curr && cJSON_IsString(curr)) {
-      strncpy(current_password, curr->valuestring,
-              sizeof(current_password) - 1);
+      strlcpy(current_password, curr->valuestring,
+              sizeof(current_password));
     }
     if (newp && cJSON_IsString(newp)) {
-      strncpy(new_password, newp->valuestring, sizeof(new_password) - 1);
+      strlcpy(new_password, newp->valuestring, sizeof(new_password));
     }
     cJSON_Delete(root);
   }
@@ -2676,10 +2676,8 @@ static void update_login_rate_limit(const char *ip, int64_t now,
       }
     }
     current_idx = oldest_idx;
-    strncpy(s_rate_limits[current_idx].ip, ip,
-            sizeof(s_rate_limits[current_idx].ip) - 1);
-    s_rate_limits[current_idx].ip[sizeof(s_rate_limits[current_idx].ip) - 1] =
-        '\0';
+    strlcpy(s_rate_limits[current_idx].ip, ip,
+            sizeof(s_rate_limits[current_idx].ip));
     s_rate_limits[current_idx].attempts = 0;
     s_rate_limits[current_idx].block_until = 0;
   }
@@ -2739,7 +2737,7 @@ static esp_err_t handle_api_login(httpd_req_t *req) {
       }
     }
     rl = &s_rate_limits[evict_idx];
-    strncpy(rl->ip, client_ip, sizeof(rl->ip));
+    strlcpy(rl->ip, client_ip, sizeof(rl->ip));
     rl->attempts = 0;
     rl->block_until = 0;
   }
@@ -2809,10 +2807,10 @@ static esp_err_t handle_api_login(httpd_req_t *req) {
       cJSON *u = cJSON_GetObjectItem(root, "username");
       cJSON *p = cJSON_GetObjectItem(root, "password");
       if (u && cJSON_IsString(u)) {
-        strncpy(username, u->valuestring, sizeof(username) - 1);
+        strlcpy(username, u->valuestring, sizeof(username));
       }
       if (p && cJSON_IsString(p)) {
-        strncpy(password, p->valuestring, sizeof(password) - 1);
+        strlcpy(password, p->valuestring, sizeof(password));
       }
       cJSON *r = cJSON_GetObjectItem(root, "remember");
       if (r && cJSON_IsTrue(r)) {
@@ -3110,8 +3108,8 @@ static esp_err_t handle_api_wifi_scan(httpd_req_t *req) {
   bool sta_connected = wifi_manager_is_sta_connected();
   char connected_ssid[33] = {0};
   if (sta_connected) {
-    strncpy(connected_ssid, wifi_manager_get_sta_ssid(),
-            sizeof(connected_ssid) - 1);
+    strlcpy(connected_ssid, wifi_manager_get_sta_ssid(),
+            sizeof(connected_ssid));
   }
 
   cJSON *root = cJSON_CreateObject();
@@ -3192,7 +3190,7 @@ static esp_err_t handle_api_wifi_connect(httpd_req_t *req) {
         return send_api_error(req, "invalid_ssid", "SSID is too long",
                               "400 Bad Request");
       }
-      strncpy(ssid, s->valuestring, sizeof(ssid) - 1);
+      strlcpy(ssid, s->valuestring, sizeof(ssid));
     }
     if (p && cJSON_IsString(p)) {
       if (strlen(p->valuestring) >= sizeof(password)) {
@@ -3200,7 +3198,7 @@ static esp_err_t handle_api_wifi_connect(httpd_req_t *req) {
         return send_api_error(req, "invalid_password", "Password is too long",
                               "400 Bad Request");
       }
-      strncpy(password, p->valuestring, sizeof(password) - 1);
+      strlcpy(password, p->valuestring, sizeof(password));
     }
     cJSON *ip_item = cJSON_GetObjectItem(root, "ip");
     if (ip_item && cJSON_IsString(ip_item) && ip_item->valuestring[0]) {
@@ -3209,7 +3207,7 @@ static esp_err_t handle_api_wifi_connect(httpd_req_t *req) {
         return send_api_error(req, "invalid_ip", "IP address is too long",
                               "400 Bad Request");
       }
-      strncpy(ip_cfg.ip, ip_item->valuestring, sizeof(ip_cfg.ip) - 1);
+      strlcpy(ip_cfg.ip, ip_item->valuestring, sizeof(ip_cfg.ip));
       has_static_ip = true;
       cJSON *gw = cJSON_GetObjectItem(root, "gateway");
       if (gw && cJSON_IsString(gw)) {
@@ -3218,7 +3216,7 @@ static esp_err_t handle_api_wifi_connect(httpd_req_t *req) {
           return send_api_error(req, "invalid_gateway", "Gateway is too long",
                                 "400 Bad Request");
         }
-        strncpy(ip_cfg.gateway, gw->valuestring, sizeof(ip_cfg.gateway) - 1);
+        strlcpy(ip_cfg.gateway, gw->valuestring, sizeof(ip_cfg.gateway));
       }
       cJSON *nm = cJSON_GetObjectItem(root, "netmask");
       if (nm && cJSON_IsString(nm)) {
@@ -3227,7 +3225,7 @@ static esp_err_t handle_api_wifi_connect(httpd_req_t *req) {
           return send_api_error(req, "invalid_netmask", "Netmask is too long",
                                 "400 Bad Request");
         }
-        strncpy(ip_cfg.netmask, nm->valuestring, sizeof(ip_cfg.netmask) - 1);
+        strlcpy(ip_cfg.netmask, nm->valuestring, sizeof(ip_cfg.netmask));
       }
       cJSON *dns = cJSON_GetObjectItem(root, "dns");
       if (dns && cJSON_IsString(dns)) {
@@ -3236,7 +3234,7 @@ static esp_err_t handle_api_wifi_connect(httpd_req_t *req) {
           return send_api_error(req, "invalid_dns", "DNS is too long",
                                 "400 Bad Request");
         }
-        strncpy(ip_cfg.dns, dns->valuestring, sizeof(ip_cfg.dns) - 1);
+        strlcpy(ip_cfg.dns, dns->valuestring, sizeof(ip_cfg.dns));
       }
     }
     cJSON_Delete(root);
@@ -3254,7 +3252,7 @@ static esp_err_t handle_api_wifi_connect(httpd_req_t *req) {
     nvs_store_load_wifi_profiles(profiles, &count, &auto_idx);
     for (int i = 0; i < count; i++) {
       if (strcmp(profiles[i].ssid, ssid) == 0) {
-        strncpy(password, profiles[i].pass, sizeof(password) - 1);
+        strlcpy(password, profiles[i].pass, sizeof(password));
         ESP_LOGI(TAG, "Using saved password for SSID: %s", ssid);
         break;
       }
@@ -3423,7 +3421,7 @@ static esp_err_t handle_api_wifi_profiles_forget(httpd_req_t *req) {
         return send_api_error(req, "invalid_ssid", "SSID is too long",
                               "400 Bad Request");
       }
-      strncpy(ssid, s->valuestring, sizeof(ssid) - 1);
+      strlcpy(ssid, s->valuestring, sizeof(ssid));
     }
     cJSON_Delete(root);
   }
@@ -3522,7 +3520,7 @@ static esp_err_t handle_api_wifi_profiles_save(httpd_req_t *req) {
         return send_api_error(req, "invalid_ssid", "SSID is too long",
                               "400 Bad Request");
       }
-      strncpy(ssid, s->valuestring, sizeof(ssid) - 1);
+      strlcpy(ssid, s->valuestring, sizeof(ssid));
     }
     if (p && cJSON_IsString(p)) {
       if (strlen(p->valuestring) >= sizeof(password)) {
@@ -3530,7 +3528,7 @@ static esp_err_t handle_api_wifi_profiles_save(httpd_req_t *req) {
         return send_api_error(req, "invalid_password", "Password is too long",
                               "400 Bad Request");
       }
-      strncpy(password, p->valuestring, sizeof(password) - 1);
+      strlcpy(password, p->valuestring, sizeof(password));
     }
     cJSON_Delete(root);
   }
@@ -4242,11 +4240,11 @@ static esp_err_t handle_api_pump_control_post(httpd_req_t *req) {
     }
     cJSON *sys_item = cJSON_GetObjectItem(root, "system");
     if (sys_item && cJSON_IsString(sys_item) && sys_item->valuestring) {
-      strncpy(system_buf, sys_item->valuestring, sizeof(system_buf) - 1);
+      strlcpy(system_buf, sys_item->valuestring, sizeof(system_buf));
     }
     cJSON *act_item = cJSON_GetObjectItem(root, "action");
     if (act_item && cJSON_IsString(act_item) && act_item->valuestring) {
-      strncpy(action_buf, act_item->valuestring, sizeof(action_buf) - 1);
+      strlcpy(action_buf, act_item->valuestring, sizeof(action_buf));
     }
     cJSON_Delete(root);
   }

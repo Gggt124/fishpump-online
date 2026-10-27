@@ -262,10 +262,8 @@ bool nvs_store_get_credentials(char *username_out, size_t user_len,
   }
 
   if (!loaded) {
-    strncpy(username_out, APP_TEMPLATE_DEFAULT_USERNAME, user_len);
-    username_out[user_len - 1] = '\0';
-    strncpy(password_out, APP_TEMPLATE_DEFAULT_PASSWORD, pass_len);
-    password_out[pass_len - 1] = '\0';
+    strlcpy(username_out, APP_TEMPLATE_DEFAULT_USERNAME, user_len);
+    strlcpy(password_out, APP_TEMPLATE_DEFAULT_PASSWORD, pass_len);
   }
 
   return true;
@@ -419,9 +417,9 @@ bool nvs_store_load_wifi_profiles(wifi_profile_t *profiles, int *count_out,
           nvs_get_str(handle, NVS_KEY_STG_PASS, pass, &pass_len);
       nvs_close(handle);
       if (err_ssid == ESP_OK) {
-        strncpy(profiles[0].ssid, ssid, sizeof(profiles[0].ssid) - 1);
+        strlcpy(profiles[0].ssid, ssid, sizeof(profiles[0].ssid));
         if (err_pass == ESP_OK) {
-          strncpy(profiles[0].pass, pass, sizeof(profiles[0].pass) - 1);
+          strlcpy(profiles[0].pass, pass, sizeof(profiles[0].pass));
         }
         *count_out = 1;
         *auto_idx_out = 0;
@@ -514,8 +512,7 @@ bool nvs_store_save_wifi_profile(const char *ssid, const char *password) {
       if (strcmp(profiles[i].pass, new_pass) == 0) {
         return true; /* Unchanged, skip NVS write */
       }
-      strncpy(profiles[i].pass, new_pass, sizeof(profiles[i].pass) - 1);
-      profiles[i].pass[sizeof(profiles[i].pass) - 1] = '\0';
+      strlcpy(profiles[i].pass, new_pass, sizeof(profiles[i].pass));
       nvs_handle_t h;
       if (nvs_open(NVS_PROF_NAMESPACE, NVS_READWRITE, &h) != ESP_OK)
         return false;
@@ -539,11 +536,9 @@ bool nvs_store_save_wifi_profile(const char *ssid, const char *password) {
   }
 
   /* Append new profile */
-  strncpy(profiles[count].ssid, ssid, sizeof(profiles[count].ssid) - 1);
-  profiles[count].ssid[sizeof(profiles[count].ssid) - 1] = '\0';
-  strncpy(profiles[count].pass, password ? password : "",
-          sizeof(profiles[count].pass) - 1);
-  profiles[count].pass[sizeof(profiles[count].pass) - 1] = '\0';
+  strlcpy(profiles[count].ssid, ssid, sizeof(profiles[count].ssid));
+  strlcpy(profiles[count].pass, password ? password : "",
+          sizeof(profiles[count].pass));
   count++;
 
   nvs_handle_t h;

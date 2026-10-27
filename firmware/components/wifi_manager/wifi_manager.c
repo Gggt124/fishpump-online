@@ -585,9 +585,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                   sizeof(saved_pass))) {
             ESP_LOGI(TAG, "Found fallback STA credentials for: %s", saved_ssid);
             wifi_config_t sta_cfg = {0};
-            strncpy((char *)sta_cfg.sta.ssid, saved_ssid, 32);
+            strlcpy((char *)sta_cfg.sta.ssid, saved_ssid, sizeof(sta_cfg.sta.ssid));
             if (saved_pass[0])
-              strncpy((char *)sta_cfg.sta.password, saved_pass, 64);
+              strlcpy((char *)sta_cfg.sta.password, saved_pass, sizeof(sta_cfg.sta.password));
             sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
             esp_wifi_set_config(WIFI_IF_STA, &sta_cfg);
@@ -692,12 +692,12 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
       if (ap_info) {
         for (int i = 0; i < num; i++) {
-          strncpy(s_scan_results[i].ssid, (char *)ap_info[i].ssid, 32);
-          s_scan_results[i].ssid[32] = '\0';
+          strlcpy(s_scan_results[i].ssid, (char *)ap_info[i].ssid,
+                  sizeof(s_scan_results[i].ssid));
           s_scan_results[i].rssi = ap_info[i].rssi;
-          strncpy(s_scan_results[i].auth,
+          strlcpy(s_scan_results[i].auth,
                   wifi_auth_mode_to_string(ap_info[i].authmode),
-                  sizeof(s_scan_results[i].auth) - 1);
+                  sizeof(s_scan_results[i].auth));
           s_scan_results[i].channel = ap_info[i].primary;
           ESP_LOGI(TAG,
                    "[WIFI_SCAN] index=%d ssid=%s rssi=%d auth=%s channel=%u", i,
@@ -761,8 +761,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 
       wifi_ap_record_t ap_info;
       if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-        strncpy(s_sta_ssid, (char *)ap_info.ssid, 32);
-        s_sta_ssid[32] = '\0';
+        strlcpy(s_sta_ssid, (char *)ap_info.ssid, sizeof(s_sta_ssid));
       }
 
       bool pending_save = s_sta_pending_save;
@@ -916,9 +915,9 @@ bool wifi_manager_init(void) {
     }
 
     wifi_config_t sta_cfg = {0};
-    strncpy((char *)sta_cfg.sta.ssid, saved_ssid, 32);
+    strlcpy((char *)sta_cfg.sta.ssid, saved_ssid, sizeof(sta_cfg.sta.ssid));
     if (saved_pass[0]) {
-      strncpy((char *)sta_cfg.sta.password, saved_pass, 64);
+      strlcpy((char *)sta_cfg.sta.password, saved_pass, sizeof(sta_cfg.sta.password));
     }
     sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     if (esp_wifi_set_config(WIFI_IF_STA, &sta_cfg) != ESP_OK) {
@@ -1164,9 +1163,9 @@ bool wifi_manager_connect_sta(const char *ssid, const char *password,
   }
 
   wifi_config_t sta_cfg = {0};
-  strncpy((char *)sta_cfg.sta.ssid, ssid, 32);
+  strlcpy((char *)sta_cfg.sta.ssid, ssid, sizeof(sta_cfg.sta.ssid));
   if (password && password[0]) {
-    strncpy((char *)sta_cfg.sta.password, password, 64);
+    strlcpy((char *)sta_cfg.sta.password, password, sizeof(sta_cfg.sta.password));
   }
   sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
