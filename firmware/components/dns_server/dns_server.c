@@ -165,6 +165,10 @@ static void dns_server_task(void *pvParameter) {
   struct sockaddr_in client_addr;
   socklen_t client_len;
 
+  /* Cache AP IP once outside loop */
+  ip4_addr_t ap_ip;
+  ip4addr_aton("192.168.4.1", &ap_ip);
+
   while (s_dns_run) {
     client_len = sizeof(client_addr);
     int len = recvfrom(s_dns_sock, query_buf, sizeof(query_buf), 0,
@@ -180,10 +184,6 @@ static void dns_server_task(void *pvParameter) {
     dns_header_t *hdr = (dns_header_t *)query_buf;
     if (ntohs(hdr->flags) & 0x8000)
       continue;
-
-    /* Respond with the AP IP */
-    ip4_addr_t ap_ip;
-    ip4addr_aton("192.168.4.1", &ap_ip);
 
     size_t resp_len = 0;
     build_dns_response(query_buf, (size_t)len, resp_buf, sizeof(resp_buf),
@@ -212,7 +212,7 @@ bool dns_server_start(void) {
 
   s_dns_run = true;
   BaseType_t ret =
-      xTaskCreate(dns_server_task, "dns_server", 4096, NULL, 5, &s_dns_task);
+      xTaskCreatePinnedToCore(dns_server_task, "dns_server", 4096, NULL, 5, &s_dns_task, 0);
   if (ret != pdPASS) {
     ESP_LOGE(TAG, "Failed to create DNS server task");
     return false;

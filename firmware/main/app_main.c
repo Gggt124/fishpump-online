@@ -957,8 +957,13 @@ void app_main(void) {
     ESP_LOGI(TAG, "TWDT initialized (%d ms timeout, panic on trigger)",
              APP_TEMPLATE_MAIN_WDT_TIMEOUT_MS);
   } else if (wdt_ret == ESP_ERR_INVALID_STATE) {
-    ESP_LOGW(TAG,
-             "TWDT already initialized, adding main task (timeout may differ)");
+    esp_err_t reconf_ret = esp_task_wdt_reconfigure(&wdt_config);
+    if (reconf_ret == ESP_OK) {
+      ESP_LOGI(TAG, "TWDT reconfigured (%d ms timeout, panic on trigger)",
+               APP_TEMPLATE_MAIN_WDT_TIMEOUT_MS);
+    } else {
+      ESP_LOGW(TAG, "TWDT reconfigure failed: %s", esp_err_to_name(reconf_ret));
+    }
     esp_task_wdt_add(NULL);
   } else {
     ESP_LOGE(TAG, "TWDT init failed: %s (continuing without watchdog)",

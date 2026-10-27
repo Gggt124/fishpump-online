@@ -773,7 +773,7 @@ static void tft_display_task(void *pvParameters) {
     snprintf(wifi_formatted, sizeof(wifi_formatted), "%-19.19s", wifi_str);
 
     if (full_redraw || strcmp(s_tft_cache.wifi, wifi_formatted) != 0) {
-      strcpy(s_tft_cache.wifi, wifi_formatted);
+      strlcpy(s_tft_cache.wifi, wifi_formatted, sizeof(s_tft_cache.wifi));
       tft_draw_string_box(TFT_WIFI_BOX_X, TFT_WIFI_BOX_Y, TFT_WIFI_BOX_W,
                           TFT_WIFI_BOX_H, wifi_formatted, TFT_COLOR_WHITE,
                           TFT_COLOR_DARK_PANEL);

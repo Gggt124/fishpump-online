@@ -53,9 +53,9 @@ def compress_file(src_path: str, dest_raw_path: str, dest_gz_path: str, file_typ
     with open(dest_raw_path, "w", encoding="utf-8") as f:
         f.write(optimized)
     
-    # Write gzipped file (highest compression level 9)
+    # Write gzipped file (highest compression level 9, deterministic mtime=0)
     optimized_bytes = optimized.encode("utf-8")
-    with gzip.open(dest_gz_path, "wb", compresslevel=9) as f:
+    with gzip.GzipFile(filename=dest_gz_path, mode="wb", compresslevel=9, mtime=0) as f:
         f.write(optimized_bytes)
         
     orig_size = os.path.getsize(src_path)

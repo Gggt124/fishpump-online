@@ -64,6 +64,7 @@ typedef struct {
     bool has_health;
 } telemetry_snapshot_t;
 
+/** @note Subscriber callbacks MUST be non-blocking. */
 typedef void (*telemetry_callback_t)(const telemetry_event_t *event, void *user_ctx);
 
 /**
