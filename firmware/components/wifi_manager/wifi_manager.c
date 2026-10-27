@@ -817,9 +817,7 @@ bool wifi_manager_init(void) {
   s_sta_netif = esp_netif_create_default_wifi_sta();
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
   cfg.wifi_task_core_id = 0;
-#endif
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
   ESP_ERROR_CHECK(esp_event_handler_instance_register(
@@ -1424,7 +1422,7 @@ char *wifi_manager_get_ap_ip(void) { return s_ap_ip; }
 char *wifi_manager_get_sta_ip(void) {
   if (xSemaphoreTake(s_wifi_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
     ESP_LOGE(TAG, "Wi-Fi mutex timeout at %s:%d", __FUNCTION__, __LINE__);
-    return false;
+    return NULL;
   }
   xSemaphoreGive(s_wifi_mutex);
   return s_sta_ip;
@@ -1433,7 +1431,7 @@ char *wifi_manager_get_sta_ip(void) {
 char *wifi_manager_get_sta_ssid(void) {
   if (xSemaphoreTake(s_wifi_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
     ESP_LOGE(TAG, "Wi-Fi mutex timeout at %s:%d", __FUNCTION__, __LINE__);
-    return false;
+    return NULL;
   }
   xSemaphoreGive(s_wifi_mutex);
   return s_sta_ssid;
