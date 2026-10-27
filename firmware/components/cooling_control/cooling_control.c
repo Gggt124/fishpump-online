@@ -159,17 +159,18 @@ static uint32_t test_remaining_locked(int64_t now_ms) {
   return (uint32_t)((s_test_remaining_ms + MS_PER_SEC - 1) / MS_PER_SEC);
 }
 
-static void publish_cooling_telemetry_locked(int64_t now_ms) {
-  telemetry_event_t evt = {
-      .type = TELEMETRY_EVT_COOLING,
-      .data.cooling = {
-          .current_temp_c = s_temperature_c,
-          .is_sensor_valid = s_temperature_valid,
-          .cooling_relay_active = s_relay_energized,
-          .lockout_remaining_sec = lockout_remaining_locked(now_ms),
-      },
-  };
-  telemetry_hub_publish(&evt);
+/**
+ * Prepares cooling telemetry payload while holding s_cooling_mutex.
+ * Does NOT publish directly; caller must give mutex then publish.
+ */
+static void get_cooling_telemetry_locked(int64_t now_ms, telemetry_event_t *out_evt) {
+  if (out_evt) {
+    out_evt->type = TELEMETRY_EVT_COOLING;
+    out_evt->data.cooling.current_temp_c = s_temperature_c;
+    out_evt->data.cooling.is_sensor_valid = s_temperature_valid;
+    out_evt->data.cooling.cooling_relay_active = s_relay_energized;
+    out_evt->data.cooling.lockout_remaining_sec = lockout_remaining_locked(now_ms);
+  }
 }
 
 static void reset_runtime_state_locked(void) {
@@ -486,11 +487,7 @@ static void cooling_task(void *arg) {
       }
       update_control_locked(now_ms);
 
-      evt.type = TELEMETRY_EVT_COOLING;
-      evt.data.cooling.current_temp_c = s_temperature_c;
-      evt.data.cooling.is_sensor_valid = s_temperature_valid;
-      evt.data.cooling.cooling_relay_active = s_relay_energized;
-      evt.data.cooling.lockout_remaining_sec = lockout_remaining_locked(now_ms);
+      get_cooling_telemetry_locked(now_ms, &evt);
       do_publish = true;
 
       xSemaphoreGive(s_cooling_mutex);
@@ -498,6 +495,7 @@ static void cooling_task(void *arg) {
       ESP_LOGW(TAG, "cooling_task: failed to take mutex, skipping cycle");
     }
 
+    /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
     if (do_publish) {
       telemetry_hub_publish(&evt);
     }
@@ -556,17 +554,28 @@ bool cooling_control_init(const cooling_control_config_t *config) {
   int64_t now_ms = esp_timer_get_time() / 1000;
   restart_lockout_locked(now_ms);
 
+  telemetry_event_t init_evt;
+  bool do_pub_init = false;
+
   if (!config_valid(&s_config)) {
     mark_config_invalid_locked();
-    publish_cooling_telemetry_locked(now_ms);
+    get_cooling_telemetry_locked(now_ms, &init_evt);
+    do_pub_init = true;
     xSemaphoreGive(s_cooling_mutex);
+    if (do_pub_init) {
+      telemetry_hub_publish(&init_evt);
+    }
     return false;
   }
 
   if (!configure_relay_gpio_locked(&s_config)) {
     mark_config_invalid_locked();
-    publish_cooling_telemetry_locked(now_ms);
+    get_cooling_telemetry_locked(now_ms, &init_evt);
+    do_pub_init = true;
     xSemaphoreGive(s_cooling_mutex);
+    if (do_pub_init) {
+      telemetry_hub_publish(&init_evt);
+    }
     return false;
   }
   s_relay_configured = true;
@@ -582,8 +591,14 @@ bool cooling_control_init(const cooling_control_config_t *config) {
                         ? COOLING_CONTROL_MODE_FORCE_OFF
                         : s_mode;
   update_control_locked(now_ms);
-  publish_cooling_telemetry_locked(now_ms);
+  get_cooling_telemetry_locked(now_ms, &init_evt);
+  do_pub_init = true;
   xSemaphoreGive(s_cooling_mutex);
+
+  /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
+  if (do_pub_init) {
+    telemetry_hub_publish(&init_evt);
+  }
 
   if (!s_runtime_enabled) {
     return true;
@@ -596,13 +611,21 @@ bool cooling_control_init(const cooling_control_config_t *config) {
   }
 
   s_task_stop = false;
-  if (xTaskCreate(cooling_task, "cooling_control",
-                  COOLING_CONTROL_TASK_STACK_BYTES, NULL,
-                  COOLING_CONTROL_TASK_PRIORITY, &s_cooling_task) != pdPASS) {
+  /* Pin cooling control task to Core 1 */
+  if (xTaskCreatePinnedToCore(cooling_task, "cooling_control",
+                              COOLING_CONTROL_TASK_STACK_BYTES, NULL,
+                              COOLING_CONTROL_TASK_PRIORITY, &s_cooling_task,
+                              1) != pdPASS) {
+    telemetry_event_t fail_evt;
+    bool do_pub_fail = false;
     if (xSemaphoreTake(s_cooling_mutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
       mark_config_invalid_locked();
-      publish_cooling_telemetry_locked(now_ms);
+      get_cooling_telemetry_locked(now_ms, &fail_evt);
+      do_pub_fail = true;
       xSemaphoreGive(s_cooling_mutex);
+    }
+    if (do_pub_fail) {
+      telemetry_hub_publish(&fail_evt);
     }
     deinit_sensor();
     return false;
@@ -650,8 +673,13 @@ bool cooling_control_apply_config(const cooling_control_config_t *config) {
   s_test_remaining_ms = 0;
   s_last_test_update_ms = 0;
   update_control_locked(now_ms);
-  publish_cooling_telemetry_locked(now_ms);
+
+  telemetry_event_t evt;
+  get_cooling_telemetry_locked(now_ms, &evt);
   xSemaphoreGive(s_cooling_mutex);
+
+  /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
+  telemetry_hub_publish(&evt);
   return true;
 }
 
@@ -668,8 +696,13 @@ bool cooling_control_stop(void) {
   s_test_remaining_ms = 0;
   s_last_test_update_ms = 0;
   update_control_locked(now_ms);
-  publish_cooling_telemetry_locked(now_ms);
+
+  telemetry_event_t evt;
+  get_cooling_telemetry_locked(now_ms, &evt);
   xSemaphoreGive(s_cooling_mutex);
+
+  /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
+  telemetry_hub_publish(&evt);
   return true;
 }
 
@@ -730,8 +763,13 @@ bool cooling_control_set_mode(cooling_control_mode_t mode) {
   s_test_remaining_ms = 0;
   s_last_test_update_ms = 0;
   update_control_locked(now_ms);
-  publish_cooling_telemetry_locked(now_ms);
+
+  telemetry_event_t evt;
+  get_cooling_telemetry_locked(now_ms, &evt);
   xSemaphoreGive(s_cooling_mutex);
+
+  /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
+  telemetry_hub_publish(&evt);
   return true;
 }
 
@@ -759,7 +797,12 @@ bool cooling_control_start_test(void) {
   s_test_remaining_ms = (int64_t)s_config.test_timeout_sec * MS_PER_SEC;
   s_last_test_update_ms = now_ms;
   update_control_locked(now_ms);
-  publish_cooling_telemetry_locked(now_ms);
+
+  telemetry_event_t evt;
+  get_cooling_telemetry_locked(now_ms, &evt);
   xSemaphoreGive(s_cooling_mutex);
+
+  /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
+  telemetry_hub_publish(&evt);
   return true;
 }

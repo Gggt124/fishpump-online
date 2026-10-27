@@ -15,7 +15,7 @@
 #define PUMP_CONTROL_TICK_US 100000LL /* 100 ms tick */
 #define MS_PER_SEC 1000LL
 
-#define FLOAT_DEBOUNCE_MS 500
+#define FLOAT_DEBOUNCE_MS APP_TEMPLATE_PUMP_FLOAT_DEBOUNCE_MS
 
 #define NVS_PUMP_NAMESPACE "pump_cfg"
 #define NVS_KEY_W_SET1_ON "w_set1_on"
@@ -147,18 +147,27 @@ static bool pump_telemetry_changed(const telemetry_pump_payload_t *p) {
           p->relay_2_active != s_last_published_pump.relay_2_active);
 }
 
-static void publish_telemetry_if_changed_locked(int64_t now_ms,
-                                              bool float_transitioned) {
-  telemetry_event_t float_evt;
-  bool do_publish_float = false;
-  telemetry_event_t pump_evt;
-  bool do_publish_pump = false;
+/**
+ * Prepares telemetry payloads while holding the mutex, but DOES NOT publish.
+ * Callers must release s_pump_mutex before calling telemetry_hub_publish().
+ */
+static void prepare_telemetry_if_changed_locked(
+    int64_t now_ms, bool float_transitioned,
+    telemetry_event_t *out_float_evt, bool *out_do_publish_float,
+    telemetry_event_t *out_pump_evt, bool *out_do_publish_pump) {
 
-  if (float_transitioned) {
-    float_evt.type = TELEMETRY_EVT_FLOAT;
-    float_evt.data.float_state.float_is_high =
+  if (out_do_publish_float) {
+    *out_do_publish_float = false;
+  }
+  if (out_do_publish_pump) {
+    *out_do_publish_pump = false;
+  }
+
+  if (float_transitioned && out_float_evt && out_do_publish_float) {
+    out_float_evt->type = TELEMETRY_EVT_FLOAT;
+    out_float_evt->data.float_state.float_is_high =
         (s_confirmed_float_state == PUMP_CONTROL_FLOAT_ON);
-    do_publish_float = true;
+    *out_do_publish_float = true;
   }
 
   telemetry_pump_payload_t current_pump;
@@ -166,16 +175,11 @@ static void publish_telemetry_if_changed_locked(int64_t now_ms,
   if (pump_telemetry_changed(&current_pump)) {
     s_last_published_pump = current_pump;
     s_pump_telemetry_published_once = true;
-    pump_evt.type = TELEMETRY_EVT_PUMP;
-    pump_evt.data.pump = current_pump;
-    do_publish_pump = true;
-  }
-
-  if (do_publish_float) {
-    telemetry_hub_publish(&float_evt);
-  }
-  if (do_publish_pump) {
-    telemetry_hub_publish(&pump_evt);
+    if (out_pump_evt && out_do_publish_pump) {
+      out_pump_evt->type = TELEMETRY_EVT_PUMP;
+      out_pump_evt->data.pump = current_pump;
+      *out_do_publish_pump = true;
+    }
   }
 }
 
@@ -256,8 +260,6 @@ static void pump_fail_safe_locked(void) {
   pump_force_relays_inactive_locked();
   s_initialized = false;
   s_fault = true;
-  int64_t now_ms = esp_timer_get_time() / 1000;
-  publish_telemetry_if_changed_locked(now_ms, false);
 }
 
 static bool set_relay1_energized(bool energized) {
@@ -530,9 +532,7 @@ static void pump_tick_cb(void *arg) {
         s_water_state.active_set = target_set;
         s_water_state.last_set_switch_ms = now_ms;
         if (!apply_water_set_start_phase(now_ms)) {
-          publish_telemetry_if_changed_locked(now_ms, float_changed);
-          xSemaphoreGive(s_pump_mutex);
-          return;
+          goto exit_tick;
         }
       } else {
         if (now_ms >= s_water_state.phase_deadline_ms) {
@@ -549,9 +549,7 @@ static void pump_tick_cb(void *arg) {
               now_ms + ((int64_t)s_water_state.total_duration_sec * MS_PER_SEC);
           if (!set_relay1_energized(s_water_state.phase ==
                                     PUMP_CONTROL_PHASE_ON)) {
-            publish_telemetry_if_changed_locked(now_ms, float_changed);
-            xSemaphoreGive(s_pump_mutex);
-            return;
+            goto exit_tick;
           }
           notify_state_changed();
         }
@@ -571,9 +569,7 @@ static void pump_tick_cb(void *arg) {
             now_ms + ((int64_t)s_water_state.total_duration_sec * MS_PER_SEC);
         if (!set_relay1_energized(s_water_state.phase ==
                                   PUMP_CONTROL_PHASE_ON)) {
-          publish_telemetry_if_changed_locked(now_ms, float_changed);
-          xSemaphoreGive(s_pump_mutex);
-          return;
+          goto exit_tick;
         }
         notify_state_changed();
       }
@@ -598,16 +594,30 @@ static void pump_tick_cb(void *arg) {
           now_ms + ((int64_t)s_wash_state.total_duration_sec * MS_PER_SEC);
       if (!set_relay2_energized(s_wash_state.phase ==
                                 PUMP_CONTROL_PHASE_ON)) {
-        publish_telemetry_if_changed_locked(now_ms, float_changed);
-        xSemaphoreGive(s_pump_mutex);
-        return;
+        goto exit_tick;
       }
       notify_state_changed();
     }
   }
 
-  publish_telemetry_if_changed_locked(now_ms, float_changed);
+exit_tick: ;
+  telemetry_event_t float_evt;
+  bool do_publish_float = false;
+  telemetry_event_t pump_evt;
+  bool do_publish_pump = false;
+
+  prepare_telemetry_if_changed_locked(now_ms, float_changed,
+                                      &float_evt, &do_publish_float,
+                                      &pump_evt, &do_publish_pump);
   xSemaphoreGive(s_pump_mutex);
+
+  /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
+  if (do_publish_float) {
+    telemetry_hub_publish(&float_evt);
+  }
+  if (do_publish_pump) {
+    telemetry_hub_publish(&pump_evt);
+  }
 }
 
 bool pump_control_init(const pump_control_init_context_t *context) {
@@ -776,9 +786,24 @@ bool pump_control_init(const pump_control_init_context_t *context) {
   }
 
   s_pump_telemetry_published_once = false;
-  publish_telemetry_if_changed_locked(now_ms, true);
+  telemetry_event_t init_float_evt;
+  bool do_pub_float = false;
+  telemetry_event_t init_pump_evt;
+  bool do_pub_pump = false;
 
+  prepare_telemetry_if_changed_locked(now_ms, true,
+                                      &init_float_evt, &do_pub_float,
+                                      &init_pump_evt, &do_pub_pump);
   xSemaphoreGive(s_pump_mutex);
+
+  /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
+  if (do_pub_float) {
+    telemetry_hub_publish(&init_float_evt);
+  }
+  if (do_pub_pump) {
+    telemetry_hub_publish(&init_pump_evt);
+  }
+
   return true;
 }
 
@@ -804,7 +829,7 @@ bool pump_control_start_water(void) {
   }
 
   int64_t now_ms = esp_timer_get_time() / 1000;
-  update_float_debounce(now_ms);
+  /* Debounce state is driven exclusively by pump_tick_cb to prevent race conditions */
 
   s_water_state.running = true;
   s_water_state.active_set =
@@ -816,8 +841,16 @@ bool pump_control_start_water(void) {
     return false;
   }
 
-  publish_telemetry_if_changed_locked(now_ms, false);
+  telemetry_event_t pump_evt;
+  bool do_pub_pump = false;
+  prepare_telemetry_if_changed_locked(now_ms, false, NULL, NULL,
+                                      &pump_evt, &do_pub_pump);
   xSemaphoreGive(s_pump_mutex);
+
+  /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
+  if (do_pub_pump) {
+    telemetry_hub_publish(&pump_evt);
+  }
   return true;
 }
 
@@ -840,8 +873,16 @@ bool pump_control_stop_water(void) {
   bool ok = set_relay1_energized(false);
   notify_state_changed();
 
-  publish_telemetry_if_changed_locked(now_ms, false);
+  telemetry_event_t pump_evt;
+  bool do_pub_pump = false;
+  prepare_telemetry_if_changed_locked(now_ms, false, NULL, NULL,
+                                      &pump_evt, &do_pub_pump);
   xSemaphoreGive(s_pump_mutex);
+
+  /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
+  if (do_pub_pump) {
+    telemetry_hub_publish(&pump_evt);
+  }
   return ok;
 }
 
@@ -884,8 +925,16 @@ bool pump_control_start_wash(void) {
   }
   notify_state_changed();
 
-  publish_telemetry_if_changed_locked(now_ms, false);
+  telemetry_event_t pump_evt;
+  bool do_pub_pump = false;
+  prepare_telemetry_if_changed_locked(now_ms, false, NULL, NULL,
+                                      &pump_evt, &do_pub_pump);
   xSemaphoreGive(s_pump_mutex);
+
+  /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
+  if (do_pub_pump) {
+    telemetry_hub_publish(&pump_evt);
+  }
   return true;
 }
 
@@ -907,8 +956,16 @@ bool pump_control_stop_wash(void) {
   bool ok = set_relay2_energized(false);
   notify_state_changed();
 
-  publish_telemetry_if_changed_locked(now_ms, false);
+  telemetry_event_t pump_evt;
+  bool do_pub_pump = false;
+  prepare_telemetry_if_changed_locked(now_ms, false, NULL, NULL,
+                                      &pump_evt, &do_pub_pump);
   xSemaphoreGive(s_pump_mutex);
+
+  /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
+  if (do_pub_pump) {
+    telemetry_hub_publish(&pump_evt);
+  }
   return ok;
 }
 
@@ -921,7 +978,7 @@ bool pump_control_get_status(pump_control_status_t *out) {
   }
 
   int64_t now_ms = esp_timer_get_time() / 1000;
-  update_float_debounce(now_ms);
+  /* Read-only getter: float debounce state is not mutated here; driven exclusively by pump_tick_cb */
 
   out->initialized = s_initialized;
 #if defined(APP_CONFIG_RELAY_FAULT_ENABLED) && (APP_CONFIG_RELAY_FAULT_ENABLED == 0)
