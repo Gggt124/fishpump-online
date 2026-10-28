@@ -1,0 +1,8 @@
+# Security: Never commit actual credentials or secrets
+.env
+
+# State marker: Initialized database flag
+.initialized
+
+# ThingsBoard local runtime dumps or logs if bound
+*.log
