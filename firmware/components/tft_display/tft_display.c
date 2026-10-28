@@ -647,9 +647,19 @@ static esp_err_t tft_bl_rebind_to_ledc(void) {
 void tft_display_set_brightness(uint8_t percent) {
   if (percent > 100)
     percent = 100;
-  if (atomic_load(&s_current_brightness) == percent)
+
+  if (!s_tft_mutex) {
     return;
-  atomic_store(&s_current_brightness, percent);
+  }
+  if (xSemaphoreTake(s_tft_mutex, pdMS_TO_TICKS(500)) != pdTRUE) {
+    ESP_LOGW(TAG, "Timeout waiting for TFT mutex in set_brightness");
+    return;
+  }
+
+  if (atomic_load(&s_current_brightness) == percent) {
+    xSemaphoreGive(s_tft_mutex);
+    return;
+  }
 
   if (percent == 0) {
     /* dim=0: switch BL to push-pull LOW. LEDC's PWM-LOW state is
@@ -675,6 +685,10 @@ void tft_display_set_brightness(uint8_t percent) {
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
   }
+
+  atomic_store(&s_current_brightness, percent);
+  xSemaphoreGive(s_tft_mutex);
+
   ESP_LOGI(TAG, "Backlight set to %d%%", percent);
 }
 
