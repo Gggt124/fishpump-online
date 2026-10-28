@@ -6,8 +6,6 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "nvs.h"
-#include "nvs_flash.h"
 #include "relay_safe_init.h"
 #include "telemetry_hub.h"
 #include <string.h>
@@ -16,24 +14,6 @@
 #define MS_PER_SEC 1000LL
 
 #define FLOAT_DEBOUNCE_MS APP_TEMPLATE_PUMP_FLOAT_DEBOUNCE_MS
-
-#define NVS_PUMP_NAMESPACE "pump_cfg"
-#define NVS_KEY_W_SET1_ON "w_set1_on"
-#define NVS_KEY_W_SET1_OFF "w_set1_off"
-#define NVS_KEY_W_SET1_START "w_set1_start"
-#define NVS_KEY_W_SET2_ON "w_set2_on"
-#define NVS_KEY_W_SET2_OFF "w_set2_off"
-#define NVS_KEY_W_SET2_START "w_set2_start"
-#define NVS_KEY_W_AUTOSTART "w_autostart"
-#define NVS_KEY_WASH_ON "wash_on"
-#define NVS_KEY_WASH_OFF "wash_off"
-#define NVS_KEY_WASH_START "wash_start"
-#define NVS_KEY_WASH_AUTOSTART "wash_autostart"
-#define NVS_KEY_REL1_POL "rel1_pol"
-#define NVS_KEY_REL2_POL "rel2_pol"
-#define NVS_KEY_FLT_GPIO "flt_gpio"
-#define NVS_KEY_REL1_GPIO "rel1_gpio"
-#define NVS_KEY_REL2_GPIO "rel2_gpio"
 
 static const char *TAG = "pump_control";
 
@@ -214,6 +194,12 @@ static bool init_context_valid(const pump_control_init_context_t *context) {
     return false;
   }
 
+  if (!timer_set_config_valid(&context->water_set1) ||
+      !timer_set_config_valid(&context->water_set2) ||
+      !timer_set_config_valid(&context->wash_timer)) {
+    return false;
+  }
+
   return context->float_gpio != context->relay1_gpio &&
          context->float_gpio != context->relay2_gpio &&
          context->relay1_gpio != context->relay2_gpio &&
@@ -360,140 +346,6 @@ static uint32_t calc_switch_cooldown_sec(int64_t now_ms) {
   int64_t deadline_ms = s_water_state.last_set_switch_ms +
                         ((int64_t)s_config.min_dwell_sec * MS_PER_SEC);
   return calc_countdown_sec(true, deadline_ms, now_ms);
-}
-
-static void load_nvs_config(void) {
-  s_config.water_set1.on_sec = APP_TEMPLATE_PUMP_TIMER1_ON_SEC;
-  s_config.water_set1.off_sec = APP_TEMPLATE_PUMP_TIMER1_OFF_SEC;
-  s_config.water_set1.start_phase = APP_TEMPLATE_PUMP_TIMER_START_ON
-                                        ? PUMP_CONTROL_START_PHASE_ON
-                                        : PUMP_CONTROL_START_PHASE_OFF;
-
-  s_config.water_set2.on_sec = APP_TEMPLATE_PUMP_TIMER2_ON_SEC;
-  s_config.water_set2.off_sec = APP_TEMPLATE_PUMP_TIMER2_OFF_SEC;
-  s_config.water_set2.start_phase = APP_TEMPLATE_PUMP_TIMER_START_ON
-                                        ? PUMP_CONTROL_START_PHASE_ON
-                                        : PUMP_CONTROL_START_PHASE_OFF;
-
-  s_config.wash_timer.on_sec = 10;
-  s_config.wash_timer.off_sec = 60;
-  s_config.wash_timer.start_phase = PUMP_CONTROL_START_PHASE_ON;
-
-  s_config.water_auto_start = APP_TEMPLATE_PUMP_AUTO_START_DEFAULT;
-  s_config.wash_auto_start = false;
-  s_config.min_dwell_sec = APP_TEMPLATE_PUMP_FLOAT_MIN_DWELL_SEC;
-
-  s_config.relay1_active_low = APP_TEMPLATE_HW_DEFAULT_PUMP_RELAY1_ACTIVE_LOW;
-  s_config.relay2_active_low = APP_TEMPLATE_HW_DEFAULT_PUMP_RELAY2_ACTIVE_LOW;
-  s_config.float_gpio = (gpio_num_t)APP_TEMPLATE_HW_DEFAULT_FLOAT_GPIO;
-  s_config.relay1_gpio = (gpio_num_t)APP_TEMPLATE_HW_DEFAULT_PUMP_RELAY1_GPIO;
-  s_config.relay2_gpio = (gpio_num_t)APP_TEMPLATE_HW_DEFAULT_PUMP_RELAY2_GPIO;
-
-  nvs_handle_t handle;
-  esp_err_t err = nvs_open(NVS_PUMP_NAMESPACE, NVS_READONLY, &handle);
-  if (err != ESP_OK) {
-    ESP_LOGI(TAG, "No NVS pump config found, using default values");
-    return;
-  }
-
-  uint32_t val32;
-  uint8_t val8;
-
-  if (nvs_get_u32(handle, NVS_KEY_W_SET1_ON, &val32) == ESP_OK &&
-      duration_valid(val32)) {
-    s_config.water_set1.on_sec = val32;
-  }
-  if (nvs_get_u32(handle, NVS_KEY_W_SET1_OFF, &val32) == ESP_OK &&
-      duration_valid(val32)) {
-    s_config.water_set1.off_sec = val32;
-  }
-  if (nvs_get_u8(handle, NVS_KEY_W_SET1_START, &val8) == ESP_OK &&
-      start_phase_valid((pump_control_start_phase_t)val8)) {
-    s_config.water_set1.start_phase = (pump_control_start_phase_t)val8;
-  }
-
-  if (nvs_get_u32(handle, NVS_KEY_W_SET2_ON, &val32) == ESP_OK &&
-      duration_valid(val32)) {
-    s_config.water_set2.on_sec = val32;
-  }
-  if (nvs_get_u32(handle, NVS_KEY_W_SET2_OFF, &val32) == ESP_OK &&
-      duration_valid(val32)) {
-    s_config.water_set2.off_sec = val32;
-  }
-  if (nvs_get_u8(handle, NVS_KEY_W_SET2_START, &val8) == ESP_OK &&
-      start_phase_valid((pump_control_start_phase_t)val8)) {
-    s_config.water_set2.start_phase = (pump_control_start_phase_t)val8;
-  }
-
-  if (nvs_get_u8(handle, NVS_KEY_W_AUTOSTART, &val8) == ESP_OK) {
-    s_config.water_auto_start = (val8 != 0);
-  }
-
-  if (nvs_get_u32(handle, NVS_KEY_WASH_ON, &val32) == ESP_OK &&
-      duration_valid(val32)) {
-    s_config.wash_timer.on_sec = val32;
-  }
-  if (nvs_get_u32(handle, NVS_KEY_WASH_OFF, &val32) == ESP_OK &&
-      duration_valid(val32)) {
-    s_config.wash_timer.off_sec = val32;
-  }
-  if (nvs_get_u8(handle, NVS_KEY_WASH_START, &val8) == ESP_OK &&
-      start_phase_valid((pump_control_start_phase_t)val8)) {
-    s_config.wash_timer.start_phase = (pump_control_start_phase_t)val8;
-  }
-
-  if (nvs_get_u8(handle, NVS_KEY_WASH_AUTOSTART, &val8) == ESP_OK) {
-    s_config.wash_auto_start = (val8 != 0);
-  }
-
-  if (nvs_get_u8(handle, NVS_KEY_REL1_POL, &val8) == ESP_OK) {
-    s_config.relay1_active_low = (val8 != 0);
-  }
-
-  if (nvs_get_u8(handle, NVS_KEY_REL2_POL, &val8) == ESP_OK) {
-    s_config.relay2_active_low = (val8 != 0);
-  }
-
-  nvs_close(handle);
-  ESP_LOGI(TAG, "NVS pump config loaded successfully");
-}
-
-static bool save_nvs_config(void) {
-  nvs_handle_t handle;
-  esp_err_t err = nvs_open(NVS_PUMP_NAMESPACE, NVS_READWRITE, &handle);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to open NVS for writing: %s", esp_err_to_name(err));
-    return false;
-  }
-
-  nvs_set_u32(handle, NVS_KEY_W_SET1_ON, s_config.water_set1.on_sec);
-  nvs_set_u32(handle, NVS_KEY_W_SET1_OFF, s_config.water_set1.off_sec);
-  nvs_set_u8(handle, NVS_KEY_W_SET1_START,
-             (uint8_t)s_config.water_set1.start_phase);
-
-  nvs_set_u32(handle, NVS_KEY_W_SET2_ON, s_config.water_set2.on_sec);
-  nvs_set_u32(handle, NVS_KEY_W_SET2_OFF, s_config.water_set2.off_sec);
-  nvs_set_u8(handle, NVS_KEY_W_SET2_START,
-             (uint8_t)s_config.water_set2.start_phase);
-
-  nvs_set_u8(handle, NVS_KEY_W_AUTOSTART, s_config.water_auto_start ? 1 : 0);
-
-  nvs_set_u32(handle, NVS_KEY_WASH_ON, s_config.wash_timer.on_sec);
-  nvs_set_u32(handle, NVS_KEY_WASH_OFF, s_config.wash_timer.off_sec);
-  nvs_set_u8(handle, NVS_KEY_WASH_START,
-             (uint8_t)s_config.wash_timer.start_phase);
-
-  nvs_set_u8(handle, NVS_KEY_WASH_AUTOSTART, s_config.wash_auto_start ? 1 : 0);
-
-  nvs_set_u8(handle, NVS_KEY_REL1_POL, s_config.relay1_active_low ? 1 : 0);
-  nvs_set_u8(handle, NVS_KEY_REL2_POL, s_config.relay2_active_low ? 1 : 0);
-  nvs_set_u8(handle, NVS_KEY_FLT_GPIO, (uint8_t)s_config.float_gpio);
-  nvs_set_u8(handle, NVS_KEY_REL1_GPIO, (uint8_t)s_config.relay1_gpio);
-  nvs_set_u8(handle, NVS_KEY_REL2_GPIO, (uint8_t)s_config.relay2_gpio);
-
-  err = nvs_commit(handle);
-  nvs_close(handle);
-  return (err == ESP_OK);
 }
 
 static void pump_tick_cb(void *arg) {
@@ -656,8 +508,9 @@ bool pump_control_init(const pump_control_init_context_t *context) {
   memset(&s_water_state, 0, sizeof(s_water_state));
   memset(&s_wash_state, 0, sizeof(s_wash_state));
 
-  load_nvs_config();
-
+  s_config.water_set1 = context->water_set1;
+  s_config.water_set2 = context->water_set2;
+  s_config.wash_timer = context->wash_timer;
   s_config.float_gpio = context->float_gpio;
   s_config.relay1_gpio = context->relay1_gpio;
   s_config.relay2_gpio = context->relay2_gpio;
@@ -665,17 +518,10 @@ bool pump_control_init(const pump_control_init_context_t *context) {
   s_config.relay2_active_low = context->relay2_active_low;
   s_config.min_dwell_sec = context->min_dwell_sec;
   s_runtime_enabled = context->allow_runtime_control;
-#if defined(APP_CONFIG_RELAY_FAULT_ENABLED) && (APP_CONFIG_RELAY_FAULT_ENABLED == 0)
-  if (!context->allow_auto_start) {
-    s_config.water_auto_start = false;
-    s_config.wash_auto_start = false;
-  }
-#else
-  if (!context->allow_auto_start || !s_runtime_enabled) {
-    s_config.water_auto_start = false;
-    s_config.wash_auto_start = false;
-  }
-#endif
+
+  bool auto_start_permitted = context->allow_auto_start && s_runtime_enabled;
+  s_config.water_auto_start = auto_start_permitted && context->water_auto_start;
+  s_config.wash_auto_start = auto_start_permitted && context->wash_auto_start;
 
   const relay_safe_channel_t relay_channels[] = {
       {
@@ -1038,8 +884,6 @@ bool pump_control_update_config(const pump_control_config_update_t *update) {
   s_config.wash_auto_start = update->wash_auto_start;
   s_config.min_dwell_sec = update->min_dwell_sec;
 
-  bool ok = save_nvs_config();
-
   xSemaphoreGive(s_pump_mutex);
-  return ok;
+  return true;
 }

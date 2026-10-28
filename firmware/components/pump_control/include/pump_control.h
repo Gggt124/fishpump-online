@@ -87,6 +87,11 @@ typedef struct {
   bool allow_auto_start;
   bool allow_runtime_control;
   uint32_t min_dwell_sec;
+  pump_control_timer_set_config_t water_set1;
+  pump_control_timer_set_config_t water_set2;
+  pump_control_timer_set_config_t wash_timer;
+  bool water_auto_start;
+  bool wash_auto_start;
 } pump_control_init_context_t;
 
 bool pump_control_init(const pump_control_init_context_t *context);
