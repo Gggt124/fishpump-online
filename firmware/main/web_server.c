@@ -4553,6 +4553,23 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
                      "413 Payload Too Large");
   }
 
+  // Validate OTA encryption key before opening OTA session
+  const char *key_hex = APP_CONFIG_OTA_ENCRYPTION_KEY;
+  if (strlen(key_hex) != 64) {
+    ESP_LOGE(TAG, "Invalid OTA encryption key length");
+    return send_json(req, "{\"ok\":false,\"error\":\"invalid_ota_key\"}",
+                     "500 Internal Server Error");
+  }
+
+  unsigned char key[32];
+  for (int i = 0; i < 32; i++) {
+    if (sscanf(key_hex + 2 * i, "%2hhx", &key[i]) != 1) {
+      ESP_LOGE(TAG, "Invalid hex digit in OTA encryption key");
+      return send_json(req, "{\"ok\":false,\"error\":\"invalid_ota_key\"}",
+                       "500 Internal Server Error");
+    }
+  }
+
   const esp_partition_t *update_partition =
       esp_ota_get_next_update_partition(NULL);
   if (update_partition == NULL) {
@@ -4584,16 +4601,6 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
 
   esp_aes_context aes;
   esp_aes_init(&aes);
-
-  unsigned char key[32];
-  const char *key_hex = APP_CONFIG_OTA_ENCRYPTION_KEY;
-  if (strlen(key_hex) != 64) {
-    return send_json(req, "{\"ok\":false,\"error\":\"invalid_ota_key\"}",
-                     "500 Internal Server Error");
-  }
-  for (int i = 0; i < 32; i++) {
-    sscanf(key_hex + 2 * i, "%2hhx", &key[i]);
-  }
   esp_aes_setkey(&aes, key, 256);
   // -------------------------------
 
