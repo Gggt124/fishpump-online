@@ -31,6 +31,12 @@ typedef struct {
   hardware_timer_start_phase_t timer2_start_phase;
   bool auto_start;
   uint32_t min_dwell_sec;
+
+  /* Wash system configuration (Blob v3) */
+  uint32_t wash_on_sec;
+  uint32_t wash_off_sec;
+  hardware_timer_start_phase_t wash_start_phase;
+  bool wash_auto_start;
 } nvs_store_pump_settings_t;
 
 typedef struct {

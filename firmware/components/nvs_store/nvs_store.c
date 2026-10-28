@@ -40,7 +40,12 @@ static const char *TAG = "nvs_store";
 
 /* A6 audit: atomic blob key — replaces 10 individual pump keys */
 #define NVS_PUMP_KEY_SETTINGS_BLOB "pump_blob"
-#define NVS_PUMP_BLOB_VERSION 2 /* v2: added min_dwell_sec (append-only) */
+#define NVS_PUMP_BLOB_VERSION 3 /* v3: added wash timer fields (append-only) */
+
+#define NVS_PUMP_KEY_WASH_ON "wash_on"
+#define NVS_PUMP_KEY_WASH_OFF "wash_off"
+#define NVS_PUMP_KEY_WASH_START "wash_start"
+#define NVS_PUMP_KEY_WASH_AUTOSTART "wash_autostart"
 
 #define NVS_HW_NAMESPACE "hw_cfg"
 #define NVS_HW_KEY_ACT_FLOAT "act_float"
@@ -101,7 +106,10 @@ static bool pump_blob_boolean_fields_valid(const uint8_t *payload,
              offsetof(nvs_store_pump_settings_t, relay2_active_low)) &&
          pump_blob_bool_field_valid(
              payload, payload_len,
-             offsetof(nvs_store_pump_settings_t, auto_start));
+             offsetof(nvs_store_pump_settings_t, auto_start)) &&
+         pump_blob_bool_field_valid(
+             payload, payload_len,
+             offsetof(nvs_store_pump_settings_t, wash_auto_start));
 }
 
 static bool pump_settings_valid(const nvs_store_pump_settings_t *settings) {
@@ -109,12 +117,16 @@ static bool pump_settings_valid(const nvs_store_pump_settings_t *settings) {
          pump_bool_raw_valid((uint8_t)settings->relay1_active_low) &&
          pump_bool_raw_valid((uint8_t)settings->relay2_active_low) &&
          pump_bool_raw_valid((uint8_t)settings->auto_start) &&
+         pump_bool_raw_valid((uint8_t)settings->wash_auto_start) &&
          pump_duration_valid(settings->timer1_on_sec) &&
          pump_duration_valid(settings->timer1_off_sec) &&
          pump_duration_valid(settings->timer2_on_sec) &&
          pump_duration_valid(settings->timer2_off_sec) &&
+         pump_duration_valid(settings->wash_on_sec) &&
+         pump_duration_valid(settings->wash_off_sec) &&
          hardware_map_timer_start_phase_valid(settings->timer1_start_phase) &&
          hardware_map_timer_start_phase_valid(settings->timer2_start_phase) &&
+         hardware_map_timer_start_phase_valid(settings->wash_start_phase) &&
          settings->min_dwell_sec <= APP_TEMPLATE_PUMP_FLOAT_MIN_DWELL_MAX_SEC;
 }
 
@@ -813,6 +825,38 @@ void nvs_store_pump_settings_defaults(nvs_store_pump_settings_t *out) {
                                 : HARDWARE_TIMER_START_PHASE_OFF;
   out->auto_start = APP_TEMPLATE_PUMP_AUTO_START_DEFAULT;
   out->min_dwell_sec = APP_TEMPLATE_PUMP_FLOAT_MIN_DWELL_SEC;
+
+  /* Wash system defaults (Blob v3) */
+  out->wash_on_sec = 10;
+  out->wash_off_sec = 60;
+  out->wash_start_phase = HARDWARE_TIMER_START_PHASE_ON;
+  out->wash_auto_start = false;
+}
+
+static void load_legacy_wash_keys(nvs_handle_t handle,
+                                  nvs_store_pump_settings_t *loaded) {
+  uint32_t wash_on = loaded->wash_on_sec;
+  uint32_t wash_off = loaded->wash_off_sec;
+  uint8_t wash_start = (uint8_t)loaded->wash_start_phase;
+  bool wash_autostart = loaded->wash_auto_start;
+
+  if (load_u32_key(handle, NVS_PUMP_KEY_WASH_ON, &wash_on) == ESP_OK &&
+      pump_duration_valid(wash_on)) {
+    loaded->wash_on_sec = wash_on;
+  }
+  if (load_u32_key(handle, NVS_PUMP_KEY_WASH_OFF, &wash_off) == ESP_OK &&
+      pump_duration_valid(wash_off)) {
+    loaded->wash_off_sec = wash_off;
+  }
+  if (load_u8_key(handle, NVS_PUMP_KEY_WASH_START, &wash_start) == ESP_OK &&
+      hardware_map_timer_start_phase_valid(
+          (hardware_timer_start_phase_t)wash_start)) {
+    loaded->wash_start_phase = (hardware_timer_start_phase_t)wash_start;
+  }
+  if (load_bool_key(handle, NVS_PUMP_KEY_WASH_AUTOSTART, &wash_autostart) ==
+      ESP_OK) {
+    loaded->wash_auto_start = wash_autostart;
+  }
 }
 
 nvs_store_pump_settings_load_status_t
@@ -840,13 +884,14 @@ nvs_store_load_pump_settings(nvs_store_pump_settings_t *out) {
   /* A6 audit: try blob first (new format), fallback to legacy keys for
    * migration */
   /* Use a fixed buffer size for forward compatibility if struct grows */
-  uint8_t blob[64];
+  uint8_t blob[sizeof(nvs_store_pump_settings_t) + 32];
   size_t blob_len = sizeof(blob);
   esp_err_t blob_err =
       nvs_get_blob(handle, NVS_PUMP_KEY_SETTINGS_BLOB, blob, &blob_len);
 
   if (blob_err == ESP_OK) {
-    if (blob_len > 0 && (blob[0] == NVS_PUMP_BLOB_VERSION || blob[0] == 1)) {
+    if (blob_len > 0 && (blob[0] == NVS_PUMP_BLOB_VERSION || blob[0] == 2 ||
+                         blob[0] == 1)) {
       if (blob_len <= 1) {
         ESP_LOGW(TAG,
                  "Pump settings blob has no payload; suppressing pump start");
@@ -872,8 +917,10 @@ nvs_store_load_pump_settings(nvs_store_pump_settings_t *out) {
         return NVS_STORE_PUMP_SETTINGS_DEFAULTS_INVALID;
       }
       memcpy(&loaded, blob + 1, copy_len);
-      ESP_LOGD(TAG, "Pump settings loaded from blob (v%d)",
-               NVS_PUMP_BLOB_VERSION);
+      if (blob[0] < NVS_PUMP_BLOB_VERSION) {
+        load_legacy_wash_keys(handle, &loaded);
+      }
+      ESP_LOGD(TAG, "Pump settings loaded from blob (v%d)", blob[0]);
     } else {
       ESP_LOGW(TAG,
                "Incompatible blob version or format; suppressing pump start");
@@ -937,6 +984,8 @@ nvs_store_load_pump_settings(nvs_store_pump_settings_t *out) {
         load_u8_key(handle, NVS_PUMP_KEY_T1_START, &timer1_start);
     esp_err_t t2_ret =
         load_u8_key(handle, NVS_PUMP_KEY_T2_START, &timer2_start);
+
+    load_legacy_wash_keys(handle, &loaded);
     nvs_close(handle);
     if ((t1_ret != ESP_OK && t1_ret != ESP_ERR_NVS_NOT_FOUND) ||
         (t2_ret != ESP_OK && t2_ret != ESP_ERR_NVS_NOT_FOUND)) {
@@ -963,6 +1012,13 @@ nvs_store_load_pump_settings(nvs_store_pump_settings_t *out) {
   }
   if (!pump_settings_valid(&loaded)) {
     return NVS_STORE_PUMP_SETTINGS_DEFAULTS_INVALID;
+  }
+
+  /* Automatically upgrade older blob versions (v1, v2) to current blob version (v3) */
+  if (blob_err == ESP_OK && blob[0] < NVS_PUMP_BLOB_VERSION) {
+    nvs_store_save_pump_settings(&loaded);
+    ESP_LOGI(TAG, "Migrated pump settings blob from v%d to v%d", blob[0],
+             NVS_PUMP_BLOB_VERSION);
   }
 
   *out = loaded;
@@ -1025,6 +1081,38 @@ bool nvs_store_clear_pump_settings(void) {
   if (!erase_optional_key(handle, NVS_PUMP_KEY_T2_START))
     ok = false;
   if (!erase_optional_key(handle, NVS_PUMP_KEY_AUTO_START))
+    ok = false;
+  if (!erase_optional_key(handle, NVS_PUMP_KEY_WASH_ON))
+    ok = false;
+  if (!erase_optional_key(handle, NVS_PUMP_KEY_WASH_OFF))
+    ok = false;
+  if (!erase_optional_key(handle, NVS_PUMP_KEY_WASH_START))
+    ok = false;
+  if (!erase_optional_key(handle, NVS_PUMP_KEY_WASH_AUTOSTART))
+    ok = false;
+  if (!erase_optional_key(handle, "w_set1_on"))
+    ok = false;
+  if (!erase_optional_key(handle, "w_set1_off"))
+    ok = false;
+  if (!erase_optional_key(handle, "w_set1_start"))
+    ok = false;
+  if (!erase_optional_key(handle, "w_set2_on"))
+    ok = false;
+  if (!erase_optional_key(handle, "w_set2_off"))
+    ok = false;
+  if (!erase_optional_key(handle, "w_set2_start"))
+    ok = false;
+  if (!erase_optional_key(handle, "w_autostart"))
+    ok = false;
+  if (!erase_optional_key(handle, "rel1_pol"))
+    ok = false;
+  if (!erase_optional_key(handle, "rel2_pol"))
+    ok = false;
+  if (!erase_optional_key(handle, "flt_gpio"))
+    ok = false;
+  if (!erase_optional_key(handle, "rel1_gpio"))
+    ok = false;
+  if (!erase_optional_key(handle, "rel2_gpio"))
     ok = false;
 
   if (ok && nvs_commit(handle) != ESP_OK)
