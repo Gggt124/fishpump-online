@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tb-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-thingsboard}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-thingsboard_secret_pass}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - tb-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-thingsboard}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  thingsboard-ce:
+    image: thingsboard/tb-node:latest
+    container_name: tb-node
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${TB_HTTP_PORT:-8080}:8080"
+      - "${TB_MQTT_PORT:-1883}:1883"
+    environment:
+      TB_QUEUE_TYPE: ${TB_QUEUE_TYPE:-in-memory}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-thingsboard}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-thingsboard_secret_pass}
+      JAVA_OPTS: ${JAVA_OPTS:--Xms512M -Xmx2G}
+    volumes:
+      - tb-log:/var/log/thingsboard
+      - tb-data:/usr/share/thingsboard/data
+    networks:
+      - tb-net
+
+volumes:
+  postgres-data:
+    name: tb_postgres_data
+  tb-log:
+    name: tb_log_data
+  tb-data:
+    name: tb_app_data
+
+networks:
+  tb-net:
+    name: tb_network
+    driver: bridge
