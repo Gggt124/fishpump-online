@@ -378,53 +378,31 @@ static void pump_tick_cb(void *arg) {
     pump_control_active_set_t target_set =
         (s_confirmed_float_state == PUMP_CONTROL_FLOAT_ON) ? PUMP_CONTROL_SET_2
                                                            : PUMP_CONTROL_SET_1;
-    if (s_water_state.active_set != target_set) {
-      int64_t dwell_ms = (int64_t)s_config.min_dwell_sec * MS_PER_SEC;
-      if ((now_ms - s_water_state.last_set_switch_ms) >= dwell_ms) {
-        s_water_state.active_set = target_set;
-        s_water_state.last_set_switch_ms = now_ms;
-        if (!apply_water_set_start_phase(now_ms)) {
-          goto exit_tick;
-        }
+    int64_t dwell_ms = (int64_t)s_config.min_dwell_sec * MS_PER_SEC;
+    if (s_water_state.active_set != target_set &&
+        (now_ms - s_water_state.last_set_switch_ms) >= dwell_ms) {
+      s_water_state.active_set = target_set;
+      s_water_state.last_set_switch_ms = now_ms;
+      if (!apply_water_set_start_phase(now_ms)) {
+        goto exit_tick;
+      }
+    } else if (now_ms >= s_water_state.phase_deadline_ms) {
+      const pump_control_timer_set_config_t *cfg =
+          get_active_water_set_config(s_water_state.active_set);
+      if (s_water_state.phase == PUMP_CONTROL_PHASE_ON) {
+        s_water_state.phase = PUMP_CONTROL_PHASE_OFF;
+        s_water_state.total_duration_sec = cfg->off_sec;
       } else {
-        if (now_ms >= s_water_state.phase_deadline_ms) {
-          const pump_control_timer_set_config_t *cfg =
-              get_active_water_set_config(s_water_state.active_set);
-          if (s_water_state.phase == PUMP_CONTROL_PHASE_ON) {
-            s_water_state.phase = PUMP_CONTROL_PHASE_OFF;
-            s_water_state.total_duration_sec = cfg->off_sec;
-          } else {
-            s_water_state.phase = PUMP_CONTROL_PHASE_ON;
-            s_water_state.total_duration_sec = cfg->on_sec;
-          }
-          s_water_state.phase_deadline_ms =
-              now_ms + ((int64_t)s_water_state.total_duration_sec * MS_PER_SEC);
-          if (!set_relay1_energized(s_water_state.phase ==
-                                    PUMP_CONTROL_PHASE_ON)) {
-            goto exit_tick;
-          }
-          notify_state_changed();
-        }
+        s_water_state.phase = PUMP_CONTROL_PHASE_ON;
+        s_water_state.total_duration_sec = cfg->on_sec;
       }
-    } else {
-      if (now_ms >= s_water_state.phase_deadline_ms) {
-        const pump_control_timer_set_config_t *cfg =
-            get_active_water_set_config(s_water_state.active_set);
-        if (s_water_state.phase == PUMP_CONTROL_PHASE_ON) {
-          s_water_state.phase = PUMP_CONTROL_PHASE_OFF;
-          s_water_state.total_duration_sec = cfg->off_sec;
-        } else {
-          s_water_state.phase = PUMP_CONTROL_PHASE_ON;
-          s_water_state.total_duration_sec = cfg->on_sec;
-        }
-        s_water_state.phase_deadline_ms =
-            now_ms + ((int64_t)s_water_state.total_duration_sec * MS_PER_SEC);
-        if (!set_relay1_energized(s_water_state.phase ==
-                                  PUMP_CONTROL_PHASE_ON)) {
-          goto exit_tick;
-        }
-        notify_state_changed();
+      s_water_state.phase_deadline_ms =
+          now_ms + ((int64_t)s_water_state.total_duration_sec * MS_PER_SEC);
+      if (!set_relay1_energized(s_water_state.phase ==
+                                PUMP_CONTROL_PHASE_ON)) {
+        goto exit_tick;
       }
+      notify_state_changed();
     }
   } else {
     s_water_state.active_set =
