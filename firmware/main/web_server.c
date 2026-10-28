@@ -2127,7 +2127,13 @@ static bool api_pump_parse_settings_payload(const cJSON *root,
 
   const cJSON *w_on = api_pump_get_item(root, "wash_on", "wash_on_sec");
   if (w_on) {
-    if (!cJSON_IsNumber(w_on) || w_on->valuedouble < APP_TEMPLATE_PUMP_TIMER_MIN_SEC || w_on->valuedouble > APP_TEMPLATE_PUMP_TIMER_MAX_SEC) {
+    if (!cJSON_IsNumber(w_on)) {
+      *error_code = "invalid_type";
+      *error_message = "wash_on";
+      return false;
+    }
+    if (w_on->valuedouble < APP_TEMPLATE_PUMP_TIMER_MIN_SEC ||
+        w_on->valuedouble > APP_TEMPLATE_PUMP_TIMER_MAX_SEC) {
       *error_code = "duration_out_of_range";
       *error_message = "wash_on";
       return false;
@@ -2137,7 +2143,13 @@ static bool api_pump_parse_settings_payload(const cJSON *root,
 
   const cJSON *w_off = api_pump_get_item(root, "wash_off", "wash_off_sec");
   if (w_off) {
-    if (!cJSON_IsNumber(w_off) || w_off->valuedouble < APP_TEMPLATE_PUMP_TIMER_MIN_SEC || w_off->valuedouble > APP_TEMPLATE_PUMP_TIMER_MAX_SEC) {
+    if (!cJSON_IsNumber(w_off)) {
+      *error_code = "invalid_type";
+      *error_message = "wash_off";
+      return false;
+    }
+    if (w_off->valuedouble < APP_TEMPLATE_PUMP_TIMER_MIN_SEC ||
+        w_off->valuedouble > APP_TEMPLATE_PUMP_TIMER_MAX_SEC) {
       *error_code = "duration_out_of_range";
       *error_message = "wash_off";
       return false;

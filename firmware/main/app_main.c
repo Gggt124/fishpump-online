@@ -861,7 +861,8 @@ void app_main(void) {
              cooling_settings_load_status_name(cooling_settings_status));
   }
 
-  bool allow_auto_start = pump_settings.auto_start;
+  bool allow_auto_start =
+      (pump_settings.auto_start || pump_settings.wash_auto_start);
   bool active_hardware_map_valid =
       hardware_map_validate(&active_hardware_map);
   bool hardware_map_safe =
