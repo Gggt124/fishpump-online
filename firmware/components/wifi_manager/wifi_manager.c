@@ -588,7 +588,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
             strlcpy((char *)sta_cfg.sta.ssid, saved_ssid, sizeof(sta_cfg.sta.ssid));
             if (saved_pass[0])
               strlcpy((char *)sta_cfg.sta.password, saved_pass, sizeof(sta_cfg.sta.password));
-            sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+            sta_cfg.sta.threshold.authmode =
+                saved_pass[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
 
             esp_wifi_set_config(WIFI_IF_STA, &sta_cfg);
 
@@ -919,7 +920,8 @@ bool wifi_manager_init(void) {
     if (saved_pass[0]) {
       strlcpy((char *)sta_cfg.sta.password, saved_pass, sizeof(sta_cfg.sta.password));
     }
-    sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    sta_cfg.sta.threshold.authmode =
+        saved_pass[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
     if (esp_wifi_set_config(WIFI_IF_STA, &sta_cfg) != ESP_OK) {
       ESP_LOGW(TAG, "Failed to set saved STA config, will retry on connect");
     }
@@ -1167,7 +1169,8 @@ bool wifi_manager_connect_sta(const char *ssid, const char *password,
   if (password && password[0]) {
     strlcpy((char *)sta_cfg.sta.password, password, sizeof(sta_cfg.sta.password));
   }
-  sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+  sta_cfg.sta.threshold.authmode =
+      (password && password[0]) ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
 
   if (esp_wifi_set_config(WIFI_IF_STA, &sta_cfg) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to set STA config");
