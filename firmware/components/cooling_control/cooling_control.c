@@ -441,6 +441,10 @@ static esp_err_t read_temperature_with_recovery(float *temperature_c) {
     return ret;
   }
 
+  if (s_task_stop) {
+    return ret;
+  }
+
   int64_t now_ms = esp_timer_get_time() / 1000;
   if (s_next_sensor_discovery_ms > now_ms) {
     return ret;
@@ -540,8 +544,14 @@ bool cooling_control_init(const cooling_control_config_t *config) {
   }
 
   s_task_stop = true;
-  for (int i = 0; s_cooling_task && i < 20; i++) {
+  for (int i = 0; s_cooling_task && i < 35; i++) {
     vTaskDelay(pdMS_TO_TICKS(100));
+  }
+
+  if (s_cooling_task != NULL) {
+    ESP_LOGE(TAG,
+             "Cannot re-init cooling control: previous task did not exit in time");
+    return false;
   }
 
   if (xSemaphoreTake(s_cooling_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
