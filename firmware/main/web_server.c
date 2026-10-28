@@ -1012,22 +1012,6 @@ api_pump_add_config_fields(cJSON *root,
   nvs_store_cooling_settings_defaults(&cooling_settings);
   nvs_store_load_cooling_settings(&cooling_settings);
 
-  uint32_t wash_on = 10;
-  uint32_t wash_off = 60;
-  pump_control_start_phase_t wash_start_phase = PUMP_CONTROL_START_PHASE_ON;
-  bool wash_auto_start = false;
-
-  nvs_handle_t nvs_h;
-  if (nvs_open("pump_cfg", NVS_READONLY, &nvs_h) == ESP_OK) {
-    uint32_t val32;
-    uint8_t val8;
-    if (nvs_get_u32(nvs_h, "wash_on", &val32) == ESP_OK) wash_on = val32;
-    if (nvs_get_u32(nvs_h, "wash_off", &val32) == ESP_OK) wash_off = val32;
-    if (nvs_get_u8(nvs_h, "wash_start", &val8) == ESP_OK) wash_start_phase = (pump_control_start_phase_t)val8;
-    if (nvs_get_u8(nvs_h, "wash_autostart", &val8) == ESP_OK) wash_auto_start = (val8 != 0);
-    nvs_close(nvs_h);
-  }
-
   cJSON_AddNumberToObject(root, "water_set1_on", settings->timer1_on_sec);
   cJSON_AddNumberToObject(root, "water_set1_off", settings->timer1_off_sec);
   cJSON_AddStringToObject(
@@ -1038,13 +1022,13 @@ api_pump_add_config_fields(cJSON *root,
   cJSON_AddStringToObject(
       root, "water_set2_start_phase",
       hardware_map_timer_start_phase_name(settings->timer2_start_phase));
-  cJSON_AddNumberToObject(root, "wash_on", wash_on);
-  cJSON_AddNumberToObject(root, "wash_off", wash_off);
+  cJSON_AddNumberToObject(root, "wash_on", settings->wash_on_sec);
+  cJSON_AddNumberToObject(root, "wash_off", settings->wash_off_sec);
   cJSON_AddStringToObject(
       root, "wash_start_phase",
-      wash_start_phase == PUMP_CONTROL_START_PHASE_ON ? "ON" : "OFF");
+      settings->wash_start_phase == HARDWARE_TIMER_START_PHASE_ON ? "ON" : "OFF");
   cJSON_AddBoolToObject(root, "water_auto_start", settings->auto_start);
-  cJSON_AddBoolToObject(root, "wash_auto_start", wash_auto_start);
+  cJSON_AddBoolToObject(root, "wash_auto_start", settings->wash_auto_start);
 
   cJSON_AddNumberToObject(root, "timer1_on_sec", settings->timer1_on_sec);
   cJSON_AddNumberToObject(root, "timer1_off_sec", settings->timer1_off_sec);
@@ -2139,6 +2123,47 @@ static bool api_pump_parse_settings_payload(const cJSON *root,
     *error_code = "invalid_start_phase";
     *error_message = "timer2_start_phase";
     return false;
+  }
+
+  const cJSON *w_on = api_pump_get_item(root, "wash_on", "wash_on_sec");
+  if (w_on) {
+    if (!cJSON_IsNumber(w_on) || w_on->valuedouble < APP_TEMPLATE_PUMP_TIMER_MIN_SEC || w_on->valuedouble > APP_TEMPLATE_PUMP_TIMER_MAX_SEC) {
+      *error_code = "duration_out_of_range";
+      *error_message = "wash_on";
+      return false;
+    }
+    settings->wash_on_sec = (uint32_t)w_on->valuedouble;
+  }
+
+  const cJSON *w_off = api_pump_get_item(root, "wash_off", "wash_off_sec");
+  if (w_off) {
+    if (!cJSON_IsNumber(w_off) || w_off->valuedouble < APP_TEMPLATE_PUMP_TIMER_MIN_SEC || w_off->valuedouble > APP_TEMPLATE_PUMP_TIMER_MAX_SEC) {
+      *error_code = "duration_out_of_range";
+      *error_message = "wash_off";
+      return false;
+    }
+    settings->wash_off_sec = (uint32_t)w_off->valuedouble;
+  }
+
+  const cJSON *w_start = cJSON_GetObjectItem(root, "wash_start_phase");
+  if (w_start) {
+    hardware_timer_start_phase_t sp;
+    if (!api_pump_parse_start_phase(w_start, &sp) || !hardware_map_timer_start_phase_valid(sp)) {
+      *error_code = "invalid_start_phase";
+      *error_message = "wash_start_phase";
+      return false;
+    }
+    settings->wash_start_phase = sp;
+  }
+
+  const cJSON *w_auto = cJSON_GetObjectItem(root, "wash_auto_start");
+  if (w_auto) {
+    if (!cJSON_IsBool(w_auto)) {
+      *error_code = "invalid_type";
+      *error_message = "wash_auto_start";
+      return false;
+    }
+    settings->wash_auto_start = cJSON_IsTrue(w_auto);
   }
 
   return true;
@@ -3776,55 +3801,6 @@ static esp_err_t handle_api_pump_config_post(httpd_req_t *req) {
   const char *error_message = NULL;
   bool valid = api_pump_parse_settings_payload(root, &settings, &error_code,
                                                &error_message);
-
-  uint32_t wash_on = 10;
-  uint32_t wash_off = 60;
-  pump_control_start_phase_t wash_start_phase = PUMP_CONTROL_START_PHASE_ON;
-  bool wash_auto_start = false;
-
-  pump_control_status_t status = {0};
-  if (pump_control_get_status(&status)) {
-    wash_auto_start = status.wash.auto_start;
-  }
-
-  nvs_handle_t nvs_h;
-  if (nvs_open("pump_cfg", NVS_READONLY, &nvs_h) == ESP_OK) {
-    uint32_t val32;
-    uint8_t val8;
-    if (nvs_get_u32(nvs_h, "wash_on", &val32) == ESP_OK) wash_on = val32;
-    if (nvs_get_u32(nvs_h, "wash_off", &val32) == ESP_OK) wash_off = val32;
-    if (nvs_get_u8(nvs_h, "wash_start", &val8) == ESP_OK) wash_start_phase = (pump_control_start_phase_t)val8;
-    if (nvs_get_u8(nvs_h, "wash_autostart", &val8) == ESP_OK) wash_auto_start = (val8 != 0);
-    nvs_close(nvs_h);
-  }
-
-  const cJSON *w_on_item = cJSON_GetObjectItem(root, "wash_on");
-  if (!w_on_item) w_on_item = cJSON_GetObjectItem(root, "wash_on_sec");
-  if (w_on_item && cJSON_IsNumber(w_on_item) && w_on_item->valuedouble > 0) {
-    wash_on = (uint32_t)w_on_item->valuedouble;
-  }
-
-  const cJSON *w_off_item = cJSON_GetObjectItem(root, "wash_off");
-  if (!w_off_item) w_off_item = cJSON_GetObjectItem(root, "wash_off_sec");
-  if (w_off_item && cJSON_IsNumber(w_off_item) && w_off_item->valuedouble > 0) {
-    wash_off = (uint32_t)w_off_item->valuedouble;
-  }
-
-  const cJSON *w_start_item = cJSON_GetObjectItem(root, "wash_start_phase");
-  if (w_start_item && cJSON_IsString(w_start_item) && w_start_item->valuestring) {
-    hardware_timer_start_phase_t sp;
-    if (api_pump_parse_start_phase(w_start_item, &sp)) {
-      wash_start_phase = (sp == HARDWARE_TIMER_START_PHASE_ON)
-                             ? PUMP_CONTROL_START_PHASE_ON
-                             : PUMP_CONTROL_START_PHASE_OFF;
-    }
-  }
-
-  const cJSON *w_auto_item = cJSON_GetObjectItem(root, "wash_auto_start");
-  if (w_auto_item && cJSON_IsBool(w_auto_item)) {
-    wash_auto_start = cJSON_IsTrue(w_auto_item);
-  }
-
   cJSON_Delete(root);
   if (!valid) {
     return send_api_error(req, error_code, error_message, "400 Bad Request");
@@ -3849,20 +3825,26 @@ static esp_err_t handle_api_pump_config_post(httpd_req_t *req) {
           },
       .wash_timer =
           {
-              .on_sec = wash_on,
-              .off_sec = wash_off,
-              .start_phase = wash_start_phase,
+              .on_sec = settings.wash_on_sec,
+              .off_sec = settings.wash_off_sec,
+              .start_phase = (settings.wash_start_phase == HARDWARE_TIMER_START_PHASE_ON)
+                                 ? PUMP_CONTROL_START_PHASE_ON
+                                 : PUMP_CONTROL_START_PHASE_OFF,
           },
       .water_auto_start = settings.auto_start,
-      .wash_auto_start = wash_auto_start,
+      .wash_auto_start = settings.wash_auto_start,
       .min_dwell_sec = settings.min_dwell_sec,
   };
 
-  nvs_store_save_pump_settings(&settings);
-
-  if (!pump_control_update_config(&update)) {
+  if (!nvs_store_save_pump_settings(&settings)) {
     return send_api_error(req, "settings_save_failed",
                           "Could not save pump settings",
+                          "500 Internal Server Error");
+  }
+
+  if (!pump_control_update_config(&update)) {
+    return send_api_error(req, "settings_apply_failed",
+                          "Could not apply pump settings to runtime",
                           "500 Internal Server Error");
   }
 
