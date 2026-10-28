@@ -191,3 +191,4 @@ TB_QUEUE_TYPE=in-memory
    * Create a test entity in ThingsBoard.
    * Run `./setup.sh down` followed by `./setup.sh`.
    * Verify the test entity is still present.
+

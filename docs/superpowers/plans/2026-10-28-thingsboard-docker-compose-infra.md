@@ -526,3 +526,4 @@ bash -n infra/thingsboard/setup.sh
 bash infra/thingsboard/setup.sh invalid_command || true
 ```
 Expected: `bash -n` succeeds; invalid command shows usage output.
+
