@@ -20,7 +20,7 @@ services:
       start_period: 10s
 
   thingsboard-ce:
-    image: thingsboard/tb-node:latest
+    image: thingsboard/tb-node:${TB_IMAGE_TAG:-4.3.1-latest}
     container_name: tb-node
     restart: unless-stopped
     depends_on:

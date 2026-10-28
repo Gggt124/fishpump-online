@@ -103,7 +103,7 @@ initialize_db() {
         log_success "PostgreSQL is healthy."
 
         log_info "Running ThingsBoard schema installation (this may take 1-2 minutes)..."
-        docker compose run --rm -e INSTALL_TB=true -e LOAD_DEMO=false thingsboard-ce
+        docker compose run --rm -e INSTALL_TB=true -e LOAD_DEMO=true thingsboard-ce
 
         touch "$INIT_MARKER"
         log_success "ThingsBoard database schema successfully initialized."
