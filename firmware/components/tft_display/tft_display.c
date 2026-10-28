@@ -729,10 +729,10 @@ static void tft_display_task(void *pvParameters) {
       }
     }
 
-    bool tel_dirty = atomic_exchange(&s_telemetry_dirty, false);
-    if (tel_dirty) {
-      tft_display_reset_idle_timer();
-    }
+    /* Clear telemetry dirty flag without resetting idle timer.
+     * Backlight idle timer must only be reset by user interactions (physical buttons or Web UI),
+     * NOT by continuous telemetry updates (temp every 2s, pump countdown every 1s). */
+    (void)atomic_exchange(&s_telemetry_dirty, false);
 
     pump_control_status_t pump = {0};
     pump_control_get_status(&pump);
