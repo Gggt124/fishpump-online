@@ -1009,6 +1009,32 @@ void app_main(void) {
       .allow_runtime_control =
           hardware_map_safe && hardware_map_promotion_ok,
       .min_dwell_sec = pump_settings.min_dwell_sec,
+      .water_set1 =
+          {
+              .on_sec = pump_settings.timer1_on_sec,
+              .off_sec = pump_settings.timer1_off_sec,
+              .start_phase = (pump_settings.timer1_start_phase == HARDWARE_TIMER_START_PHASE_ON)
+                                 ? PUMP_CONTROL_START_PHASE_ON
+                                 : PUMP_CONTROL_START_PHASE_OFF,
+          },
+      .water_set2 =
+          {
+              .on_sec = pump_settings.timer2_on_sec,
+              .off_sec = pump_settings.timer2_off_sec,
+              .start_phase = (pump_settings.timer2_start_phase == HARDWARE_TIMER_START_PHASE_ON)
+                                 ? PUMP_CONTROL_START_PHASE_ON
+                                 : PUMP_CONTROL_START_PHASE_OFF,
+          },
+      .wash_timer =
+          {
+              .on_sec = pump_settings.wash_on_sec,
+              .off_sec = pump_settings.wash_off_sec,
+              .start_phase = (pump_settings.wash_start_phase == HARDWARE_TIMER_START_PHASE_ON)
+                                 ? PUMP_CONTROL_START_PHASE_ON
+                                 : PUMP_CONTROL_START_PHASE_OFF,
+          },
+      .water_auto_start = pump_settings.auto_start,
+      .wash_auto_start = pump_settings.wash_auto_start,
   };
   if (pump_control_start_task(&pump_init_context)) {
     ESP_LOGI(TAG, "Pump control initialized successfully");
