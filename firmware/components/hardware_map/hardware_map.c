@@ -18,7 +18,7 @@ _Static_assert(HARDWARE_ROLE_COOLING == HARDWARE_ROLE_COOLING_RELAY, "Role alias
  * ESP32-S3 deliberately excludes:
  * - GPIO 0, 3, 45, 46: strapping pins
  * - GPIO 4: weak pull-up during reset
- * - GPIO 9-14: Unassigned (formerly TFT wiring, archived)
+ * - GPIO 9-14: Unassigned (archived peripheral wiring)
  * - GPIO 19-20: native USB D-/D+
  * - GPIO 21, 38-42, 47: USB OTG download/boot-mode signals
  * - GPIO 27-37: WROOM-1 Octal Flash/PSRAM connections
