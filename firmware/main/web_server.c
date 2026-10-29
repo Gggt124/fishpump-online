@@ -26,7 +26,6 @@
 #include "pump_control.h"
 #include "session.h"
 #include "telemetry_hub.h"
-#include "tft_display.h"
 #include "wifi_manager.h"
 #include <errno.h>
 #include <stdarg.h>
@@ -842,7 +841,7 @@ static bool api_hardware_map_add_options(cJSON *root) {
   return true;
 }
 
-/* Report firmware-locked GPIO pins (TFT, buttons, LEDs) and board identity to
+/* Report firmware-locked GPIO pins (buttons, LEDs) and board identity to
  * the web UI so the hardware page is not hardcoded to one board. Pin values
  * come from existing compile-time macros in app_config.h (not new assignments).
  */
@@ -867,14 +866,6 @@ static bool api_hardware_add_board_info(cJSON *root) {
   cJSON_AddNumberToObject(locked, "ext_btn", (double)APP_CONFIG_EXT_BTN_GPIO);
   cJSON_AddNumberToObject(locked, "ext_led", (double)APP_CONFIG_EXT_LED_GPIO);
   cJSON_AddNumberToObject(locked, "rgb_led", (double)APP_CONFIG_RGB_LED_GPIO);
-  cJSON_AddNumberToObject(locked, "tft_cs", (double)APP_TEMPLATE_TFT_CS_GPIO);
-  cJSON_AddNumberToObject(locked, "tft_rst",
-                          (double)APP_TEMPLATE_TFT_RESET_GPIO);
-  cJSON_AddNumberToObject(locked, "tft_dc", (double)APP_TEMPLATE_TFT_DC_GPIO);
-  cJSON_AddNumberToObject(locked, "tft_mosi",
-                          (double)APP_TEMPLATE_TFT_MOSI_GPIO);
-  cJSON_AddNumberToObject(locked, "tft_sck", (double)APP_TEMPLATE_TFT_SCK_GPIO);
-  cJSON_AddNumberToObject(locked, "tft_led", (double)APP_TEMPLATE_TFT_LED_GPIO);
 
   return true;
 }
@@ -4688,97 +4679,6 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
 
 /* --------------- Server Start --------------- */
 
-/* A9: display wake endpoint — resets backlight idle timer */
-static esp_err_t handle_display_wake(httpd_req_t *req) {
-  tft_display_reset_idle_timer();
-  return send_json(req, "{\"ok\":true}", "200 OK");
-}
-
-/* GET /api/display/config - protected, return current display idle dim setting
- */
-static esp_err_t handle_api_display_config_get(httpd_req_t *req) {
-  if (!require_auth(req)) {
-    return send_json(req, "{\"ok\":false,\"error\":\"unauthorized\"}",
-                     "401 Unauthorized");
-  }
-
-  uint8_t dim_pct = tft_display_get_idle_dim_percent();
-  uint8_t nvs_dim = dim_pct;
-  nvs_store_load_display_settings(&nvs_dim);
-
-  cJSON *root = cJSON_CreateObject();
-  cJSON_AddBoolToObject(root, "ok", true);
-  cJSON_AddNumberToObject(root, "dim_percent", dim_pct);
-  cJSON_AddNumberToObject(root, "nvs_dim_percent", nvs_dim);
-  char *json_str = cJSON_PrintUnformatted(root);
-  esp_err_t ret = send_json(req, json_str, "200 OK");
-  free(json_str);
-  cJSON_Delete(root);
-  return ret;
-}
-
-/* POST /api/display/config - protected, save new display idle dim setting */
-static esp_err_t handle_api_display_config_post(httpd_req_t *req) {
-  if (!require_auth(req)) {
-    return send_json(req, "{\"ok\":false,\"error\":\"unauthorized\"}",
-                     "401 Unauthorized");
-  }
-
-  if (!is_same_origin(req, false)) {
-    return send_api_error(req, "forbidden",
-                          "Cross-origin display config save blocked",
-                          "403 Forbidden");
-  }
-
-  char body[128] = {0};
-  if (!read_request_body(req, body, sizeof(body))) {
-    return send_api_error(req, "empty_body", "Request body is required",
-                          "400 Bad Request");
-  }
-
-  cJSON *root = cJSON_Parse(body);
-  if (!root || !cJSON_IsObject(root)) {
-    if (root)
-      cJSON_Delete(root);
-    return send_api_error(req, "invalid_json", "Expected a JSON object",
-                          "400 Bad Request");
-  }
-
-  cJSON *dim_item = cJSON_GetObjectItemCaseSensitive(root, "dim_percent");
-  if (!cJSON_IsNumber(dim_item) || dim_item->valueint < 0 ||
-      dim_item->valueint > 100) {
-    cJSON_Delete(root);
-    return send_api_error(req, "invalid_parameter",
-                          "dim_percent must be an integer between 0 and 100",
-                          "400 Bad Request");
-  }
-
-  cJSON *save_item = cJSON_GetObjectItemCaseSensitive(root, "save");
-  bool do_save = true;
-  if (cJSON_IsBool(save_item)) {
-    do_save = cJSON_IsTrue(save_item);
-  }
-
-  uint8_t new_dim = (uint8_t)dim_item->valueint;
-  cJSON_Delete(root);
-
-  if (do_save) {
-    if (!nvs_store_save_display_settings(new_dim)) {
-      ESP_LOGE(TAG, "Failed to save display settings to NVS");
-      return send_api_error(req, "save_failed", "Failed to save to NVS",
-                            "500 Internal Server Error");
-    }
-  }
-
-  tft_display_set_idle_dim_percent(new_dim);
-
-  /* A9 UX: Preview the new dim setting immediately instead of waking to 100%.
-   */
-  tft_display_set_brightness(new_dim);
-
-  return send_json(req, "{\"ok\":true}", "200 OK");
-}
-
 typedef struct {
   char *payload;
   size_t len;
@@ -5051,15 +4951,6 @@ static web_route_diag_t s_routes[] = {
     {.uri = "/api/pump/stop",
      .method = HTTP_POST,
      .handler = handle_api_pump_stop},
-    {.uri = "/api/display/wake",
-     .method = HTTP_POST,
-     .handler = handle_display_wake},
-    {.uri = "/api/display/config",
-     .method = HTTP_GET,
-     .handler = handle_api_display_config_get},
-    {.uri = "/api/display/config",
-     .method = HTTP_POST,
-     .handler = handle_api_display_config_post},
     {.uri = "/api/events", .method = HTTP_GET, .handler = handle_api_events},
     {.uri = "/events", .method = HTTP_GET, .handler = handle_api_events},
 };
@@ -5086,13 +4977,6 @@ static esp_err_t handle_instrumented_route(httpd_req_t *req) {
     s_web_diag.peak_active_handlers = s_web_diag.active_handlers;
   }
   taskEXIT_CRITICAL(&s_web_diag_lock);
-
-  if (route->method == HTTP_POST) {
-    /* Do not wake screen for config/preview adjustments */
-    if (strcmp(route->uri, "/api/display/config") != 0) {
-      tft_display_reset_idle_timer();
-    }
-  }
 
   esp_err_t result = route->handler(req);
   uint32_t duration_ms = (uint32_t)((esp_timer_get_time() / 1000) - start_ms);
