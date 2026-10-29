@@ -1554,69 +1554,12 @@ stroke-linejoin="round" class="svg-icon">
 <p>พินถูกล็อคโดยเฟิร์มแวร์</p>
 </div>
 </div>
-<div class="tft-wiring-grid mt-md" lang="en">
+<div class="system-wiring-grid mt-md" lang="en">
 <div><span class="text-muted">BOOT</span> <strong class="mono" id="locked-boot-btn">--</strong></div>
 <div><span class="text-muted">EXT BTN</span> <strong class="mono" id="locked-ext-btn">--</strong></div>
 <div id="locked-led-row"><span class="text-muted">LED</span> <strong class="mono" id="locked-led">--</strong></div>
 <div><span class="text-muted">EXT LED</span> <strong class="mono" id="locked-ext-led">--</strong></div>
 <div id="locked-rgb-led-row" class="hidden"><span class="text-muted">RGB LED</span> <strong class="mono" id="locked-rgb-led">--</strong></div>
-</div>
-</section>
-<section class="section-card hardware-install" id="tft-wiring">
-<div class="section-heading-row">
-<div>
-<h3>จอ TFT <span class="mono text-xs text-muted">ST7789V &middot; SPI</span></h3>
-<p>พินถูกล็อคโดยเฟิร์มแวร์</p>
-</div>
-</div>
-<div class="tft-wiring-grid mt-md" lang="en">
-<div><span class="text-muted">SCK</span> <strong class="mono" id="locked-tft-sck">--</strong></div>
-<div><span class="text-muted">MOSI</span> <strong class="mono" id="locked-tft-mosi">--</strong></div>
-<div><span class="text-muted">CS</span> <strong class="mono" id="locked-tft-cs">--</strong></div>
-<div><span class="text-muted">DC</span> <strong class="mono" id="locked-tft-dc">--</strong></div>
-<div><span class="text-muted">RST</span> <strong class="mono" id="locked-tft-rst">--</strong></div>
-<div><span class="text-muted">LED</span> <strong class="mono" id="locked-tft-led">--</strong></div>
-</div>
-</section>
-<section class="section-card hardware-install" id="screen-timeout-setting">
-<div class="section-heading-row">
-<div>
-<h3>พักหน้าจอ TFT <span class="mono text-xs text-muted">Screen Timeout</span></h3>
-<p>
-หน้าจอจะลดความสว่างเป็นระดับ Idle อัตโนมัติหลัง 5 นาที
-เมื่อไม่มีการสั่งงานผ่าน Web UI หรือไม่มีการกดปุ่ม (Boot หรือปุ่มเสริม)
-ความสว่างจะกลับเป็นปกติเมื่อมีการสั่งงานอีกครั้ง
-</p>
-</div>
-</div>
-<div class="form-group mt-md">
-<div class="dim-setting-wrapper">
-<div class="dim-header-row">
-<label for="input-dim-percent" class="form-label dim-label">
-ความสว่างขณะ Idle <span class="text-muted text-sm">(Dim %)</span>
-</label>
-<span id="dim-percent-label" class="mono text-sm">70%</span>
-</div>
-<div class="dim-controls-row">
-<input
-type="range"
-id="input-dim-percent"
-min="0" max="80" step="1"
-value="70"
-class="range-slider duration-part-fill"
-oninput="updateDimLabel(this.value)"
-/>
-<button id="btn-save-dim" class="btn btn-primary btn-sm" onclick="saveDimSetting()">
-<svg class="label-icon"><use href="#icon-save"></use></svg> บันทึก
-</button>
-</div>
-</div>
-</div>
-<div class="mt-md pt-md flex align-center gap-md screen-timeout-quick-actions">
-<button id="btn-wake-screen" class="btn btn-outline btn-sm" onclick="wakeScreen()">
-<svg class="label-icon"><use href="#icon-sun"></use></svg> เปิดหน้าจอทันที
-</button>
-<span class="text-muted text-sm">คำสั่งด่วน: ใช้เมื่อหน้าจอดับขณะปั๊มหยุดอยู่</span>
 </div>
 </section>
 <section class="section-card hardware-map-panel">

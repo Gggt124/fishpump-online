@@ -4507,8 +4507,8 @@ select.invalid {
 
 
 
-/* === TFT Wiring Styles === */
-.tft-wiring-grid {
+/* === System Wiring Styles === */
+.system-wiring-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     gap: var(--space-2) var(--space-4);
@@ -4518,14 +4518,14 @@ select.invalid {
     border-radius: var(--radius-md);
 }
 
-.tft-wiring-grid div {
+.system-wiring-grid div {
     display: flex;
     justify-content: space-between;
     align-items: center;
     font-size: 0.875rem;
 }
 
-.tft-wiring-grid .mono {
+.system-wiring-grid .mono {
     color: var(--on-surface);
 }
 
@@ -4967,37 +4967,6 @@ select:hover:not(:disabled) {
     min-width: 150px;
 }
 
-/* === Range slider — dim control === */
-.range-slider {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 100%;
-    height: 6px;
-    min-height: 6px;
-    margin: 10px 0;
-    border-radius: 9999px;
-    background: var(--outline-variant);
-    outline: none;
-    cursor: pointer;
-}
-.range-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 18px;
-    height: 18px;
-    border-radius: 9999px;
-    background: var(--primary);
-    cursor: pointer;
-    transition: background-color 150ms ease;
-}
-.range-slider::-webkit-slider-thumb:hover {
-    background: var(--primary-hover);
-}
-.range-slider:focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 2px;
-}
-
 /* ======== Mobile More Menu ======== */
 .mobile-more-menu {
     position: fixed;
@@ -5176,33 +5145,6 @@ select:hover:not(:disabled) {
 
 .alert-banner-top {
     align-items: flex-start;
-}
-
-.dim-setting-wrapper {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-}
-
-.dim-header-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.dim-label {
-    margin: 0;
-}
-
-.dim-controls-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
-}
-
-.screen-timeout-quick-actions {
-    border-top: 1px solid var(--border-color);
-    flex-wrap: wrap;
 }
 
 .icon-sm {

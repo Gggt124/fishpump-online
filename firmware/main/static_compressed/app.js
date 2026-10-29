@@ -2587,7 +2587,6 @@ function initHardwareInstall() {
     wireHardwareForm();
     updateHardwareSaveButton();
     loadHardwareMap();
-    loadDimSetting();
 }
 
 function hardwareEl(id) {
@@ -2819,12 +2818,6 @@ function renderLockedPins(board, lockedPins) {
         'locked-led': lockedPins.led,
         'locked-ext-led': lockedPins.ext_led,
         'locked-rgb-led': lockedPins.rgb_led,
-        'locked-tft-sck': lockedPins.tft_sck,
-        'locked-tft-mosi': lockedPins.tft_mosi,
-        'locked-tft-cs': lockedPins.tft_cs,
-        'locked-tft-dc': lockedPins.tft_dc,
-        'locked-tft-rst': lockedPins.tft_rst,
-        'locked-tft-led': lockedPins.tft_led
     };
     for (var id in map) {
         if (map[id] === undefined || map[id] === null) continue;
@@ -4542,84 +4535,3 @@ function initOta() {
     }
 }
 
-// A9: Wake screen — POST to pump status endpoint to trigger
-//     tft_display_reset_idle_timer() on firmware side.
-//     Does NOT reset via GET /api/status to avoid auto-polling keeping screen on forever.
-function wakeScreen() {
-    apiPost('/api/display/wake', {}, function (err, data) {
-        var btn = document.getElementById('btn-wake-screen');
-        if (btn) {
-            btn.innerHTML = '<svg class="label-icon"><use href="#icon-check-circle"></use></svg> หน้าจอเปิดแล้ว';
-            setTimeout(function () { btn.innerHTML = '<svg class="label-icon"><use href="#icon-sun"></use></svg> เปิดหน้าจอทันที'; }, 2000);
-        }
-    });
-}
-
-var currentSavedDim = null;
-var dimPreviewTimeout = null;
-
-// Load dim setting from API
-function loadDimSetting() {
-    apiGet('/api/display/config', function (err, data) {
-        if (!err && data && data.ok) {
-            var pct = data.dim_percent;
-            currentSavedDim = (data.nvs_dim_percent !== undefined) ? data.nvs_dim_percent : pct;
-
-            var slider = document.getElementById('input-dim-percent');
-            if (slider) slider.value = pct;
-
-            updateDimLabel(pct, true);
-        }
-    });
-}
-
-// Live label update while dragging
-function updateDimLabel(val, skipPreview) {
-    var label = document.getElementById('dim-percent-label');
-    var valInt = parseInt(val, 10);
-
-    if (label) {
-        var displayStr = valInt == 0 ? '0% (ปิดหน้าจอ)' : (valInt + '%');
-        if (currentSavedDim !== null && valInt !== currentSavedDim) {
-            label.innerHTML = '<span class="text-muted">' + currentSavedDim + '% &rarr;</span> ' + displayStr;
-        } else {
-            label.textContent = displayStr;
-        }
-    }
-
-    var btn = document.getElementById('btn-save-dim');
-    if (btn && currentSavedDim !== null) {
-        btn.disabled = (valInt === currentSavedDim);
-    }
-
-    if (!skipPreview) {
-        if (dimPreviewTimeout) {
-            clearTimeout(dimPreviewTimeout);
-        }
-        dimPreviewTimeout = setTimeout(function () {
-            apiPost('/api/display/config', { dim_percent: valInt, save: false }, function () { });
-        }, 100);
-    }
-}
-
-// Save dim setting via API
-function saveDimSetting() {
-    var slider = document.getElementById('input-dim-percent');
-    if (!slider) return;
-    var pct = parseInt(slider.value, 10);
-    var btn = document.getElementById('btn-save-dim');
-    if (btn) btn.disabled = true;
-
-    apiPost('/api/display/config', { dim_percent: pct, save: true }, function (err, data) {
-        if (!err && data && data.ok) {
-            currentSavedDim = pct;
-            if (btn) btn.disabled = true;
-            // Reset label to pure value format without arrow
-            updateDimLabel(pct, true);
-            showToast('บันทึกความสว่าง Idle: ' + pct + '%', 'success');
-        } else {
-            if (btn) btn.disabled = false;
-            showToast('บันทึกไม่สำเร็จ', 'error');
-        }
-    });
-}
