@@ -58,7 +58,6 @@ idf_component_register(
         relay_safe_init
         session
         telemetry_hub
-        tft_display
         wifi_manager
         esp_http_server
         esp_wifi
