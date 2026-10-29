@@ -21,7 +21,6 @@
 #include "relay_safe_init.h"
 #include "session.h"
 #include "telemetry_hub.h"
-#include "tft_display.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "led_strip.h"
@@ -652,9 +651,6 @@ static void hardware_ui_task(void *pvParameters) {
       press_duration_ms += 50;
       release_ticks = 0;
 
-      // Wake TFT backlight on any button press
-      tft_display_reset_idle_timer();
-
       if (press_duration_ms < 2000) {
         s_led_state = LED_STATE_BTN_HOLD_SHORT;
         update_status_leds(s_led_state, 1, 1);
@@ -742,7 +738,6 @@ void app_main(void) {
   esp_log_level_set("cooling_control", ESP_LOG_INFO);
   esp_log_level_set("nvs_store", ESP_LOG_INFO);
   esp_log_level_set("web_server", ESP_LOG_INFO);
-  esp_log_level_set("TFT_DISPLAY", ESP_LOG_INFO);
   esp_log_level_set("wifi_mgr", ESP_LOG_INFO);
   esp_log_level_set("telemetry_hub", ESP_LOG_INFO);
   esp_log_level_set("dns_server",
@@ -815,22 +810,6 @@ void app_main(void) {
                  APP_CONFIG_ROLLBACK_WIFI_TIMEOUT_MS);
       }
     }
-  }
-
-  /* Initialize TFT display */
-  if (tft_display_init() == ESP_OK) {
-    uint8_t dim_pct = tft_display_get_idle_dim_percent();
-    nvs_store_load_display_settings(&dim_pct);
-    tft_display_set_idle_dim_percent(dim_pct);
-    ESP_LOGI(TAG, "TFT idle dim loaded: %u%%", dim_pct);
-
-    tft_clear(TFT_COLOR_BLACK);
-    // Draw centered high-contrast "Booting..." splash screen
-    tft_draw_string_x2(80, 60, "Booting...", TFT_COLOR_GREEN, TFT_COLOR_BLACK);
-    tft_draw_string(44, 110, APP_TEMPLATE_NAME, TFT_COLOR_WHITE,
-                    TFT_COLOR_BLACK);
-    tft_draw_string(136, 135, APP_TEMPLATE_FIRMWARE_VERSION, TFT_COLOR_GRAY,
-                    TFT_COLOR_BLACK);
   }
 
   hardware_map_t active_hardware_map;
@@ -1130,9 +1109,6 @@ void app_main(void) {
   } else {
     ESP_LOGI(TAG, "DNS fallback server started (port 53)");
   }
-
-  /* Start background TFT status update task */
-  tft_display_start_task();
 
   // Start hardware UI/recovery task pinned to Core 1
   xTaskCreatePinnedToCore(hardware_ui_task, "hardware_ui_task", 4096, NULL,
