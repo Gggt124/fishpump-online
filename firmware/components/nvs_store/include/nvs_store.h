@@ -185,7 +185,7 @@ bool nvs_store_rollback_staging(void);
 uint8_t nvs_store_commit_staging(void);
 /**
  * Factory reset: erase the entire NVS partition and re-initialize it.
- * All namespaces (wifi_cfg, pump_cfg, hw_cfg, cool_cfg, disp_cfg, session,
+ * All namespaces (wifi_cfg, pump_cfg, hw_cfg, cool_cfg, session,
  * wifi_prof) are wiped. The caller MUST call esp_restart() after this returns
  * true, as in-RAM state (timers, Wi-Fi, hardware config) is now stale.
  *
@@ -193,9 +193,6 @@ uint8_t nvs_store_commit_staging(void);
  * Returns false if erase or re-init fails; device continues running as-is.
  */
 bool nvs_store_factory_reset(void);
-
-bool nvs_store_load_display_settings(uint8_t *dim_percent_out);
-bool nvs_store_save_display_settings(uint8_t dim_percent);
 
 /**
  * Save a restart reason detail string to NVS (max 31 chars + null).

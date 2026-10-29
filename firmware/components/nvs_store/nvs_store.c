@@ -69,9 +69,6 @@ static const char *TAG = "nvs_store";
 #define NVS_COOL_KEY_MIN_OFF "min_off_s"
 #define NVS_COOL_KEY_RELAY_LOW "relay_low"
 
-#define NVS_DISP_NAMESPACE "disp_cfg"
-#define NVS_DISP_KEY_DIM "dim_pct"
-
 static bool pump_duration_valid(uint32_t seconds) {
   return seconds >= APP_TEMPLATE_PUMP_TIMER_MIN_SEC &&
          seconds <= APP_TEMPLATE_PUMP_TIMER_MAX_SEC;
@@ -1638,7 +1635,7 @@ uint8_t nvs_store_commit_staging(void) {
 
 bool nvs_store_factory_reset(void) {
   /* Wipes ALL namespaces: wifi_cfg, wifi_prof, session, pump_cfg,
-   * hw_cfg, cool_cfg, disp_cfg. OTA/app partitions are NOT affected.
+   * hw_cfg, cool_cfg. OTA/app partitions are NOT affected.
    * Caller must call esp_restart() after this returns true. */
   ESP_LOGW(TAG, "Factory reset: erasing entire NVS partition...");
   esp_err_t ret = nvs_flash_erase();
@@ -1657,29 +1654,6 @@ bool nvs_store_factory_reset(void) {
   return true;
 }
 
-bool nvs_store_load_display_settings(uint8_t *dim_percent_out) {
-  nvs_handle_t h;
-  if (nvs_open(NVS_DISP_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
-    return false;
-  }
-  uint8_t val = *dim_percent_out;
-  if (nvs_get_u8(h, NVS_DISP_KEY_DIM, &val) == ESP_OK) {
-    *dim_percent_out = (val <= 100) ? val : *dim_percent_out;
-  }
-  nvs_close(h);
-  return true;
-}
-
-bool nvs_store_save_display_settings(uint8_t dim_percent) {
-  nvs_handle_t h;
-  if (nvs_open(NVS_DISP_NAMESPACE, NVS_READWRITE, &h) != ESP_OK)
-    return false;
-  esp_err_t err = nvs_set_u8(h, NVS_DISP_KEY_DIM, dim_percent);
-  if (err == ESP_OK)
-    nvs_commit(h);
-  nvs_close(h);
-  return err == ESP_OK;
-}
 
 bool nvs_store_set_restart_detail(const char *detail) {
   if (!detail)
