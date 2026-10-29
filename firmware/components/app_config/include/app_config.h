@@ -94,38 +94,10 @@ extern "C" {
 #define APP_TEMPLATE_PUMP_FLOAT_MIN_DWELL_MIN_SEC 0
 #define APP_TEMPLATE_PUMP_FLOAT_MIN_DWELL_MAX_SEC 3600
 
-/* Master enable flag for TFT Display hardware & background tasks.
- * Set to 1 to enable TFT display, or 0 to completely disable TFT hardware
- * operation while keeping all main code intact. */
-#define APP_CONFIG_TFT_ENABLED 1
-
 /* Master enable flag for relay fault check & alert notification.
  * Set to 1 to enable relay fault lockouts, or 0 to completely disable
  * relay fault lockouts and allow normal system operation without relays. */
 #define APP_CONFIG_RELAY_FAULT_ENABLED 0
-
-/* TFT Display GPIO -- ESP32-S3 SPI2_HOST (FSPI) on safe pins.
- * Octal Flash: GPIO 27-32 internal; Octal PSRAM: GPIO 33-37 internal (DO NOT USE).
- * EMI NOTE: For production environments, add an EXTERNAL 10k pull-up from
- * APP_TEMPLATE_TFT_DC_GPIO to 3V3. */
-#define APP_TEMPLATE_TFT_CS_GPIO 10
-#define APP_TEMPLATE_TFT_RESET_GPIO 14
-#define APP_TEMPLATE_TFT_DC_GPIO 13
-#define APP_TEMPLATE_TFT_MOSI_GPIO 11
-#define APP_TEMPLATE_TFT_SCK_GPIO 12
-#define APP_TEMPLATE_TFT_LED_GPIO 9
-
-// Enable ST7789 panel driver instead of ILI9341 driver
-#define APP_TEMPLATE_TFT_PANEL_ST7789
-
-// ST7789 color order: LCD_RGB_ELEMENT_ORDER_RGB (0) or LCD_RGB_ELEMENT_ORDER_BGR (1)
-#define APP_TEMPLATE_TFT_RGB_ELE_ORDER LCD_RGB_ELEMENT_ORDER_RGB
-
-// ST7789 color inversion: false = normal, true = invert all colors
-#define APP_TEMPLATE_TFT_INVERT_COLOR false
-
-// ST7789 SPI clock: 40MHz minimizes EMI exposure window per frame.
-#define APP_TEMPLATE_TFT_SPI_CLK_HZ (40 * 1000 * 1000)
 
 // SoftAP recovery and rollback timing constants
 #define APP_CONFIG_AP_RECOVERY_TIMEOUT_MS 300000
