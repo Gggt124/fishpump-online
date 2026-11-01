@@ -1,5 +1,5 @@
 {
-    "cmake.sourceDirectory": "C:/Users/Copter/OneDrive/Desktop/fishpump-online/firmware",
+    "cmake.sourceDirectory": "${workspaceFolder}/firmware",
     "idf.currentSetup": "C:\\esp\\v6.0.1\\esp-idf",
     "git.autoRepositoryDetection": "subFolders",
     "git.ignoredRepositories": [
