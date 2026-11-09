@@ -1,0 +1,707 @@
+<html xmlns:o='urn:schemas-microsoft-com:office:office'
+      xmlns:w='urn:schemas-microsoft-com:office:word'
+      xmlns='http://www.w3.org/TR/REC-html40'>
+<head>
+<meta charset="utf-8">
+<title>FishPump ESP32-S3 Firmware — Master System Architecture & Operation Workflow Document</title>
+<!--[if gte mso 9]>
+<xml>
+ <w:WordDocument>
+  <w:View>Print</w:View>
+  <w:Zoom>100</w:Zoom>
+  <w:DoNotOptimizeForBrowser/>
+ </w:WordDocument>
+</xml>
+<![endif]-->
+<style>
+  @page {
+    size: A4 portrait;
+    margin: 2.0cm 2.0cm 2.0cm 2.0cm;
+    mso-header-margin: 1.0cm;
+    mso-footer-margin: 1.0cm;
+  }
+  body {
+    font-family: 'Segoe UI', 'Sarabun', Tahoma, 'Cordia New', sans-serif;
+    font-size: 11pt;
+    line-height: 1.6;
+    color: #1e293b;
+    background-color: #ffffff;
+    margin: 0;
+    padding: 0;
+  }
+  h1, h2, h3, h4 {
+    color: #0f172a;
+    font-weight: 700;
+    margin-top: 18pt;
+    margin-bottom: 6pt;
+    page-break-after: avoid;
+  }
+  h1 {
+    font-size: 20pt;
+    border-bottom: 2.5pt solid #0284c7;
+    padding-bottom: 6pt;
+    color: #0369a1;
+  }
+  h2 {
+    font-size: 14pt;
+    border-bottom: 1pt solid #cbd5e1;
+    padding-bottom: 4pt;
+    color: #0f766e;
+    margin-top: 22pt;
+  }
+  h3 {
+    font-size: 12pt;
+    color: #334155;
+    margin-top: 14pt;
+  }
+  p {
+    margin: 0 0 8pt 0;
+    text-align: justify;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12pt 0;
+    font-size: 10pt;
+    page-break-inside: avoid;
+  }
+  th, td {
+    border: 1pt solid #cbd5e1;
+    padding: 6pt 8pt;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background-color: #f1f5f9;
+    color: #0f172a;
+    font-weight: 600;
+  }
+  tr:nth-child(even) td {
+    background-color: #f8fafc;
+  }
+  .callout {
+    border-left: 4pt solid #0284c7;
+    background-color: #f0f9ff;
+    padding: 10pt 12pt;
+    margin: 12pt 0;
+    border-radius: 0 4pt 4pt 0;
+  }
+  .callout-warning {
+    border-left-color: #f59e0b;
+    background-color: #fffbeb;
+  }
+  .callout-danger {
+    border-left-color: #ef4444;
+    background-color: #fef2f2;
+  }
+  .callout-success {
+    border-left-color: #10b981;
+    background-color: #f0fdf4;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2pt 6pt;
+    font-size: 8.5pt;
+    font-weight: 600;
+    border-radius: 3pt;
+    color: #ffffff;
+  }
+  .badge-core0 { background-color: #0284c7; }
+  .badge-core1 { background-color: #7c3aed; }
+  .badge-safety { background-color: #dc2626; }
+  .badge-nvs { background-color: #d97706; }
+  .badge-telemetry { background-color: #059669; }
+  code, pre {
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 9.5pt;
+  }
+  pre {
+    background-color: #0f172a;
+    color: #f8fafc;
+    padding: 10pt;
+    border-radius: 4pt;
+    overflow-x: auto;
+    margin: 10pt 0;
+    line-height: 1.4;
+  }
+  .code-inline {
+    background-color: #f1f5f9;
+    color: #0f172a;
+    padding: 1pt 4pt;
+    border-radius: 2pt;
+    border: 1pt solid #e2e8f0;
+  }
+  .title-page {
+    text-align: center;
+    padding: 30pt 0 20pt 0;
+    border-bottom: 3pt double #0284c7;
+    margin-bottom: 25pt;
+  }
+  .title-page h1 {
+    font-size: 24pt;
+    border: none;
+    margin-bottom: 8pt;
+    color: #0369a1;
+  }
+  .title-page .subtitle {
+    font-size: 13pt;
+    color: #475569;
+    margin-bottom: 16pt;
+  }
+  .meta-table {
+    width: 80%;
+    margin: 0 auto;
+    border: none;
+  }
+  .meta-table td {
+    border: none;
+    padding: 3pt 6pt;
+    background: transparent !important;
+  }
+</style>
+</head>
+<body>
+
+<div class="title-page">
+  <h1>FISHPUMP ESP32-S3 FIRMWARE</h1>
+  <div class="subtitle">เอกสารหลักอ้างอิงสถาปัตยกรรมระบบ การไหลของข้อมูล และกระบวนการทำงาน<br>
+  (Master System Architecture, Data Flow & Operation Workflow Specification)</div>
+  
+  <table class="meta-table">
+    <tr>
+      <td style="width: 35%; font-weight: bold; text-align: right;">Target Hardware:</td>
+      <td style="text-align: left;">ESP32-S3 WROOM-1-N16R8 (240MHz, 16MB Flash, 8MB PSRAM)</td>
+    </tr>
+    <tr>
+      <td style="font-weight: bold; text-align: right;">Framework / OS:</td>
+      <td style="text-align: left;">ESP-IDF v5.x / FreeRTOS SMP (Dual-Core)</td>
+    </tr>
+    <tr>
+      <td style="font-weight: bold; text-align: right;">Document Version:</td>
+      <td style="text-align: left;">1.0 (Master Release)</td>
+    </tr>
+    <tr>
+      <td style="font-weight: bold; text-align: right;">Status:</td>
+      <td style="text-align: left;"><span class="badge" style="background-color: #16a34a;">Approved / Production Reference</span></td>
+    </tr>
+    <tr>
+      <td style="font-weight: bold; text-align: right;">Interactive Counterpart:</td>
+      <td style="text-align: left;"><code>map.html</code> (Root Visual Dashboard)</td>
+    </tr>
+  </table>
+</div>
+
+<div class="callout callout-success">
+  <strong>วัตถุประสงค์ของเอกสาร (Document Purpose):</strong><br>
+  เอกสาร <code>workflow.doc</code> ฉบับนี้จัดทำขึ้นเพื่อเป็น <strong>"เอกสารอ้างอิงหลัก (Single Source of Truth)"</strong> สำหรับโครงสร้างการทำงานทั้งหมดของระบบเฟิร์มแวร์ FishPump ครอบคลุมการจัดสรรงานของ FreeRTOS Tasks บน CPU Core 0 และ Core 1, วงจรการไหลของข้อมูล (Data Pipelines), การแลกเปลี่ยนข้อมูลผ่าน In-Memory Pub/Sub Telemetry Hub, กลไกความปลอดภัยระดับฮาร์ดแวร์ (Safe Init, Watchdog, Anti-Short Cycle) และกระบวนการ Rollback ป้องกันอุปกรณ์ค้าง (Zero-Brick Architecture) เพื่อใช้อ้างอิงร่วมกับแผนผังแบบมีอนิเมชันใน <code>map.html</code>
+</div>
+
+<!-- ========================================== -->
+<h2>บทที่ 1: ภาพรวมสถาปัตยกรรมและโครงสร้างฮาร์ดแวร์ (System Overview & Physical Pin Mapping)</h2>
+
+<p>
+  ระบบเฟิร์มแวร์ FishPump ถูกออกแบบขึ้นบนสถาปัตยกรรม <strong>Multi-Tasking แบบ Decoupled</strong> โดยแบ่งความรับผิดชอบของแต่ละโมดูลอย่างชัดเจน ควบคุมการทำงานของปั๊มน้ำหมุนเวียน 2 ตัว (Dual Alternating Pumps) พร้อมฟังก์ชันรอบการล้าง (Wash Cycle) และระบบควบคุมอุณหภูมิน้ำหล่อเย็น (Cooling Chiller) ผ่านเว็บเซิร์ฟเวอร์แบบฝังตัว พร้อมระบบสำรองและป้องกันความผิดพลาดระดับสมบูรณ์
+</p>
+
+<h3>1.1 แผนผังการจัดสรรขาพินฮาร์ดแวร์ (Hardware Map & Pin Allocation)</h3>
+<p>
+  การจัดสรรขาพินถูกบริหารจัดการผ่านคอมโพเนนต์ <code>hardware_map</code> ซึ่งรองรับการปรับเปลี่ยนขาพินแบบไดนามิกผ่านหน้าเว็บ และตรวจสอบความถูกต้องเพื่อป้องกันการกำหนดขาชนกัน (Conflict Detection) หรือการนำขาต้องห้าม (Flash/PSRAM Pins) มาใช้งาน:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>สัญญาณ / อุปกรณ์</th>
+      <th>Default GPIO</th>
+      <th>โหมดการทำงาน</th>
+      <th>Logic Polarity</th>
+      <th>ฟังก์ชันความปลอดภัยที่เกี่ยวข้อง</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Dual Pump Relay 1</strong></td>
+      <td>GPIO 10</td>
+      <td>Output (Push-Pull)</td>
+      <td>Active Low (NVS Configurable)</td>
+      <td><code>relay_safe_init</code> ป้องกันรีเลย์กระตุกตอนเปิดเครื่อง, Minimum Dwell Protection</td>
+    </tr>
+    <tr>
+      <td><strong>Dual Pump Relay 2</strong></td>
+      <td>GPIO 11</td>
+      <td>Output (Push-Pull)</td>
+      <td>Active Low (NVS Configurable)</td>
+      <td><code>relay_safe_init</code>, สลับการทำงานตามช่วงเวลา Timer 1 / Timer 2</td>
+    </tr>
+    <tr>
+      <td><strong>Cooling Compressor Relay</strong></td>
+      <td>GPIO 12</td>
+      <td>Output (Push-Pull)</td>
+      <td>Active Low (NVS Configurable)</td>
+      <td>Anti-Short Cycle Min-Off Lockout (ป้องกันคอมเพรสเซอร์พัง), Safe Off on Sensor Fault</td>
+    </tr>
+    <tr>
+      <td><strong>Float Switch (Level Sensor)</strong></td>
+      <td>GPIO 4</td>
+      <td>Input (Pull-up)</td>
+      <td>High = น้ำเต็ม / Low = น้ำแห้ง</td>
+      <td>Software Debounce (100ms), ตัดการทำงานของปั๊มทันทีเมื่อน้ำแห้ง</td>
+    </tr>
+    <tr>
+      <td><strong>DS18B20 1-Wire Temp Sensor</strong></td>
+      <td>GPIO 5</td>
+      <td>Bidirectional (Open-Drain)</td>
+      <td>Digital 1-Wire Protocol</td>
+      <td>CRC Check, Timeout 1000ms, ตรวจจับเซนเซอร์หลุด</td>
+    </tr>
+    <tr>
+      <td><strong>Boot Button (On-Board)</strong></td>
+      <td>GPIO 0</td>
+      <td>Input (Internal Pull-up)</td>
+      <td>Active Low</td>
+      <td>กดค้าง 2-5s: เปิด Recovery AP / กดค้าง >5s: Factory Reset</td>
+    </tr>
+    <tr>
+      <td><strong>External Button</strong></td>
+      <td>GPIO 21</td>
+      <td>Input (Internal Pull-up)</td>
+      <td>Active Low</td>
+      <td>ทำงานขนานกับ Boot Button พร้อมกลไก Mutual Exclusion ป้องกันการกดพร้อมกัน</td>
+    </tr>
+    <tr>
+      <td><strong>Status LED (WS2812 / GPIO)</strong></td>
+      <td>GPIO 48</td>
+      <td>Output</td>
+      <td>Digital / RMT Protocol</td>
+      <td>แสดงสถานะบูต, Staging รอการยืนยัน, Recovery AP, และ Factory Reset</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>1.2 กลไก Glitch-Free Boot (Relay Safe Initialization)</h3>
+<div class="callout callout-warning">
+  <strong>ปัญหาที่แก้ไข:</strong> ในไมโครคอนโทรลเลอร์ทั่วไป ขณะที่เปิดเครื่องหรือรีเซ็ต ขา GPIO อาจลอย (Floating) หรือถูกดึงขึ้น/ลงตามพฤติกรรมเริ่มต้นของชิป ทำให้รีเลย์กระตุกเปิด-ปิดสั้นๆ (Chatter) ซึ่งอาจทำให้ปั๊มหรือคอมเพรสเซอร์กระชากไฟเสียหาย<br>
+  <strong>วิธีแก้ของ FishPump:</strong> ในฟังก์ชันแรกสุดของ <code>app_main()</code> ระบบจะเรียก <code>relay_safe_init_pins()</code> เพื่อสั่งตัดไฟ (Inactive State) บนขารีเลย์ทั้งหมดทันทีก่อนที่โมดูลใดๆ จะถูก Initialized
+</div>
+
+<!-- ========================================== -->
+<h2>บทที่ 2: ผังการทำงานของ FreeRTOS Tasks และ SMP Core Allocation</h2>
+
+<p>
+  ESP32-S3 มีสถาปัตยกรรม Dual-Core Xtensa LX7 (Core 0 และ Core 1) ระบบ FishPump จึงแบ่งแยกภาระงานหนัก (Heavy Network & Web Server) ออกจากงาน Real-Time Logic และ Hardware Control อย่างอิสระเพื่อไม่ให้การประมวลผลเครือข่ายส่งผลกระทบต่อเวลาของปั๊มและระบบเซนเซอร์:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Task Name</th>
+      <th>CPU Core</th>
+      <th>Priority</th>
+      <th>Stack Size</th>
+      <th>ความถี่ / วงรอบ</th>
+      <th>หน้าที่หลักและความรับผิดชอบ</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong><code>app_main</code></strong></td>
+      <td><span class="badge badge-core0">Core 0</span></td>
+      <td>1 (Main)</td>
+      <td>8,192 Bytes</td>
+      <td>5 วินาที (Periodic Loop)</td>
+      <td>Orchestration, ป้อน Watchdog (TWDT), Health Telemetry (Heap, PSRAM, RSSI), ควบคุม Staging Rollback Timer</td>
+    </tr>
+    <tr>
+      <td><strong><code>pump_control_task</code></strong></td>
+      <td><span class="badge badge-core0">Core 0</span></td>
+      <td>5 (High)</td>
+      <td>4,096 Bytes</td>
+      <td>100 ms (Tick)</td>
+      <td>รัน State Machine ของปั๊มน้ำ 1/2, ตรวจสอบ Float Switch, นับเวลาการทำงาน, ป้องกัน Relay Toggle ถี่, ส่ง Event เข้า Telemetry Hub</td>
+    </tr>
+    <tr>
+      <td><strong><code>cooling_control_task</code></strong></td>
+      <td><span class="badge badge-core0">Core 0</span></td>
+      <td>4 (Med-High)</td>
+      <td>4,096 Bytes</td>
+      <td>1,000 ms (1 Hz)</td>
+      <td>อ่านอุณหภูมิ DS18B20 ผ่าน 1-Wire, คำนวณ Hysteresis, ล็อกตัวจับเวลา Compressor Min-Off (ป้องกันคอมเพรสเซอร์พัง), ส่ง Event เข้า Telemetry Hub</td>
+    </tr>
+    <tr>
+      <td><strong><code>hardware_ui_task</code></strong></td>
+      <td><span class="badge badge-core1">Core 1</span></td>
+      <td>2 (Low-Med)</td>
+      <td>4,096 Bytes</td>
+      <td>50 ms (Polling)</td>
+      <td>ตรวจจับการกดปุ่ม Boot/Ext, กรองสัญญาณรบกวน (Debounce), วัดระยะเวลากดค้าง (2-5s Recovery AP / >5s Factory Reset), ขับไฟสถานะ LED</td>
+    </tr>
+    <tr>
+      <td><strong><code>httpd</code> (Web Server)</strong></td>
+      <td><span class="badge badge-core1">Core 1</span></td>
+      <td>5 (High)</td>
+      <td>10,240 Bytes</td>
+      <td>Event-driven (Async)</td>
+      <td>รับส่ง HTTP REST Requests, ตรวจสอบ Session Token, เสิร์ฟไฟล์ Static Assets แบบ Gzip, Push ข้อมูลสดผ่าน SSE Stream</td>
+    </tr>
+    <tr>
+      <td><strong><code>wifi_manager</code> Task</strong></td>
+      <td><span class="badge badge-core0">Core 0</span></td>
+      <td>3 (Medium)</td>
+      <td>4,096 Bytes</td>
+      <td>Event-driven</td>
+      <td>บริหารจัดการสถานะ Wi-Fi AP + STA, ตรวจสอบการเชื่อมต่อหลุด, ดำเนินการ Auto-reconnect พร้อมระบบ Exponential Backoff</td>
+    </tr>
+    <tr>
+      <td><strong><code>dns_server</code> Task</strong></td>
+      <td><span class="badge badge-core1">Core 1</span></td>
+      <td>3 (Medium)</td>
+      <td>3,072 Bytes</td>
+      <td>UDP 53 Listener</td>
+      <td>Captive Portal DNS ดักจับคำขอ Domain ทั้งหมดและตอบกลับด้วย IP ของ AP (<code>192.168.4.1</code>) อัตโนมัติ</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>2.1 ระบบ Task Watchdog Timer (TWDT 10s)</h3>
+<p>
+  ระบบเปิดใช้งาน <code>esp_task_wdt</code> กำหนด Timeout ไว้ที่ <strong>10,000 ms (10 วินาที)</strong> พร้อมตั้งค่า <code>trigger_panic = true</code> โดยมีเงื่อนไขดังนี้:
+</p>
+<ul>
+  <li>Task <code>app_main</code> จะต้องเรียก <code>esp_task_wdt_reset()</code> ในลูปหลักทุก 5 วินาที</li>
+  <li>หากระบบเกิดการติดขัด (Deadlock), เกิด Infinite Loop หรือ Memory Starvation จนลูปไม่สามารถรันได้เกิน 10 วินาที ชิปจะเกิด Panic Reset ทันที และบันทึกสาเหตุลง Flash Memory ก่อนเริ่มระบบใหม่</li>
+  <li>นอกจากนี้ ระบบยังมีฟังก์ชัน <code>web_server_queue_health_check()</code> หาก HTTP Server มีคิวเต็มติดต่อกัน 3 ครั้ง (15 วินาที) ระบบจะสั่ง Restart อัตโนมัติพร้อมบันทึกสาเหตุ <code>HTTP_QUEUE_FULL</code></li>
+</ul>
+
+<!-- ========================================== -->
+<h2>บทที่ 3: ตรรกะการควบคุมและ State Machines (Control Logic & FSM)</h2>
+
+<h3>3.1 Pump Control Finite State Machine</h3>
+<p>
+  การควบคุมปั๊มน้ำคู่แบ่งออกเป็น 2 โหมดหลัก: <strong>โหมดหมุนเวียนน้ำปกติ (Water Run)</strong> และ <strong>โหมดล้างระบบ (Wash Mode)</strong> โดยมีสถานะการทำงานดังนี้:
+</p>
+<pre>
+[POWER ON / BOOT]
+       │
+       ▼
+[PUMP_STATE_IDLE] ◄──────────────────────────────────────────────────┐
+       │                                                             │
+       ├─ (Auto-Start Enabled & Water OK) ──► [PUMP_STATE_WATER_RUN] │
+       ├─ (Manual Web Command: Start Wash) ─► [PUMP_STATE_WASH_RUN]  │
+       │                                                             │
+       ▼                                                             │
+[PUMP_STATE_WATER_RUN]                                               │
+   ├── Timer 1 Active (PUMP 1 ON) ──► Switch Dwell Delay ──► Timer 2 Active (PUMP 2 ON)
+   ├── (Float Switch LOW = น้ำแห้ง) ──► เข้าสู่ [PUMP_STATE_FLOAT_LOW_WAIT] 
+   └── (Manual Web Command: Stop) ────► [PUMP_STATE_IDLE]            │
+                                                                     │
+[PUMP_STATE_FLOAT_LOW_WAIT] ─────────────────────────────────────────┤
+   └── เมื่อระดับน้ำกลับมาปกติ (Float HIGH ต่อเนื่อง 100ms) ──────────┘
+</pre>
+
+<div class="callout">
+  <strong>Minimum Dwell Protection:</strong> ในการสลับการทำงานระหว่าง Relay 1 และ Relay 2 ระบบจะบังคับหน่วงเวลาอย่างน้อยตามค่า <code>min_dwell_sec</code> (ค่าเริ่มต้น 2-5 วินาที) เพื่อให้รีเลย์ตัวเดิมตัดวงจรสมบูรณ์ และลดแรงดันกระชากในท่อ ก่อนที่รีเลย์ตัวใหม่จะเริ่มทำงาน
+</div>
+
+<h3>3.2 Cooling Control Finite State Machine</h3>
+<p>
+  ระบบควบคุมอุณหภูมิใช้การวัดค่าจาก DS18B20 และทำงานแบบ Hysteresis ร่วมกับระบบป้องกันคอมเพรสเซอร์:
+</p>
+<ul>
+  <li><strong>Target Threshold & Hysteresis:</strong> สมมติกำหนดอุณหภูมิเป้าหมายไว้ที่ 25.0°C พร้อม Hysteresis 1.0°C:
+    <ul>
+      <li>เมื่ออุณหภูมิน้ำขึ้นถึง <strong>≥ 26.0°C (Threshold + Hysteresis)</strong> ระบบจะสั่งเปิดรีเลย์คอมเพรสเซอร์</li>
+      <li>คอมเพรสเซอร์จะทำงานจนกระทั่งอุณหภูมิลดลงถึง <strong>≤ 25.0°C (Threshold)</strong> จึงจะสั่งตัดวงจร</li>
+    </ul>
+  </li>
+  <li><strong>Compressor Anti-Short Cycle Lockout:</strong> หลังจากคอมเพรสเซอร์ดับลง ระบบจะเริ่มนับเวลา Lockout อย่างน้อย <code>compressor_min_off_sec</code> (ค่าเริ่มต้น 180 วินาที) โดยในระหว่างนี้คอมเพรสเซอร์จะไม่สามารถสตาร์ตใหม่ได้เด็ดขาด แม้อุณหภูมิจะสูงเกินเกณฑ์ เพื่อป้องกันมอเตอร์คอมเพรสเซอร์ไหม้จากแรงดันน้ำยาที่ยังไม่สมดุล</li>
+  <li><strong>Sensor Fault Fail-Safe:</strong> หากเซนเซอร์ DS18B20 ขาดการเชื่อมต่อ, ค่า CRC ผิดพลาด หรือค่าที่อ่านได้อยู่นอกช่วงใช้งานจริง (-10°C ถึง +85°C) ระบบจะ <strong>สั่งตัดไฟรีเลย์คอมเพรสเซอร์ทันที (Safe Off)</strong> และส่งสัญญาณแจ้งเตือนผ่าน Telemetry Hub</li>
+</ul>
+
+<!-- ========================================== -->
+<h2>บทที่ 4: การไหลของข้อมูลและ In-Memory Telemetry Pub/Sub Bus</h2>
+
+<p>
+  เพื่อลดการพึ่งพากันโดยตรงระหว่างโมดูล (Loose Coupling) ระบบ FishPump นำสถาปัตยกรรม <strong>In-Memory Observer / Pub-Sub</strong> มาใช้ผ่านคอมโพเนนต์ <code>telemetry_hub</code>:
+</p>
+
+<h3>4.1 ผังการไหลของข้อมูล (Data Flow Diagram)</h3>
+<pre>
+┌────────────────────────┐      ┌──────────────────────────┐      ┌──────────────────────┐
+│   pump_control_task    │      │   cooling_control_task   │      │       app_main       │
+│  (Float & Pump Status) │      │  (Temperature & Chiller) │      │  (System Health Stat)│
+└───────────┬────────────┘      └────────────┬─────────────┘      └──────────┬───────────┘
+            │                                │                               │
+    TELEMETRY_EVT_PUMP               TELEMETRY_EVT_COOLING            TELEMETRY_EVT_HEALTH
+   TELEMETRY_EVT_FLOAT                       │                               │
+            │                                │                               │
+            ▼                                ▼                               ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    telemetry_hub                                       │
+│  - Lock: s_telemetry_mutex (Thread-Safe)                                              │
+│  - State Cache: telemetry_snapshot_t (Latest RAM state)                               │
+│  - Dispatch: Iterates subscriber table & executes non-blocking callbacks              │
+└───────────────────────────────────────────┬────────────────────────────────────────────┘
+                                            │
+                                            ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                               web_server_telemetry_cb                                  │
+│  - Format: แปลงข้อมูล Struct เป็น JSON String                                          │
+│  - Filter: ตรวจสอบจำนวนไคลเอนต์ SSE ที่เชื่อมต่ออยู่                                  │
+└───────────────────────────────────────────┬────────────────────────────────────────────┘
+                                            │
+                                            ▼
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                        Server-Sent Events (SSE) Stream: /api/events                    │
+│  - Push ตรงสู่เบราว์เซอร์ผ่าน TCP Connection แบบ Persistent (Real-time & Zero Polling)  │
+└───────────────────────────────────────────┬────────────────────────────────────────────┘
+                                            │
+                                            ▼
+                               ┌─────────────────────────┐
+                               │   Web SPA Dashboard     │
+                               │  (User Browser Client)  │
+                               └─────────────────────────┘
+</pre>
+
+<h3>4.2 โครงสร้างข้อมูล Telemetry Event Payload</h3>
+<pre>
+typedef struct {
+    telemetry_event_type_t type; // PUMP, FLOAT, COOLING, HEALTH
+    union {
+        telemetry_pump_payload_t pump;       // active_pump, is_running, elapsed, remaining, relay1, relay2
+        telemetry_float_payload_t float_state;// float_is_high
+        telemetry_cooling_payload_t cooling; // current_temp_c, is_sensor_valid, relay_active, lockout_sec
+        telemetry_health_payload_t health;   // free_heap, free_psram, wifi_rssi, uptime_sec, oom_strikes
+    } data;
+} telemetry_event_t;
+</pre>
+
+<!-- ========================================== -->
+<h2>บทที่ 5: การจัดเก็บข้อมูล NVS และระบบ Zero-Brick Staging Rollback</h2>
+
+<h3>5.1 โครงสร้างตารางจัดเก็บข้อมูล Flash NVS (Namespace: <code>nvs_store</code>)</h3>
+<table>
+  <thead>
+    <tr>
+      <th>NVS Key Name</th>
+      <th>ประเภทข้อมูล</th>
+      <th>คำอธิบายและการใช้งาน</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>wifi_prof</code></td>
+      <td>Blob Struct</td>
+      <td>รายการ Wi-Fi Profiles สูงสุด 5 เครือข่าย (SSID, Password, Auto-Connect Flag, Priority)</td>
+    </tr>
+    <tr>
+      <td><code>pump_sett</code></td>
+      <td>Blob Struct</td>
+      <td>Single Source of Truth: เวลา On/Off Timer 1, Timer 2, Wash Timer, Dwell Time, Active-Low Flags</td>
+    </tr>
+    <tr>
+      <td><code>cool_sett</code></td>
+      <td>Blob Struct</td>
+      <td>อุณหภูมิเป้าหมาย (x10), Hysteresis (x10), Min-Off Time, Relay Polarity, Auto Enable</td>
+    </tr>
+    <tr>
+      <td><code>hw_map</code></td>
+      <td>Blob Struct</td>
+      <td>แผนผังขา GPIO ปัจจุบันที่กำลังใช้งาน (Float, Relay 1, Relay 2, DS18B20, Cooling Relay)</td>
+    </tr>
+    <tr>
+      <td><code>hw_map_pend</code></td>
+      <td>Blob Struct</td>
+      <td>แผนผังขา GPIO ใหม่ที่อยู่ในระหว่างรอการยืนยัน (Pending Staging Slot)</td>
+    </tr>
+    <tr>
+      <td><code>stg_type</code></td>
+      <td>U8 Integer</td>
+      <td>สถานะ Staging: 0 = ยืนยันแล้ว (Normal), 1 = Staging Wi-Fi, 2 = Staging Hardware Map</td>
+    </tr>
+    <tr>
+      <td><code>rst_detail</code></td>
+      <td>String (64B)</td>
+      <td>บันทึกสาเหตุการรีสตาร์ตครั้งล่าสุด (เช่น <code>STAGING_ROLLBACK</code>, <code>HTTP_QUEUE_FULL</code>, <code>factory_reset</code>)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>5.2 ขั้นตอนการทำงานของ Zero-Brick Staging Rollback</h3>
+<p>
+  เมื่อผู้ใช้แก้ไขค่าสำคัญระดับวิกฤต เช่น เปลี่ยนชื่อ Wi-Fi หรือเปลี่ยนขาพิน GPIO ผ่านหน้าเว็บ ระบบจะเข้าสู่กลไก <strong>Staging Pipeline</strong> เพื่อป้องกันเครื่องไม่ให้กลายเป็นก้อนอิฐ (Bricked Device):
+</p>
+<ol>
+  <li>ผู้ใช้ส่งคำขออัปเดตการตั้งค่า $\rightarrow$ ระบบบันทึกค่าลง NVS แต่ยังคงเก็บค่าเดิมสำรองไว้ใน Backup Slot</li>
+  <li>ระบบตั้งค่า <code>stg_type &gt; 0</code> และเริ่มนับตัวจับเวลา <code>s_confirm_timer</code> (180 วินาที) และ <code>s_wifi_timer</code></li>
+  <li>ระบบรีสตาร์ตเพื่อรันด้วยการตั้งค่าใหม่</li>
+  <li>เมื่อเครื่องบูตขึ้นมา ไฟสถานะ LED จะกะพริบเป็นจังหวะพิเศษแจ้งเตือน <code>LED_STATE_STAGING_PENDING</code></li>
+  <li><strong>กรณีสำเร็จ (Happy Path):</strong> ผู้ใช้สามารถเข้าหน้าเว็บผ่านการตั้งค่าใหม่ได้ และกดปุ่ม "Confirm Configuration" ภายใน 180 วินาที $\rightarrow$ ระบบเรียก <code>nvs_store_confirm_staging()</code> เพื่อลบ Backup Slot และตั้งค่า <code>stg_type = 0</code> อย่างถาวร</li>
+  <li><strong>กรณีล้มเหลว (Fallback Path):</strong> หากผู้ใช้ไม่สามารถเข้าหน้าเว็บได้, Wi-Fi ไม่เชื่อมต่อ หรือหมดเวลา 180 วินาที $\rightarrow$ ตัวจับเวลา <code>confirm_timer_cb</code> จะสั่ง Rollback ค่ากลับเป็นเวอร์ชันเดิมทันที, บันทึกข้อความ <code>STAGING_ROLLBACK</code> และรีสตาร์ตเครื่องกลับสู่สภาวะปกติ</li>
+</ol>
+
+<!-- ========================================== -->
+<h2>บทที่ 6: การเชื่อมต่อเครือข่าย Captive Portal และ Web REST Gateway</h2>
+
+<h3>6.1 การทำงานพร้อมกันของ Wi-Fi Dual Mode (AP + STA)</h3>
+<ul>
+  <li><strong>AP Mode (Access Point):</strong> ปล่อยสัญญาณชื่อ <code>FishPump_Setup</code> เสมอ เพื่อให้ช่างเทคนิคหรือผู้ใช้สามารถเชื่อมต่อเข้าไปตั้งค่าได้ตลอดเวลาผ่าน IP: <code>192.168.4.1</code></li>
+  <li><strong>STA Mode (Station):</strong> เกาะสัญญาณ Wi-Fi บ้าน/ฟาร์ม เพื่อให้สามารถควบคุมผ่าน Local Network หรือเข้าผ่าน mDNS: <code>http://fishpump.local</code></li>
+  <li><strong>Captive Portal:</strong> คอมโพเนนต์ <code>dns_server</code> ดักฟังพอร์ต UDP 53 ทุกครั้งที่อุปกรณ์มือถือเชื่อมต่อกับ AP ระบบจะตอบกลับ IP ของตัวมันเอง ทำให้หน้าล็อกอินหรือหน้าตั้งค่าเด้งขึ้นมาบนหน้าจอมือถือทันที</li>
+</ul>
+
+<h3>6.2 ระบบรักษาความปลอดภัยผ่าน Session Authentication</h3>
+<ul>
+  <li>ระบบไม่เปิดให้อนุญาตแก้ไขค่าหากไม่มีการยืนยันตัวตน (Authentication Gate)</li>
+  <li>เมื่อล็อกอินสำเร็จ ระบบจะออก Session Token (ความยาว 32 ไบต์ Hex) ซึ่งมีอายุการใช้งาน 30 นาที (Idle Timeout)</li>
+  <li>Token จะถูกผูกเข้ากับ Client IP Address (IP Binding) เพื่อป้องกันการโจรกรรม Token ข้ามเครื่อง</li>
+  <li>มีระบบ Brute-Force Rate Limiting: หากล็อกอินผิดติดต่อกัน ระบบจะหน่วงเวลาตอบสนองเพื่อป้องกันการเดารหัสผ่าน</li>
+</ul>
+
+<h3>6.3 รายการ API Endpoints สำคัญของระบบ</h3>
+<table>
+  <thead>
+    <tr>
+      <th>URI Path</th>
+      <th>Method</th>
+      <th>Auth Required</th>
+      <th>คำอธิบาย</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>/api/status</code></td>
+      <td>GET</td>
+      <td>No</td>
+      <td>ดึงข้อมูลสรุปสถานะระบบ (Snapshot ล่าสุดจาก Telemetry Hub)</td>
+    </tr>
+    <tr>
+      <td><code>/api/events</code></td>
+      <td>GET</td>
+      <td>No</td>
+      <td>Server-Sent Events (SSE) Stream สำหรับผลักดันข้อมูลสด</td>
+    </tr>
+    <tr>
+      <td><code>/api/login</code></td>
+      <td>POST</td>
+      <td>No</td>
+      <td>เข้าสู่ระบบ ตรวจสอบ Username/Password และรับ Session Token</td>
+    </tr>
+    <tr>
+      <td><code>/api/logout</code></td>
+      <td>POST</td>
+      <td>Yes</td>
+      <td>ยกเลิก Session Token ปัจจุบัน</td>
+    </tr>
+    <tr>
+      <td><code>/api/settings/pump</code></td>
+      <td>GET / POST</td>
+      <td>Yes</td>
+      <td>อ่าน / บันทึกการตั้งค่าตัวจับเวลาของปั๊มน้ำ 1 และ 2</td>
+    </tr>
+    <tr>
+      <td><code>/api/settings/cooling</code></td>
+      <td>GET / POST</td>
+      <td>Yes</td>
+      <td>อ่าน / บันทึกการตั้งค่าอุณหภูมิ, Hysteresis และเวลาตัดต่อของคอมเพรสเซอร์</td>
+    </tr>
+    <tr>
+      <td><code>/api/settings/hardware</code></td>
+      <td>GET / POST</td>
+      <td>Yes</td>
+      <td>อ่าน / บันทึกแผนผังขาพิน GPIO (เข้าสู่ Staging Pipeline)</td>
+    </tr>
+    <tr>
+      <td><code>/api/settings/confirm</code></td>
+      <td>POST</td>
+      <td>Yes</td>
+      <td>ยืนยันการตั้งค่า Staging (ยกเลิก Rollback Timer)</td>
+    </tr>
+    <tr>
+      <td><code>/api/wifi/scan</code></td>
+      <td>GET</td>
+      <td>Yes</td>
+      <td>สั่งสแกนค้นหาสัญญาณ Wi-Fi 2.4GHz บริเวณรอบข้าง</td>
+    </tr>
+    <tr>
+      <td><code>/api/wifi/profiles</code></td>
+      <td>GET / POST</td>
+      <td>Yes</td>
+      <td>บริหารจัดการโปรไฟล์เครือข่าย Wi-Fi ที่บันทึกไว้</td>
+    </tr>
+    <tr>
+      <td><code>/api/ota</code></td>
+      <td>POST</td>
+      <td>Yes</td>
+      <td>อัปโหลดไฟล์ Firmware Binary ใหม่เพื่อทำ Over-The-Air Update</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ========================================== -->
+<h2>บทที่ 7: การกู้คืนฮาร์ดแวร์และการวิเคราะห์ข้อผิดพลาด (Recovery & Observability)</h2>
+
+<h3>7.1 การสั่งงานผ่านปุ่มกดฉุกเฉินบนอุปกรณ์ (Hardware UI Task)</h3>
+<p>
+  ปุ่ม Boot Button (GPIO 0) และปุ่ม External Button (GPIO 21) ถูกอ่านค่าโดย <code>hardware_ui_task</code> ด้วยอัตรา 50ms:
+</p>
+<table>
+  <thead>
+    <tr>
+      <th>ระยะเวลาการกดค้าง</th>
+      <th>สถานะไฟ LED</th>
+      <th>การกระทำของระบบ (System Action)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>0 - 2 วินาที (Short Press)</strong></td>
+      <td>ไฟติดค้างสีขาวชั่วคราว</td>
+      <td>ไม่มีผลต่อสถานะระบบ (Normal click / Debounce check)</td>
+    </tr>
+    <tr>
+      <td><strong>2 - 5 วินาที (Medium Hold)</strong></td>
+      <td>ไฟกะพริบช้า (500ms)</td>
+      <td><strong>Force Recovery AP:</strong> บังคับเปิด Wi-Fi AP <code>FishPump_Setup</code> ทันที แม้จะถูกปิดไว้ เพื่อให้สามารถเชื่อมต่อเข้ามาแก้ไขปัญหาได้</td>
+    </tr>
+    <tr>
+      <td><strong>มากกว่า 5 วินาที (Long Hold)</strong></td>
+      <td>ไฟกะพริบเร็วถี่มาก (100ms)</td>
+      <td><strong>Factory Reset:</strong> สั่งล้างข้อมูล NVS ทั้งหมด (Erase Flash), คืนค่าเป็นค่าเริ่มต้นจากโรงงาน และรีสตาร์ตเครื่องทันที</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>7.2 กลยุทธ์การบันทึก Log สำหรับงาน Production (Log Filtering Strategy)</h3>
+<ul>
+  <li>คอมโพเนนต์ Third-Party (เช่น LwIP, Wi-Fi Driver, HTTPD Driver) จะถูกกดระดับไว้ที่ <code>ESP_LOG_WARN</code> เพื่อลดภาระของ CPU และไม่ให้ขยะข้อความล้น UART</li>
+  <li>คอมโพเนนต์ระดับแอปพลิเคชัน (<code>app_main</code>, <code>pump_control</code>, <code>cooling_control</code>, <code>nvs_store</code>, <code>web_server</code>, <code>telemetry_hub</code>) ถูกตั้งค่าเป็น <code>ESP_LOG_INFO</code> เพื่อให้สามารถตรวจติดตามสถานะและวิเคราะห์ปัญหาหน้างานได้อย่างละเอียด</li>
+</ul>
+
+<!-- ========================================== -->
+<h2>บทที่ 8: คู่มือการปฏิบัติงานและความเชื่อมโยงกับ <code>map.html</code></h2>
+
+<h3>8.1 ความสัมพันธ์ระหว่าง <code>workflow.doc</code> และ <code>map.html</code></h3>
+<ul>
+  <li><strong><code>workflow.doc</code> (เอกสารนี้):</strong> เป็นคู่มือเชิงลึก รายละเอียดระดับข้อกำหนด สเปกเทคนิค ชนิดตัวแปร และกระบวนการทำงาน เหมาะสำหรับการศึกษา ทำความเข้าใจโครงสร้างทั้งหมด และใช้อ้างอิงขณะพัฒนาหรือแก้บั๊ก</li>
+  <li><strong><code>map.html</code> (แผงผัง Interactive):</strong> เป็นแผนภาพเสมือนจริงที่ทำงานแบบ Standalone บนเว็บเบราว์เซอร์ แสดงโครงสร้าง 4 เลเยอร์ มี Particle Motion วิ่งตามเส้นทางข้อมูลจริง สามารถคลิกสลับ Scenario (Boot, Telemetry, Staging Rollback) และคลิกแต่ละ Component เพื่อดูรายละเอียดในรูปแบบ Visual สวยงาม</li>
+</ul>
+
+<h3>8.2 คำสั่งการคอมไพล์และแฟลชระบบ (Build & Flash Commands)</h3>
+<pre>
+# 1. การคอมไพล์เฟิร์มแวร์
+idf.py -C firmware build
+
+# 2. การแฟลชลงชิป ESP32-S3 พร้อมเปิด Terminal ตรวจสอบ Log
+idf.py -C firmware -p COMx flash monitor
+
+# 3. การสร้าง Release Package แบบอัตโนมัติ
+powershell -ExecutionPolicy Bypass -File scripts/build.ps1
+</pre>
+
+<hr style="border: none; border-top: 1pt solid #cbd5e1; margin-top: 30pt;">
+<p style="text-align: center; color: #64748b; font-size: 9pt;">
+  FishPump Online System Architecture &bull; Confirmed & Approved Document &bull; Generated: 2026-11-10
+</p>
+
+</body>
+</html>
