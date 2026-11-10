@@ -219,3 +219,4 @@ Pushes event `cooling` every 1–2 seconds with `current_temp_c`, `output_volts`
 4. **End-to-End Web UI Tests:**
    - Save custom multi-point table via Web UI, reboot ESP32-S3, and confirm settings persist in NVS.
    - Verify SSE updates reflect live temperature and voltage changes in real time.
+

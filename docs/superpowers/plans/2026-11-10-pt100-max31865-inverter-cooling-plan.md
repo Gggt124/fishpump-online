@@ -402,3 +402,4 @@ Verify configuration validation logic, boundary conditions, and memory safety.
 ```bash
 git commit --allow-empty -m "chore: verify firmware build for pt100 inverter cooling control"
 ```
+

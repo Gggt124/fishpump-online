@@ -2,19 +2,15 @@
 
 **Date:** 2026-11-10  
 **Status:** Approved  
-**Target Deliverables:**
-1. `workflow.doc` at repository root (`c:\Users\Copter\OneDrive\Desktop\fishpump-online\workflow.doc`) - Master system architecture, data flow, task orchestration, safety workflows, and operations guide.
-2. `map.html` at repository root (`c:\Users\Copter\OneDrive\Desktop\fishpump-online\map.html`) - Interactive, standalone visual counterpart with SVG and particle motion animations.
+**Target Deliverable:** `map.html` at repository root (`c:\Users\Copter\OneDrive\Desktop\fishpump-online\map.html`)
 
 ---
 
 ## 1. Goal & Overview
 
-To deliver a comprehensive documentation package consisting of:
-1. **Master Architecture & Workflow Document (`workflow.doc`):** A definitive, structured reference document capturing the complete system architecture, FreeRTOS tasks, component interactions, data flow, safety workflows, and operations guide.
-2. **Interactive Architecture & Data Flow Map (`map.html`):** A standalone, interactive visual dashboard with SVG graphics and particle motion animations demonstrating real-time data flow, scenario switching, and component inspection.
+To create a standalone, interactive, visually rich HTML document (`map.html`) visualizing the internal architecture, task relationships, and data flow of the FishPump ESP32-S3 firmware.
 
-Together, these deliverables enable both technical and non-technical stakeholders to understand:
+The document enables both technical and non-technical stakeholders to understand:
 - How components communicate with each other and with `app_main`.
 - How sensor inputs (Float switch, DS18B20 1-Wire) flow through RTOS tasks into `telemetry_hub` and push out via Server-Sent Events (SSE) to the Web client.
 - How control commands flow from Web UI into state machines and drive physical relays.
@@ -128,13 +124,10 @@ Displays the full topology and baseline relationships across all 4 layers simult
 
 ## 6. Verification Plan
 
-1. Verify `workflow.doc` exists at `c:\Users\Copter\OneDrive\Desktop\fishpump-online\workflow.doc`:
-   - Contains complete architectural breakdown, FreeRTOS tasks, component interactions, data flow, safety workflows, and C symbol references.
-   - Formatted for clean native rendering in Word / document viewers.
-2. Verify `map.html` exists at `c:\Users\Copter\OneDrive\Desktop\fishpump-online\map.html`:
+1. Verify file exists at `c:\Users\Copter\OneDrive\Desktop\fishpump-online\map.html`.
+2. Open in browser:
    - Check all 4 layers render correctly without visual overlap.
    - Verify all 4 scenarios switch active animations and path highlights accurately.
    - Test clicking on every component to ensure the Inspector Drawer opens with accurate data and C source references.
    - Verify particle motion runs smoothly with zero console errors.
    - Verify full offline operation with no external network requests.
-
