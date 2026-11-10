@@ -1702,8 +1702,12 @@ static void api_cooling_settings_to_runtime_config(
   if (map_status != NVS_STORE_HARDWARE_MAP_DEFAULTS_ERROR) {
     config->ds18b20_gpio = active_map.ds18b20_data_gpio;
     config->cooling_relay_gpio = active_map.cooling_relay_gpio;
-    config->max31865_cs_gpio = active_map.max31865_cs_gpio;
-    config->cooling_pwm_gpio = active_map.cooling_pwm_gpio;
+    if (GPIO_IS_VALID_OUTPUT_GPIO(active_map.max31865_cs_gpio)) {
+      config->max31865_cs_gpio = active_map.max31865_cs_gpio;
+    }
+    if (GPIO_IS_VALID_OUTPUT_GPIO(active_map.cooling_pwm_gpio)) {
+      config->cooling_pwm_gpio = active_map.cooling_pwm_gpio;
+    }
   }
 
   config->relay_polarity =
@@ -4315,18 +4319,24 @@ static esp_err_t handle_api_cooling_mode_post(httpd_req_t *req) {
     uint16_t test_mv = COOLING_RULE_MAX_OUTPUT_MV;
     const cJSON *tmv = cJSON_GetObjectItem(root, "test_mv");
     const cJSON *tv = cJSON_GetObjectItem(root, "test_volts");
-    if (tmv && cJSON_IsNumber(tmv) && tmv->valuedouble >= 0.0) {
-      double val = tmv->valuedouble;
-      if (val > (double)COOLING_RULE_MAX_OUTPUT_MV) {
-        val = (double)COOLING_RULE_MAX_OUTPUT_MV;
+    if (tmv) {
+      if (!cJSON_IsNumber(tmv) || tmv->valuedouble < 0.0 ||
+          tmv->valuedouble > (double)COOLING_RULE_MAX_OUTPUT_MV) {
+        cJSON_Delete(root);
+        return send_api_error(req, "value_out_of_range",
+                              "test_mv must be a number between 0 and 10000",
+                              "400 Bad Request");
       }
-      test_mv = (uint16_t)round(val);
-    } else if (tv && cJSON_IsNumber(tv) && tv->valuedouble >= 0.0) {
-      double val = tv->valuedouble * 1000.0;
-      if (val > (double)COOLING_RULE_MAX_OUTPUT_MV) {
-        val = (double)COOLING_RULE_MAX_OUTPUT_MV;
+      test_mv = (uint16_t)round(tmv->valuedouble);
+    } else if (tv) {
+      if (!cJSON_IsNumber(tv) || tv->valuedouble < 0.0 ||
+          tv->valuedouble > 10.0) {
+        cJSON_Delete(root);
+        return send_api_error(req, "value_out_of_range",
+                              "test_volts must be a number between 0.0 and 10.0",
+                              "400 Bad Request");
       }
-      test_mv = (uint16_t)round(val);
+      test_mv = (uint16_t)round(tv->valuedouble * 1000.0);
     }
     mode_ok = cooling_control_start_test(test_mv);
   } else {

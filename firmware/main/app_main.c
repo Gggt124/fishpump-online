@@ -469,11 +469,17 @@ apply_cooling_settings_to_config(cooling_control_config_t *config,
     return;
   }
 
-  /* Hardware map pins */
+  /* Hardware map pins with fallbacks if unassigned */
   config->ds18b20_gpio = hardware_map->ds18b20_data_gpio;
   config->cooling_relay_gpio = hardware_map->cooling_relay_gpio;
-  config->max31865_cs_gpio = hardware_map->max31865_cs_gpio;
-  config->cooling_pwm_gpio = hardware_map->cooling_pwm_gpio;
+  config->max31865_cs_gpio =
+      GPIO_IS_VALID_OUTPUT_GPIO(hardware_map->max31865_cs_gpio)
+          ? hardware_map->max31865_cs_gpio
+          : GPIO_NUM_10;
+  config->cooling_pwm_gpio =
+      GPIO_IS_VALID_OUTPUT_GPIO(hardware_map->cooling_pwm_gpio)
+          ? hardware_map->cooling_pwm_gpio
+          : GPIO_NUM_8;
   config->spi_host = SPI2_HOST;
   config->max31865_mosi_gpio = GPIO_NUM_11;
   config->max31865_clk_gpio = GPIO_NUM_12;
@@ -854,12 +860,6 @@ void app_main(void) {
   cooling_control_config_t cooling_config = cooling_control_default_config();
   apply_cooling_settings_to_config(&cooling_config, &cooling_settings,
                                    &active_hardware_map);
-  cooling_config.spi_host = SPI2_HOST;
-  cooling_config.max31865_cs_gpio = GPIO_NUM_10;
-  cooling_config.max31865_mosi_gpio = GPIO_NUM_11;
-  cooling_config.max31865_clk_gpio = GPIO_NUM_12;
-  cooling_config.max31865_miso_gpio = GPIO_NUM_13;
-  cooling_config.cooling_pwm_gpio = GPIO_NUM_8;
   if (cooling_settings_status != NVS_STORE_COOLING_SETTINGS_LOADED) {
     cooling_config.auto_enable = false;
     cooling_config.mode = COOLING_CONTROL_MODE_FORCE_OFF;
