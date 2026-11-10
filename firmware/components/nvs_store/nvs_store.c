@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include <string.h>
 
+#undef nvs_store_cooling_settings_defaults
+#undef nvs_store_load_cooling_settings
+#undef nvs_store_save_cooling_settings
+
 static const char *TAG = "nvs_store";
 
 #define NVS_NAMESPACE "wifi_cfg"
@@ -68,6 +72,9 @@ static const char *TAG = "nvs_store";
 #define NVS_COOL_KEY_TEST_TMO "test_tmo_s"
 #define NVS_COOL_KEY_MIN_OFF "min_off_s"
 #define NVS_COOL_KEY_RELAY_LOW "relay_low"
+#define NVS_COOL_KEY_CURVE_TYPE "curve_type"
+#define NVS_COOL_KEY_POINT_CNT "point_cnt"
+#define NVS_COOL_KEY_RULES "cool_rules"
 
 static bool pump_duration_valid(uint32_t seconds) {
   return seconds >= APP_TEMPLATE_PUMP_TIMER_MIN_SEC &&
@@ -127,16 +134,48 @@ static bool pump_settings_valid(const nvs_store_pump_settings_t *settings) {
          settings->min_dwell_sec <= APP_TEMPLATE_PUMP_FLOAT_MIN_DWELL_MAX_SEC;
 }
 
+static bool cooling_modern_settings_valid(const cooling_settings_t *settings) {
+  if (!settings) {
+    return false;
+  }
+  if (!cooling_validate_settings(settings)) {
+    return false;
+  }
+  if (settings->test_timeout_sec == 0 || settings->test_timeout_sec > 3600) {
+    return false;
+  }
+  if (settings->min_off_sec < 60 || settings->min_off_sec > 86400) {
+    return false;
+  }
+  return true;
+}
+
 static bool
-cooling_settings_valid(const nvs_store_cooling_settings_t *settings) {
-  return settings && settings->threshold_c_x10 >= -550 &&
-         settings->threshold_c_x10 <= 1250 && settings->hysteresis_c_x10 > 0 &&
-         settings->hysteresis_c_x10 <= 500 && settings->test_timeout_sec > 0 &&
-         settings->test_timeout_sec <= 3600 &&
-         settings->compressor_min_off_sec >= 60 &&
-         settings->compressor_min_off_sec <= 86400 &&
-         hardware_map_cooling_mode_valid(settings->mode) &&
-         hardware_map_polarity_valid(settings->relay_polarity);
+cooling_legacy_settings_valid(const nvs_store_cooling_settings_t *settings) {
+  if (!settings) {
+    return false;
+  }
+  if (settings->threshold_c_x10 < -550 || settings->threshold_c_x10 > 1250) {
+    return false;
+  }
+  if (settings->hysteresis_c_x10 <= 0 || settings->hysteresis_c_x10 > 500) {
+    return false;
+  }
+  if (settings->test_timeout_sec == 0 || settings->test_timeout_sec > 3600) {
+    return false;
+  }
+  uint32_t min_off = settings->min_off_sec ? settings->min_off_sec
+                                           : settings->compressor_min_off_sec;
+  if (min_off < 60 || min_off > 86400) {
+    return false;
+  }
+  if (!hardware_map_cooling_mode_valid(settings->mode)) {
+    return false;
+  }
+  if (!hardware_map_polarity_valid(settings->relay_polarity)) {
+    return false;
+  }
+  return true;
 }
 
 static esp_err_t load_u32_key(nvs_handle_t handle, const char *key,
@@ -1347,24 +1386,15 @@ bool nvs_store_hardware_reboot_required(bool *reboot_required) {
   return true;
 }
 
-void nvs_store_cooling_settings_defaults(nvs_store_cooling_settings_t *out) {
+void nvs_store_cooling_settings_defaults(cooling_settings_t *out) {
   if (!out) {
     return;
   }
-
-  out->threshold_c_x10 = APP_TEMPLATE_COOLING_THRESHOLD_C_X10;
-  out->hysteresis_c_x10 = APP_TEMPLATE_COOLING_HYSTERESIS_C_X10;
-  out->auto_enable = APP_TEMPLATE_COOLING_AUTO_ENABLE_DEFAULT;
-  out->mode = HARDWARE_COOLING_MODE_FORCE_OFF;
-  out->test_timeout_sec = APP_TEMPLATE_COOLING_TEST_TIMEOUT_SEC;
-  out->compressor_min_off_sec = APP_TEMPLATE_COOLING_MIN_OFF_SEC;
-  out->relay_polarity = APP_TEMPLATE_HW_DEFAULT_COOLING_RELAY_ACTIVE_LOW
-                            ? HARDWARE_RELAY_ACTIVE_LOW
-                            : HARDWARE_RELAY_ACTIVE_HIGH;
+  cooling_settings_set_defaults(out);
 }
 
 nvs_store_cooling_settings_load_status_t
-nvs_store_load_cooling_settings(nvs_store_cooling_settings_t *out) {
+nvs_store_load_cooling_settings(cooling_settings_t *out) {
   if (!out) {
     return NVS_STORE_COOLING_SETTINGS_DEFAULTS_ERROR;
   }
@@ -1382,44 +1412,85 @@ nvs_store_load_cooling_settings(nvs_store_cooling_settings_t *out) {
     return NVS_STORE_COOLING_SETTINGS_DEFAULTS_ERROR;
   }
 
-  nvs_store_cooling_settings_t loaded = {0};
-  nvs_store_cooling_settings_defaults(&loaded);
+  cooling_settings_t loaded = {0};
+  cooling_settings_set_defaults(&loaded);
+
   uint8_t auto_enable = 0;
-  uint8_t mode = 0;
-  bool relay_active_low = APP_TEMPLATE_HW_DEFAULT_COOLING_RELAY_ACTIVE_LOW;
-  esp_err_t results[] = {
-      nvs_get_i32(handle, NVS_COOL_KEY_THRESHOLD, &loaded.threshold_c_x10),
-      nvs_get_i32(handle, NVS_COOL_KEY_HYST, &loaded.hysteresis_c_x10),
-      nvs_get_u8(handle, NVS_COOL_KEY_AUTO_EN, &auto_enable),
-      nvs_get_u8(handle, NVS_COOL_KEY_MODE, &mode),
-      nvs_get_u32(handle, NVS_COOL_KEY_TEST_TMO, &loaded.test_timeout_sec),
-      nvs_get_u32(handle, NVS_COOL_KEY_MIN_OFF, &loaded.compressor_min_off_sec),
-      load_bool_key(handle, NVS_COOL_KEY_RELAY_LOW, &relay_active_low),
-  };
+  uint8_t curve_type = 0;
+  uint8_t point_cnt = 0;
+  uint32_t min_off = 0;
+  uint32_t test_tmo = 0;
+
+  esp_err_t err_curve = nvs_get_u8(handle, NVS_COOL_KEY_CURVE_TYPE, &curve_type);
+  esp_err_t err_count = nvs_get_u8(handle, NVS_COOL_KEY_POINT_CNT, &point_cnt);
+  esp_err_t err_auto = nvs_get_u8(handle, NVS_COOL_KEY_AUTO_EN, &auto_enable);
+  esp_err_t err_min = nvs_get_u32(handle, NVS_COOL_KEY_MIN_OFF, &min_off);
+  esp_err_t err_tmo = nvs_get_u32(handle, NVS_COOL_KEY_TEST_TMO, &test_tmo);
+
+  size_t blob_len = 0;
+  esp_err_t err_blob_len =
+      nvs_get_blob(handle, NVS_COOL_KEY_RULES, NULL, &blob_len);
+
+  bool has_modern_keys =
+      (err_blob_len == ESP_OK && err_curve == ESP_OK && err_count == ESP_OK);
+
+  if (!has_modern_keys) {
+    int32_t legacy_thresh = 0;
+    esp_err_t legacy_ret =
+        nvs_get_i32(handle, NVS_COOL_KEY_THRESHOLD, &legacy_thresh);
+    nvs_close(handle);
+
+    if (legacy_ret == ESP_OK) {
+      ESP_LOGW(TAG, "Legacy cooling settings found; falling back to "
+                    "multi-point defaults");
+    }
+    return NVS_STORE_COOLING_SETTINGS_DEFAULTS_MISSING;
+  }
+
+  if (point_cnt < COOLING_MIN_RULE_POINTS ||
+      point_cnt > COOLING_MAX_RULE_POINTS) {
+    nvs_close(handle);
+    ESP_LOGE(TAG, "Invalid cooling point_count in NVS: %u", (unsigned)point_cnt);
+    return NVS_STORE_COOLING_SETTINGS_DEFAULTS_INVALID;
+  }
+
+  size_t required_bytes = point_cnt * sizeof(cooling_rule_point_t);
+  if (blob_len < required_bytes || blob_len > sizeof(loaded.points)) {
+    nvs_close(handle);
+    ESP_LOGE(TAG,
+             "Invalid cooling rules blob length in NVS: %zu (expected %zu)",
+             blob_len, required_bytes);
+    return NVS_STORE_COOLING_SETTINGS_DEFAULTS_INVALID;
+  }
+
+  esp_err_t err_rules =
+      nvs_get_blob(handle, NVS_COOL_KEY_RULES, loaded.points, &blob_len);
   nvs_close(handle);
 
-  for (size_t i = 0; i < sizeof(results) / sizeof(results[0]); i++) {
-    if (results[i] == ESP_ERR_NVS_NOT_FOUND) {
-      return NVS_STORE_COOLING_SETTINGS_DEFAULTS_MISSING;
-    }
-    if (results[i] != ESP_OK) {
-      return NVS_STORE_COOLING_SETTINGS_DEFAULTS_INVALID;
-    }
+  if (err_rules != ESP_OK || err_auto != ESP_OK || err_min != ESP_OK ||
+      err_tmo != ESP_OK) {
+    return NVS_STORE_COOLING_SETTINGS_DEFAULTS_INVALID;
+  }
+
+  if (curve_type != (uint8_t)COOLING_CURVE_LINEAR &&
+      curve_type != (uint8_t)COOLING_CURVE_STEP) {
+    return NVS_STORE_COOLING_SETTINGS_DEFAULTS_INVALID;
   }
 
   if (!pump_bool_raw_valid(auto_enable)) {
     return NVS_STORE_COOLING_SETTINGS_DEFAULTS_INVALID;
   }
-  loaded.auto_enable = auto_enable != 0;
-  loaded.mode = (hardware_cooling_mode_t)mode;
-  loaded.relay_polarity =
-      relay_active_low ? HARDWARE_RELAY_ACTIVE_LOW : HARDWARE_RELAY_ACTIVE_HIGH;
 
-  if (loaded.compressor_min_off_sec < 60) {
-    loaded.compressor_min_off_sec = APP_TEMPLATE_COOLING_MIN_OFF_SEC;
-  }
+  loaded.auto_enable = (auto_enable != 0);
+  loaded.curve_type = (cooling_curve_type_t)curve_type;
+  loaded.point_count = point_cnt;
+  loaded.min_off_sec =
+      (min_off < 60) ? APP_TEMPLATE_COOLING_MIN_OFF_SEC : min_off;
+  loaded.test_timeout_sec =
+      (test_tmo == 0) ? APP_TEMPLATE_COOLING_TEST_TIMEOUT_SEC : test_tmo;
 
-  if (!cooling_settings_valid(&loaded)) {
+  if (!cooling_modern_settings_valid(&loaded)) {
+    ESP_LOGE(TAG, "Cooling settings from NVS failed validation");
     return NVS_STORE_COOLING_SETTINGS_DEFAULTS_INVALID;
   }
 
@@ -1427,43 +1498,165 @@ nvs_store_load_cooling_settings(nvs_store_cooling_settings_t *out) {
   return NVS_STORE_COOLING_SETTINGS_LOADED;
 }
 
-bool nvs_store_save_cooling_settings(
-    const nvs_store_cooling_settings_t *settings) {
-  if (!cooling_settings_valid(settings)) {
+bool nvs_store_save_cooling_settings(const cooling_settings_t *settings) {
+  if (!cooling_modern_settings_valid(settings)) {
     return false;
   }
 
   nvs_handle_t handle;
-  if (nvs_open(NVS_COOL_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK)
+  if (nvs_open(NVS_COOL_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) {
     return false;
+  }
 
   bool ok = true;
-  if (nvs_set_i32(handle, NVS_COOL_KEY_THRESHOLD, settings->threshold_c_x10) !=
+  if (nvs_set_u8(handle, NVS_COOL_KEY_CURVE_TYPE,
+                 (uint8_t)settings->curve_type) != ESP_OK)
+    ok = false;
+  if (nvs_set_u8(handle, NVS_COOL_KEY_POINT_CNT, settings->point_count) !=
       ESP_OK)
     ok = false;
-  if (nvs_set_i32(handle, NVS_COOL_KEY_HYST, settings->hysteresis_c_x10) !=
+  if (nvs_set_blob(handle, NVS_COOL_KEY_RULES, settings->points,
+                   settings->point_count * sizeof(cooling_rule_point_t)) !=
       ESP_OK)
     ok = false;
   if (nvs_set_u8(handle, NVS_COOL_KEY_AUTO_EN, settings->auto_enable ? 1 : 0) !=
       ESP_OK)
     ok = false;
-  if (nvs_set_u8(handle, NVS_COOL_KEY_MODE, (uint8_t)settings->mode) != ESP_OK)
+  if (nvs_set_u32(handle, NVS_COOL_KEY_MIN_OFF, settings->min_off_sec) !=
+      ESP_OK)
     ok = false;
   if (nvs_set_u32(handle, NVS_COOL_KEY_TEST_TMO, settings->test_timeout_sec) !=
       ESP_OK)
     ok = false;
-  if (nvs_set_u32(handle, NVS_COOL_KEY_MIN_OFF,
-                  settings->compressor_min_off_sec) != ESP_OK)
-    ok = false;
-  if (nvs_set_u8(handle, NVS_COOL_KEY_RELAY_LOW,
-                 settings->relay_polarity == HARDWARE_RELAY_ACTIVE_LOW
-                     ? 1
-                     : 0) != ESP_OK)
-    ok = false;
 
-  if (ok && nvs_commit(handle) != ESP_OK)
+  /* Backward compatibility legacy keys */
+  if (settings->point_count >= 2) {
+    int32_t t0 = settings->points[0].temp_c_x10;
+    int32_t t_last = settings->points[settings->point_count - 1].temp_c_x10;
+    int32_t hyst = t_last - t0;
+    if (hyst <= 0) {
+      hyst = APP_TEMPLATE_COOLING_HYSTERESIS_C_X10;
+    }
+    nvs_set_i32(handle, NVS_COOL_KEY_THRESHOLD, t0);
+    nvs_set_i32(handle, NVS_COOL_KEY_HYST, hyst);
+  }
+
+  if (ok && nvs_commit(handle) != ESP_OK) {
     ok = false;
+  }
   nvs_close(handle);
+  return ok;
+}
+
+void nvs_store_cooling_settings_legacy_defaults(
+    nvs_store_cooling_settings_t *out) {
+  if (!out) {
+    return;
+  }
+  memset(out, 0, sizeof(*out));
+  cooling_settings_t modern;
+  cooling_settings_set_defaults(&modern);
+  out->curve_type = modern.curve_type;
+  out->point_count = modern.point_count;
+  memcpy(out->points, modern.points, sizeof(modern.points));
+  out->auto_enable = modern.auto_enable;
+  out->min_off_sec = modern.min_off_sec;
+  out->test_timeout_sec = modern.test_timeout_sec;
+
+  out->threshold_c_x10 = APP_TEMPLATE_COOLING_THRESHOLD_C_X10;
+  out->hysteresis_c_x10 = APP_TEMPLATE_COOLING_HYSTERESIS_C_X10;
+  out->mode = HARDWARE_COOLING_MODE_FORCE_OFF;
+  out->compressor_min_off_sec = APP_TEMPLATE_COOLING_MIN_OFF_SEC;
+  out->relay_polarity = APP_TEMPLATE_HW_DEFAULT_COOLING_RELAY_ACTIVE_LOW
+                            ? HARDWARE_RELAY_ACTIVE_LOW
+                            : HARDWARE_RELAY_ACTIVE_HIGH;
+}
+
+nvs_store_cooling_settings_load_status_t
+nvs_store_load_cooling_settings_legacy(nvs_store_cooling_settings_t *out) {
+  if (!out) {
+    return NVS_STORE_COOLING_SETTINGS_DEFAULTS_ERROR;
+  }
+  nvs_store_cooling_settings_legacy_defaults(out);
+
+  cooling_settings_t modern;
+  cooling_settings_set_defaults(&modern);
+  nvs_store_cooling_settings_load_status_t status =
+      nvs_store_load_cooling_settings(&modern);
+
+  if (status == NVS_STORE_COOLING_SETTINGS_LOADED) {
+    out->auto_enable = modern.auto_enable;
+    out->curve_type = modern.curve_type;
+    out->point_count = modern.point_count;
+    memcpy(out->points, modern.points, sizeof(modern.points));
+    out->min_off_sec = modern.min_off_sec;
+    out->compressor_min_off_sec = modern.min_off_sec;
+    out->test_timeout_sec = modern.test_timeout_sec;
+    out->threshold_c_x10 = modern.points[0].temp_c_x10;
+    out->hysteresis_c_x10 = (modern.point_count > 1)
+                                ? (modern.points[1].temp_c_x10 -
+                                   modern.points[0].temp_c_x10)
+                                : APP_TEMPLATE_COOLING_HYSTERESIS_C_X10;
+  }
+
+  nvs_handle_t handle;
+  if (nvs_open(NVS_COOL_NAMESPACE, NVS_READONLY, &handle) == ESP_OK) {
+    uint8_t mode = 0;
+    if (nvs_get_u8(handle, NVS_COOL_KEY_MODE, &mode) == ESP_OK &&
+        hardware_map_cooling_mode_valid((hardware_cooling_mode_t)mode)) {
+      out->mode = (hardware_cooling_mode_t)mode;
+    }
+    bool relay_low = APP_TEMPLATE_HW_DEFAULT_COOLING_RELAY_ACTIVE_LOW;
+    if (load_bool_key(handle, NVS_COOL_KEY_RELAY_LOW, &relay_low) == ESP_OK) {
+      out->relay_polarity =
+          relay_low ? HARDWARE_RELAY_ACTIVE_LOW : HARDWARE_RELAY_ACTIVE_HIGH;
+    }
+    nvs_close(handle);
+  }
+
+  return status;
+}
+
+bool nvs_store_save_cooling_settings_legacy(
+    const nvs_store_cooling_settings_t *settings) {
+  if (!cooling_legacy_settings_valid(settings)) {
+    return false;
+  }
+
+  cooling_settings_t modern;
+  cooling_settings_set_defaults(&modern);
+  modern.auto_enable = settings->auto_enable;
+  modern.min_off_sec = settings->min_off_sec ? settings->min_off_sec
+                                             : settings->compressor_min_off_sec;
+  modern.test_timeout_sec = settings->test_timeout_sec;
+
+  if (settings->point_count >= COOLING_MIN_RULE_POINTS &&
+      settings->point_count <= COOLING_MAX_RULE_POINTS) {
+    modern.curve_type = settings->curve_type;
+    modern.point_count = settings->point_count;
+    memcpy(modern.points, settings->points, sizeof(modern.points));
+  } else {
+    modern.curve_type = COOLING_CURVE_LINEAR;
+    modern.point_count = 2;
+    modern.points[0].temp_c_x10 = settings->threshold_c_x10;
+    modern.points[0].output_mv = 5000;
+    modern.points[1].temp_c_x10 =
+        settings->threshold_c_x10 +
+        (settings->hysteresis_c_x10 > 0 ? settings->hysteresis_c_x10 : 20);
+    modern.points[1].output_mv = 10000;
+  }
+
+  bool ok = nvs_store_save_cooling_settings(&modern);
+
+  nvs_handle_t handle;
+  if (nvs_open(NVS_COOL_NAMESPACE, NVS_READWRITE, &handle) == ESP_OK) {
+    nvs_set_u8(handle, NVS_COOL_KEY_MODE, (uint8_t)settings->mode);
+    nvs_set_u8(handle, NVS_COOL_KEY_RELAY_LOW,
+               settings->relay_polarity == HARDWARE_RELAY_ACTIVE_LOW ? 1 : 0);
+    nvs_commit(handle);
+    nvs_close(handle);
+  }
+
   return ok;
 }
 
@@ -1486,6 +1679,12 @@ bool nvs_store_clear_cooling_settings(void) {
   if (!erase_optional_key(handle, NVS_COOL_KEY_MIN_OFF))
     ok = false;
   if (!erase_optional_key(handle, NVS_COOL_KEY_RELAY_LOW))
+    ok = false;
+  if (!erase_optional_key(handle, NVS_COOL_KEY_CURVE_TYPE))
+    ok = false;
+  if (!erase_optional_key(handle, NVS_COOL_KEY_POINT_CNT))
+    ok = false;
+  if (!erase_optional_key(handle, NVS_COOL_KEY_RULES))
     ok = false;
 
   if (ok && nvs_commit(handle) != ESP_OK)

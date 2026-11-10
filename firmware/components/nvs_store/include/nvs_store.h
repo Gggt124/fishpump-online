@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app_config.h"
+#include "cooling_rule_engine.h"
 #include "hardware_map.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -40,6 +41,7 @@ typedef struct {
 } nvs_store_pump_settings_t;
 
 typedef struct {
+  /* Legacy fields preserved for backward compatibility */
   int32_t threshold_c_x10;
   int32_t hysteresis_c_x10;
   bool auto_enable;
@@ -47,6 +49,12 @@ typedef struct {
   uint32_t test_timeout_sec;
   uint32_t compressor_min_off_sec;
   hardware_relay_polarity_t relay_polarity;
+
+  /* Multi-point rule engine settings */
+  cooling_curve_type_t curve_type;
+  uint8_t point_count;
+  cooling_rule_point_t points[COOLING_MAX_RULE_POINTS];
+  uint32_t min_off_sec;
 } nvs_store_cooling_settings_t;
 
 typedef enum {
@@ -172,12 +180,53 @@ bool nvs_store_save_pending_hardware_map(const hardware_map_t *map);
 bool nvs_store_clear_pending_hardware_map(void);
 bool nvs_store_hardware_reboot_required(bool *reboot_required);
 
-void nvs_store_cooling_settings_defaults(nvs_store_cooling_settings_t *out);
+/* Multi-point rule engine cooling settings persistence */
+void nvs_store_cooling_settings_defaults(cooling_settings_t *out);
 nvs_store_cooling_settings_load_status_t
-nvs_store_load_cooling_settings(nvs_store_cooling_settings_t *out);
-bool nvs_store_save_cooling_settings(
-    const nvs_store_cooling_settings_t *settings);
+nvs_store_load_cooling_settings(cooling_settings_t *out);
+bool nvs_store_save_cooling_settings(const cooling_settings_t *settings);
 bool nvs_store_clear_cooling_settings(void);
+
+/* Legacy backward-compatibility helpers for nvs_store_cooling_settings_t */
+void nvs_store_cooling_settings_legacy_defaults(
+    nvs_store_cooling_settings_t *out);
+nvs_store_cooling_settings_load_status_t
+nvs_store_load_cooling_settings_legacy(nvs_store_cooling_settings_t *out);
+bool nvs_store_save_cooling_settings_legacy(
+    const nvs_store_cooling_settings_t *settings);
+
+#if defined(__cplusplus)
+inline void
+nvs_store_cooling_settings_defaults(nvs_store_cooling_settings_t *out) {
+  nvs_store_cooling_settings_legacy_defaults(out);
+}
+inline nvs_store_cooling_settings_load_status_t
+nvs_store_load_cooling_settings(nvs_store_cooling_settings_t *out) {
+  return nvs_store_load_cooling_settings_legacy(out);
+}
+inline bool nvs_store_save_cooling_settings(
+    const nvs_store_cooling_settings_t *settings) {
+  return nvs_store_save_cooling_settings_legacy(settings);
+}
+#else
+#define nvs_store_cooling_settings_defaults(out)                               \
+  _Generic((out),                                                              \
+      nvs_store_cooling_settings_t *: nvs_store_cooling_settings_legacy_defaults, \
+      cooling_settings_t *: (nvs_store_cooling_settings_defaults))(out)
+
+#define nvs_store_load_cooling_settings(out)                                   \
+  _Generic((out),                                                              \
+      nvs_store_cooling_settings_t *: nvs_store_load_cooling_settings_legacy, \
+      cooling_settings_t *: (nvs_store_load_cooling_settings))(out)
+
+#define nvs_store_save_cooling_settings(settings)                              \
+  _Generic((settings),                                                         \
+      nvs_store_cooling_settings_t *: nvs_store_save_cooling_settings_legacy,  \
+      const nvs_store_cooling_settings_t *:                                    \
+          nvs_store_save_cooling_settings_legacy,                              \
+      cooling_settings_t *: (nvs_store_save_cooling_settings),                 \
+      const cooling_settings_t *: (nvs_store_save_cooling_settings))(settings)
+#endif
 bool nvs_store_get_staging_type(uint8_t *type);
 bool nvs_store_stage_wifi(const char *ssid, const char *pass);
 bool nvs_store_stage_creds(const char *user, const char *pass);
