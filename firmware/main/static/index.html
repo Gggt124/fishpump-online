@@ -819,60 +819,82 @@
                             <div class="hero-header-left">
                                 <span class="hero-state-badge" id="cooling-mode-state"><span
                                         class="skeleton">AUTO</span></span>
+                                <span class="cooling-status-pill status-standby" id="cooling-status-pill">STANDBY</span>
                             </div>
                             <div class="hero-header-right">
                                 <div class="runtime-eyebrow" id="cooling-sync-state">กำลังดึงข้อมูลสถานะ...</div>
                             </div>
                         </div>
 
-                        <!-- Middle Row: Temperature vs Target -->
+                        <!-- Middle Row: PT100 Readout & Inverter Output Gauge -->
                         <div class="hero-progress-section cooling-temp-visualization">
-                            <div class="temp-readout-row">
+                            <div class="temp-readout-row cooling-inverter-readout-row">
                                 <div class="temp-current">
-                                    <span class="temp-label">อุณหภูมิปัจจุบัน</span>
+                                    <span class="temp-label">อุณหภูมิน้ำ (PT100)</span>
                                     <strong class="temp-value mono" id="cooling-temperature"><span
-                                            class="skeleton">00.0°C</span></strong>
+                                            class="skeleton">--.- °C</span></strong>
                                 </div>
                                 <div class="temp-section-divider"></div>
-                                <div class="temp-bounds-container">
-                                    <div class="temp-bound-item">
-                                        <span class="temp-bound-label">เริ่มทำความเย็น:</span>
-                                        <span class="temp-bound-value mono" id="cooling-start-temp"><span class="skeleton">00.0°C</span></span>
-                                    </div>
-                                    <div class="temp-bound-item">
-                                        <span class="temp-bound-label">ตัดการทำงาน:</span>
-                                        <span class="temp-bound-value mono text-muted" id="cooling-stop-temp"><span class="skeleton">00.0°C</span></span>
+                                <div class="cooling-inverter-output-group">
+                                    <span class="temp-label">แรงดันขับ Inverter</span>
+                                    <div class="cooling-output-values">
+                                        <strong class="voltage-value mono" id="cooling-voltage-val">0.00 V</strong>
+                                        <span class="duty-badge mono" id="cooling-duty-val">0.0%</span>
                                     </div>
                                 </div>
                             </div>
+
+                            <!-- 0-10V Output Level Gauge / Progress Bar -->
+                            <div class="cooling-gauge-section">
+                                <div class="cooling-gauge-labels">
+                                    <span class="gauge-label-min">0 V</span>
+                                    <span class="gauge-label-current mono" id="cooling-gauge-current-label">0.00 V (0.0%)</span>
+                                    <span class="gauge-label-max">10 V</span>
+                                </div>
+                                <div class="cooling-gauge-container" role="progressbar" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0" id="cooling-gauge-bar">
+                                    <div class="cooling-gauge-fill" id="cooling-gauge-fill" style="width: 0%;"></div>
+                                </div>
+                                <div class="cooling-gauge-ticks">
+                                    <span>0V</span>
+                                    <span>2.5V</span>
+                                    <span>5V</span>
+                                    <span>7.5V</span>
+                                    <span>10V</span>
+                                </div>
+                            </div>
+
+                            <!-- Hidden bounds for backward-compatibility -->
+                            <span class="hidden" id="cooling-start-temp"></span>
+                            <span class="hidden" id="cooling-stop-temp"></span>
                         </div>
 
                         <!-- Bottom Row: Badges & Controls -->
                         <div class="hero-footer">
                             <div class="hero-badges-group">
-                                <!-- Sensor Badge -->
-                                <div class="hero-badge-card" id="cooling-sensor-card" title="สถานะเซนเซอร์ DS18B20">
+                                <!-- Sensor Badge (PT100 MAX31865) -->
+                                <div class="hero-badge-card" id="cooling-sensor-card" title="สถานะเซนเซอร์ PT100 (MAX31865)">
                                     <span class="hero-badge-icon"><svg viewBox="0 0 24 24" stroke="currentColor"
                                             stroke-width="2" fill="none">
                                             <use href="#icon-temp"></use>
                                         </svg></span>
                                     <div class="hero-badge-info">
-                                        <span class="hero-badge-label">SENSOR</span>
+                                        <span class="hero-badge-label">PT100 SENSOR</span>
                                         <span id="cooling-sensor-state" class="hero-badge-value"><span
                                                 class="skeleton">ปกติ</span></span>
                                     </div>
                                 </div>
 
-                                <!-- Relay Badge -->
-                                <div class="hero-badge-card" id="cooling-relay-card" title="สถานะการจ่ายไฟให้พัดลม">
+                                <!-- Inverter VFD Output Badge -->
+                                <div class="hero-badge-card" id="cooling-inverter-card" title="สถานะแรงดัน Inverter (0-10V)">
                                     <span class="hero-badge-icon"><svg viewBox="0 0 24 24" stroke="currentColor"
                                             stroke-width="2" fill="none">
                                             <use href="#icon-power"></use>
                                         </svg></span>
                                     <div class="hero-badge-info">
-                                        <span class="hero-badge-label">FAN RELAY</span>
-                                        <span id="cooling-relay-state" class="hero-badge-value"><span
-                                                class="skeleton">OFF</span></span>
+                                        <span class="hero-badge-label">INVERTER 0-10V</span>
+                                        <span id="cooling-inverter-state" class="hero-badge-value mono"><span
+                                                class="skeleton">0.00 V</span></span>
+                                        <span id="cooling-relay-state" class="hidden"></span>
                                     </div>
                                 </div>
 
@@ -918,6 +940,10 @@
                                         class="label-icon">
                                         <use href="#icon-play"></use>
                                     </svg> Test ON</button>
+                                <button class="btn btn-secondary" id="cooling-open-modal-btn" type="button"><svg
+                                        class="label-icon">
+                                        <use href="#icon-gear"></use>
+                                    </svg> ตั้งค่ากฎความเย็น (<span lang="en">Rules</span>)</button>
                                 <span class="runtime-action-state" id="cooling-mode-action-state"
                                     aria-live="polite"></span>
                             </div>
@@ -929,130 +955,60 @@
                         <div class="hidden" id="cooling-auto-enable-state"></div>
                     </section>
 
-                    <!-- Cooling Settings -->
-                    <details class="settings-collapsible cooling-settings">
-                        <summary aria-expanded="false" aria-controls="cooling-config-form">
-                            <div>
-                                <h3 class="settings-title"><svg class="label-icon settings-header-icon">
-                                        <use href="#icon-fan"></use>
-                                    </svg> ตั้งค่าระบบทำความเย็น (<span lang="en">Cooling Settings</span>)</h3>
-                            </div>
-                            <span class="settings-state settings-state-label"
-                                id="cooling-config-state">กำลังโหลดการตั้งค่า...</span>
-                            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2"
-                                fill="none" stroke-linecap="round" stroke-linejoin="round" class="chevron-icon">
-                                <polyline points="6 9 12 15 18 9"></polyline>
-                            </svg>
-                        </summary>
-                        <div class="settings-body">
-                            <p class="settings-intro-text">ปรับอุณหภูมิและรอบหน่วงเวลาความปลอดภัยสำหรับการทำความเย็น</p>
-                            <form id="cooling-config-form" novalidate class="settings-form">
-                                <section class="settings-system-block settings-system-cooling" aria-labelledby="cooling-settings-heading">
-                                    <header class="settings-system-header">
-                                        <div class="settings-system-header-left">
-                                            <div class="header-icon-box icon-box-cooling">
-                                                <svg class="header-icon"><use href="#icon-cooling"></use></svg>
-                                            </div>
-                                            <div class="card-title-group">
-                                                <div class="card-title-row">
-                                                    <h4 class="settings-system-title" id="cooling-settings-heading">พารามิเตอร์ทำความเย็น</h4>
-                                                    <span class="subsystem-tag tag-cooling" lang="en">Cooling</span>
-                                                </div>
-                                                <span class="settings-system-subtitle">เกณฑ์อุณหภูมิและรอบหน่วงความปลอดภัย</span>
-                                            </div>
-                                        </div>
-                                    </header>
-
-                                    <nav class="settings-segment-bar" role="tablist" aria-orientation="horizontal" aria-label="Cooling parameter groups">
-                                        <button type="button" class="settings-segment-btn active" role="tab" id="tab-cooling-temp" aria-selected="true" aria-controls="cooling-temp-settings-panel" data-settings-tab="cooling-temp" tabindex="0">เกณฑ์อุณหภูมิ</button>
-                                        <button type="button" class="settings-segment-btn" role="tab" id="tab-cooling-time" aria-selected="false" aria-controls="cooling-time-settings-panel" data-settings-tab="cooling-time" tabindex="-1">เวลา / ความปลอดภัย</button>
-                                    </nav>
-
-                                    <div class="settings-tab-panel active" id="cooling-temp-settings-panel" role="tabpanel" aria-labelledby="tab-cooling-temp" aria-hidden="false" data-settings-panel="cooling-temp">
-                                        <div class="timer-card-panel timer-set-panel" id="cooling-card-panel">
-                                            <p class="timer-set-desc">กำหนดจุดเริ่มทำความเย็นและช่วง hysteresis</p>
-                                            <div class="durations-row">
-                                                <div class="time-input-group">
-                                                    <div class="group-label"><label for="cooling-threshold-input">เริ่มทำความเย็น (°C)</label></div>
-                                                    <div class="duration-picker-container">
-                                                        <div class="duration-picker">
-                                                            <label class="duration-part duration-part-fill" for="cooling-threshold-input">
-                                                                <input id="cooling-threshold-input" type="number" min="-55" max="125" step="0.1" inputmode="decimal" placeholder="28.0">
-                                                                <span class="duration-label">°C</span>
-                                                            </label>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div class="time-input-group">
-                                                    <div class="group-label"><label for="cooling-hysteresis-input">ส่วนต่างอุณหภูมิ (°C)</label></div>
-                                                    <div class="duration-picker-container">
-                                                        <div class="duration-picker">
-                                                            <label class="duration-part duration-part-fill" for="cooling-hysteresis-input">
-                                                                <input id="cooling-hysteresis-input" type="number" min="0.1" max="50" step="0.1" inputmode="decimal" placeholder="1.0">
-                                                                <span class="duration-label">°C</span>
-                                                            </label>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <p class="settings-preview-hint" id="cooling-threshold-preview" aria-live="polite">เมื่ออุณหภูมิ ≥ -- °C เปิดพัด · ปิดที่ ≤ -- °C</p>
-                                        </div>
-                                    </div>
-
-                                    <div class="settings-tab-panel" id="cooling-time-settings-panel" role="tabpanel" aria-labelledby="tab-cooling-time" aria-hidden="true" data-settings-panel="cooling-time" hidden>
-                                        <div class="timer-card-panel timer-set-panel">
-                                            <p class="timer-set-desc">เวลาทดสอบและช่วง lockout ป้องกันสลับ relay ถี่เกินไป</p>
-                                            <div class="durations-row">
-                                                <div class="time-input-group">
-                                                    <div class="group-label"><label for="cooling-test-timeout">เวลาทดสอบ ON (วินาที)</label></div>
-                                                    <div class="duration-picker-container">
-                                                        <div class="duration-picker">
-                                                            <label class="duration-part duration-part-fill" for="cooling-test-timeout">
-                                                                <input id="cooling-test-timeout" type="number" min="1" max="3600" step="1" inputmode="numeric" placeholder="30">
-                                                                <span class="duration-label">วินาที</span>
-                                                            </label>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div class="time-input-group">
-                                                    <div class="group-label"><label for="cooling-min-off">เวลาหน่วง (Lockout)</label></div>
-                                                    <div class="duration-picker-container">
-                                                        <div class="duration-picker">
-                                                            <label class="duration-part duration-part-fill" for="cooling-min-off">
-                                                                <input id="cooling-min-off" type="number" min="120" max="86400" step="1" inputmode="numeric" placeholder="180">
-                                                                <span class="duration-label">วินาที</span>
-                                                            </label>
-                                                        </div>
-                                                    </div>
-                                                    <span class="group-hint" id="cooling-lockout-hint"></span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div class="settings-system-footer">
-                                        <label class="toggle-row" for="cooling-auto-enable">
-                                            <div class="toggle-switch"><input id="cooling-auto-enable" type="checkbox" role="switch"><span class="toggle-slider"></span></div>
-                                            <span>
-                                                <span>เปิดทำงานระบบความเย็นอัตโนมัติเมื่อเปิดเครื่อง</span>
-                                                <small>กำหนดให้ทำงานตามอุณหภูมิทันทีเมื่อมีไฟเข้าอุปกรณ์</small>
-                                            </span>
-                                        </label>
-                                    </div>
-                                </section>
-
-                                <div class="settings-actions settings-save-bar" id="cooling-settings-save-bar">
-                                    <div class="settings-button-row">
-                                        <span class="unsaved-warning hidden" id="cooling-unsaved-warning">ตรวจพบการตั้งค่าที่ยังไม่ได้บันทึก</span>
-                                        <button class="btn btn-primary" id="cooling-save-config" type="submit" disabled>
-                                            <svg class="label-icon"><use href="#icon-save"></use></svg> บันทึกการตั้งค่าระบบทำความเย็น
-                                        </button>
-                                    </div>
+                    <!-- Cooling Rule Overview Card -->
+                    <section class="pump-hero-card cooling-rule-summary-card" id="cooling-rule-summary-panel">
+                        <header class="settings-system-header">
+                            <div class="settings-system-header-left">
+                                <div class="header-icon-box icon-box-cooling">
+                                    <svg class="header-icon"><use href="#icon-cooling"></use></svg>
                                 </div>
-                                <div class="pump-alert hidden" id="cooling-config-error"></div>
-                            </form>
+                                <div class="card-title-group">
+                                    <div class="card-title-row">
+                                        <h4 class="settings-system-title">กฎควบคุมการทำงาน (<span lang="en">Cooling Rules</span>)</h4>
+                                        <span class="subsystem-tag tag-cooling" id="cooling-summary-curve-tag">Linear</span>
+                                    </div>
+                                    <span class="settings-system-subtitle">กราฟความสัมพันธ์ระหว่างอุณหภูมิ PT100 กับแรงดันขับ Inverter (0-10V)</span>
+                                </div>
+                            </div>
+                            <div class="settings-system-header-right">
+                                <button type="button" class="btn btn-primary btn-sm" id="cooling-open-modal-btn-2">
+                                    <svg class="label-icon"><use href="#icon-gear"></use></svg> แก้ไขกฎควบคุม
+                                </button>
+                            </div>
+                        </header>
+                        <div class="cooling-summary-body">
+                            <div class="cooling-summary-stats">
+                                <div class="summary-stat-item">
+                                    <span class="summary-stat-label">รูปแบบกราฟ:</span>
+                                    <strong class="summary-stat-value" id="cooling-summary-curve-type">Linear Interpolation</strong>
+                                </div>
+                                <div class="summary-stat-item">
+                                    <span class="summary-stat-label">จำนวนจุดควบคุม:</span>
+                                    <strong class="summary-stat-value mono" id="cooling-summary-point-count">-- จุด</strong>
+                                </div>
+                                <div class="summary-stat-item">
+                                    <span class="summary-stat-label">ช่วงอุณหภูมิ:</span>
+                                    <strong class="summary-stat-value mono" id="cooling-summary-temp-range">-- °C</strong>
+                                </div>
+                                <div class="summary-stat-item">
+                                    <span class="summary-stat-label">เวลา Lockout:</span>
+                                    <strong class="summary-stat-value mono" id="cooling-summary-lockout">-- วินาที</strong>
+                                </div>
+                            </div>
+                            <div class="cooling-summary-points-list" id="cooling-summary-points-list">
+                                <!-- Populated dynamically -->
+                            </div>
                         </div>
-                    </details>
+
+                        <!-- Hidden compatibility elements for forms & status -->
+                        <form id="cooling-config-form" class="hidden" novalidate>
+                            <span id="cooling-config-state"></span>
+                            <span id="cooling-unsaved-warning" class="hidden"></span>
+                            <div id="cooling-settings-save-bar" class="hidden"></div>
+                            <button id="cooling-save-config" type="button" class="hidden" disabled></button>
+                            <div id="cooling-config-error" class="hidden"></div>
+                        </form>
+                    </section>
                 </div>
             </div>
 
@@ -1881,6 +1837,144 @@
                             lang="en">Cancel</span>)</button>
                     <button type="submit" class="btn btn-primary" id="password-save-btn">เปลี่ยนรหัสผ่าน (<span
                             lang="en">Change Password</span>)</button>
+                </div>
+            </form>
+        </div>
+    </dialog>
+
+    <!-- Cooling Rule Configuration Modal -->
+    <dialog id="cooling-rule-modal" class="modal-dialog">
+        <div class="modal-card modal-cooling-rules">
+            <div class="modal-header-with-close">
+                <h3 class="modal-title">
+                    <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none"
+                        stroke-linecap="round" stroke-linejoin="round" class="svg-icon text-accent">
+                        <use href="#icon-cooling"></use>
+                    </svg>
+                    <span>ตั้งค่ากฎควบคุมความเย็น (<span lang="en">Cooling Rule Settings</span>)</span>
+                </h3>
+                <button type="button" class="modal-close-btn" id="cooling-modal-close-x" aria-label="ปิด">✕</button>
+            </div>
+
+            <p class="modal-desc">
+                กำหนดรูปแบบกราฟและจุดควบคุมความสัมพันธ์ระหว่างอุณหภูมิน้ำ (PT100) กับแรงดันขับ Inverter (0–10V)
+            </p>
+
+            <form id="cooling-modal-form" novalidate>
+                <!-- Curve Type Selection -->
+                <div class="form-group mb-md">
+                    <label class="form-label-bold">รูปแบบเส้นกราฟการควบคุม (<span lang="en">Curve Type</span>)</label>
+                    <div class="curve-type-radios">
+                        <label class="radio-label" for="cooling-curve-linear">
+                            <input type="radio" name="cooling-curve-type" id="cooling-curve-linear" value="linear" checked>
+                            <span class="radio-custom"></span>
+                            <span class="radio-text">
+                                <strong>Linear Interpolation</strong>
+                                <small>เชิงเส้นต่อเนื่อง ปรับระดับแรงดันแบบนุ่มนวลระหว่างจุด</small>
+                            </span>
+                        </label>
+                        <label class="radio-label" for="cooling-curve-step">
+                            <input type="radio" name="cooling-curve-type" id="cooling-curve-step" value="step">
+                            <span class="radio-custom"></span>
+                            <span class="radio-text">
+                                <strong>Discrete Step</strong>
+                                <small>ขั้นบันได เปลี่ยนแรงดันเป็นขั้นๆ ตามช่วงอุณหภูมิ</small>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Live SVG Preview Graph -->
+                <div class="form-group mb-md">
+                    <div class="preview-header-row">
+                        <label class="form-label-bold">กราฟแสดงผลจำลอง (<span lang="en">Live Rule Preview</span>)</label>
+                        <span class="text-xs text-muted" id="cooling-graph-status">แกน X: °C · แกน Y: 0–10V</span>
+                    </div>
+                    <div class="cooling-svg-container">
+                        <svg id="cooling-curve-svg" viewBox="0 0 520 220" preserveAspectRatio="xMidYMid meet" aria-label="Cooling Curve Graph">
+                            <!-- Populated dynamically by app.js -->
+                        </svg>
+                    </div>
+                </div>
+
+                <!-- Dynamic Rule Points Table -->
+                <div class="form-group mb-md">
+                    <div class="table-header-row">
+                        <label class="form-label-bold">จุดควบคุมอุณหภูมิ (<span lang="en">Rule Points</span>, 2–8 จุด)</label>
+                        <button type="button" class="btn btn-outline btn-sm" id="cooling-add-point-btn">
+                            + เพิ่มจุด (<span lang="en">Add Point</span>)
+                        </button>
+                    </div>
+                    <div class="cooling-table-container">
+                        <table class="cooling-points-table" id="cooling-points-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 15%; text-align: center;">ลำดับ</th>
+                                    <th style="width: 40%;">อุณหภูมิ (°C)</th>
+                                    <th style="width: 35%;">แรงดันเป้าหมาย (V)</th>
+                                    <th style="width: 10%; text-align: center;">ลบ</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cooling-points-tbody">
+                                <!-- Populated dynamically by app.js -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <small class="form-help-text" id="cooling-points-hint">
+                        * อุณหภูมิต้องเรียงจากน้อยไปมาก (T0 &lt; T1 &lt; ... &lt; Tn) และแรงดันอยู่ระหว่าง 0.0 ถึง 10.0 V
+                    </small>
+                </div>
+
+                <!-- Compressor Safety & Timing -->
+                <div class="form-row-dual mb-md">
+                    <div class="form-group">
+                        <label for="cooling-modal-min-off" class="form-label-bold">
+                            เวลาหน่วง (<span lang="en">Compressor Lockout</span>)
+                        </label>
+                        <div class="input-with-unit">
+                            <input id="cooling-modal-min-off" type="number" min="120" max="86400" step="1" inputmode="numeric" placeholder="180" required>
+                            <span class="unit-label">วินาที</span>
+                        </div>
+                        <small class="form-help-text">ป้องกันคอมเพรสเซอร์เสียหาย (120–86400s)</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="cooling-modal-test-timeout" class="form-label-bold">
+                            ระยะเวลาทดสอบ (<span lang="en">Test Timeout</span>)
+                        </label>
+                        <div class="input-with-unit">
+                            <input id="cooling-modal-test-timeout" type="number" min="1" max="3600" step="1" inputmode="numeric" placeholder="30">
+                            <span class="unit-label">วินาที</span>
+                        </div>
+                        <small class="form-help-text">เวลาเปิดทำงานเมื่อกดปุ่ม Test ON (1–3600s)</small>
+                    </div>
+                </div>
+
+                <!-- Auto Enable toggle -->
+                <div class="form-group mb-md">
+                    <label class="toggle-row" for="cooling-modal-auto-enable">
+                        <div class="toggle-switch">
+                            <input id="cooling-modal-auto-enable" type="checkbox" role="switch">
+                            <span class="toggle-slider"></span>
+                        </div>
+                        <span>
+                            <strong>เปิดทำงานระบบความเย็นอัตโนมัติเมื่อเปิดเครื่อง</strong>
+                            <small>ระบบจะควบคุมแรงดันอินเวอร์เตอร์ตามกฎอุณหภูมิทันทีเมื่อเปิดเครื่อง</small>
+                        </span>
+                    </label>
+                </div>
+
+                <!-- Modal Alert / Errors -->
+                <div class="pump-alert hidden" id="cooling-modal-error" role="alert"></div>
+
+                <!-- Modal Actions -->
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline" id="cooling-modal-cancel">
+                        ยกเลิก (<span lang="en">Cancel</span>)
+                    </button>
+                    <button type="submit" class="btn btn-primary" id="cooling-modal-save">
+                        <svg class="label-icon"><use href="#icon-save"></use></svg>
+                        บันทึกกฎความเย็น (<span lang="en">Save Rules</span>)
+                    </button>
                 </div>
             </form>
         </div>

@@ -2993,7 +2993,48 @@ select:disabled {
     flex-wrap: wrap;
 }
 
-/* === Cooling Dashboard === */
+/* === Cooling Dashboard & Inverter Control === */
+.cooling-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--text-xs);
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 0.25rem 0.65rem;
+    border-radius: var(--radius-full);
+    text-transform: uppercase;
+    transition: all 0.2s ease;
+    vertical-align: middle;
+}
+
+.cooling-status-pill.status-active {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
+}
+
+.cooling-status-pill.status-standby {
+    background: rgba(148, 163, 184, 0.15);
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.cooling-status-pill.status-lockout {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.2);
+}
+
+.cooling-status-pill.status-fault {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
+}
+
 .cooling-temp-visualization {
     padding: var(--space-4) 0;
 }
@@ -3006,7 +3047,7 @@ select:disabled {
 }
 
 .temp-current,
-.temp-target {
+.cooling-inverter-output-group {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -3017,7 +3058,7 @@ select:disabled {
     font-size: var(--text-sm);
     color: var(--on-surface-variant);
     margin-bottom: var(--space-2);
-    font-weight: 400;
+    font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
@@ -3026,23 +3067,42 @@ select:disabled {
     font-size: 3.5rem;
     line-height: 1;
     color: var(--accent);
-    font-weight: 400;
+    font-weight: 500;
 }
 
 [data-theme="dark"] .temp-current .temp-value {
     color: var(--accent-hover);
 }
 
-.temp-bounds-container {
+.cooling-output-values {
     display: flex;
-    flex-direction: column;
-    justify-content: center;
+    align-items: baseline;
     gap: var(--space-2);
+}
+
+.cooling-output-values .voltage-value {
+    font-size: 3.5rem;
+    line-height: 1;
+    color: #06b6d4;
+    font-weight: 500;
+}
+
+[data-theme="dark"] .cooling-output-values .voltage-value {
+    color: #38bdf8;
+}
+
+.cooling-output-values .duty-badge {
+    font-size: 1.15rem;
+    font-weight: 600;
+    padding: 0.2rem 0.5rem;
+    border-radius: var(--radius-sm);
+    background: var(--surface-variant);
+    color: var(--on-surface-variant);
 }
 
 .temp-section-divider {
     width: 1px;
-    height: 60px;
+    height: 70px;
     background-color: var(--outline-variant);
     margin: 0 var(--space-2);
 }
@@ -3067,6 +3127,306 @@ select:disabled {
     font-weight: 400;
 }
 
+/* Cooling Gauge (0–10V Inverter Output Level) */
+.cooling-gauge-section {
+    max-width: 540px;
+    margin: var(--space-5) auto 0;
+    padding: 0 var(--space-2);
+}
+
+.cooling-gauge-labels {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: var(--text-xs);
+    color: var(--on-surface-variant);
+    margin-bottom: var(--space-1);
+}
+
+.cooling-gauge-labels .gauge-label-current {
+    font-weight: 700;
+    color: var(--accent);
+    font-size: var(--text-sm);
+}
+
+.cooling-gauge-container {
+    width: 100%;
+    height: 14px;
+    background: var(--surface-variant);
+    border-radius: var(--radius-full);
+    position: relative;
+    overflow: hidden;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.cooling-gauge-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #0284c7 0%, #06b6d4 50%, #10b981 100%);
+    border-radius: var(--radius-full);
+    transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.cooling-gauge-ticks {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--on-surface-variant);
+    opacity: 0.7;
+    margin-top: 4px;
+    font-family: var(--font-mono);
+}
+
+/* Cooling Rule Summary Card */
+.cooling-rule-summary-card {
+    margin-top: var(--space-6);
+}
+
+.cooling-summary-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: var(--space-3);
+    margin-top: var(--space-4);
+}
+
+.summary-stat-item {
+    background: var(--surface-variant);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+}
+
+.summary-stat-label {
+    font-size: 0.75rem;
+    color: var(--on-surface-variant);
+    margin-bottom: 2px;
+}
+
+.summary-stat-value {
+    font-size: var(--text-base);
+    color: var(--on-surface);
+}
+
+.cooling-summary-points-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-4);
+}
+
+.cooling-rule-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(0, 180, 216, 0.1);
+    border: 1px solid rgba(0, 180, 216, 0.3);
+    color: var(--on-surface);
+    padding: 4px 10px;
+    border-radius: var(--radius-full);
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+}
+
+/* Cooling Rule Modal */
+.modal-cooling-rules {
+    max-width: 620px;
+    width: 95%;
+}
+
+.modal-header-with-close {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-2);
+}
+
+.modal-header-with-close .modal-title {
+    margin-bottom: 0;
+}
+
+.modal-close-btn {
+    background: transparent;
+    border: none;
+    font-size: 1.25rem;
+    line-height: 1;
+    color: var(--on-surface-variant);
+    cursor: pointer;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    transition: background-color 0.15s, color 0.15s;
+}
+
+.modal-close-btn:hover {
+    color: var(--on-surface);
+    background: var(--surface-variant);
+}
+
+.curve-type-radios {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+    margin-top: var(--space-2);
+}
+
+.curve-type-radios .radio-label {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    background: var(--surface-variant);
+    transition: border-color 0.2s, background-color 0.2s;
+}
+
+.curve-type-radios .radio-label:has(input:checked) {
+    border-color: var(--accent);
+    background: rgba(0, 180, 216, 0.08);
+}
+
+.curve-type-radios .radio-text strong {
+    display: block;
+    font-size: var(--text-sm);
+    color: var(--on-surface);
+}
+
+.curve-type-radios .radio-text small {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--on-surface-variant);
+    margin-top: 2px;
+}
+
+.preview-header-row,
+.table-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-1);
+}
+
+.cooling-svg-container {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--radius-md);
+    padding: var(--space-2);
+    margin-top: var(--space-2);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+}
+
+.cooling-curve-svg {
+    width: 100%;
+    max-height: 220px;
+    display: block;
+}
+
+.cooling-table-container {
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--radius-md);
+    margin-top: var(--space-2);
+}
+
+.cooling-points-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--text-sm);
+}
+
+.cooling-points-table th {
+    background: var(--surface-variant);
+    color: var(--on-surface-variant);
+    padding: var(--space-2) var(--space-3);
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 1px solid var(--outline-variant);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.cooling-points-table td {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--outline-variant);
+    vertical-align: middle;
+}
+
+.cooling-points-table tr:last-child td {
+    border-bottom: none;
+}
+
+.point-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    border-radius: var(--radius-sm);
+    background: var(--surface-variant);
+    color: var(--accent);
+}
+
+.input-with-unit-sm {
+    display: flex;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--outline);
+    border-radius: var(--radius-sm);
+    padding: 0 var(--space-2);
+}
+
+.input-with-unit-sm:focus-within {
+    border-color: var(--accent);
+    outline: 2px solid rgba(0, 180, 216, 0.2);
+}
+
+.input-with-unit-sm input {
+    width: 100%;
+    border: none;
+    background: transparent;
+    padding: 0.35rem 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--on-surface);
+}
+
+.input-with-unit-sm input:focus {
+    outline: none;
+}
+
+.input-with-unit-sm .unit-sm {
+    font-size: 0.75rem;
+    color: var(--on-surface-variant);
+    margin-left: 4px;
+}
+
+.btn-icon-danger {
+    background: transparent;
+    border: none;
+    color: var(--danger);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    font-weight: bold;
+    font-size: 0.9rem;
+    line-height: 1;
+}
+
+.btn-icon-danger:disabled {
+    opacity: 0.25;
+    cursor: not-allowed;
+}
+
+.btn-icon-danger:not(:disabled):hover {
+    background: rgba(239, 68, 68, 0.15);
+}
+
 @media (max-width: 576px) {
     .temp-readout-row {
         flex-direction: column;
@@ -3080,15 +3440,17 @@ select:disabled {
         margin: var(--space-2) auto;
     }
 
-    .temp-current .temp-value {
-        font-size: 3rem;
+    .temp-current .temp-value,
+    .cooling-output-values .voltage-value {
+        font-size: 2.75rem;
     }
 
-    .temp-bounds-container {
-        flex-direction: row;
-        justify-content: center;
-        gap: var(--space-4);
-        flex-wrap: wrap;
+    .curve-type-radios {
+        grid-template-columns: 1fr;
+    }
+
+    .summary-stat-item {
+        padding: var(--space-2);
     }
 }
 

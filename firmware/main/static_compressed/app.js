@@ -15,6 +15,7 @@ function cleanupCurrentView() {
     if (typeof pumpPollTimer !== 'undefined' && pumpPollTimer) { clearInterval(pumpPollTimer); pumpPollTimer = null; }
     if (typeof pumpTickTimer !== 'undefined' && pumpTickTimer) { clearInterval(pumpTickTimer); pumpTickTimer = null; }
     if (typeof coolingPollTimer !== 'undefined' && coolingPollTimer) { clearInterval(coolingPollTimer); coolingPollTimer = null; }
+    if (typeof sseEventSource !== 'undefined' && sseEventSource) { try { sseEventSource.close(); } catch (e) {} sseEventSource = null; }
     if (typeof handlePumpVisibilityChange !== 'undefined') document.removeEventListener('visibilitychange', handlePumpVisibilityChange);
     if (typeof handleCoolingVisibilityChange !== 'undefined') document.removeEventListener('visibilitychange', handleCoolingVisibilityChange);
 }
@@ -531,6 +532,10 @@ var coolingLastStatus = null;
 var coolingLastSyncMs = 0;
 var coolingStatusRequestInFlight = false;
 var coolingPollTimer = null;
+var coolingModalPoints = [];
+var coolingModalCurveType = 'linear';
+var sseEventSource = null;
+var sseReconnectTimer = null;
 var COOLING_STATUS_POLL_MS = 5000; /* A8 audit: align with pump poll interval */
 var COOLING_STALE_MS = 12000;
 var statusSummaryRequestInFlight = false;
@@ -606,13 +611,14 @@ function applySystemPhaseVisuals(countdownEl, barFillEl, sysState) {
 
 function initCoolingDashboard() {
     if (window.location.pathname !== '/cooling') return;
-    wireCoolingForm();
     wireCoolingActions();
+    wireCoolingModal();
     initSettingsTabs();
     updateCoolingButtons();
     loadCoolingConfig();
     syncCoolingStatus(true);
     startCoolingStatusTimer();
+    initTelemetrySSE();
     document.addEventListener('visibilitychange', handleCoolingVisibilityChange);
 }
 
@@ -2115,28 +2121,6 @@ function wireCoolingForm() {
             saveCoolingConfig();
         };
     }
-
-    var ids = [
-        'cooling-threshold-input',
-        'cooling-hysteresis-input',
-        'cooling-test-timeout',
-        'cooling-min-off',
-        'cooling-auto-enable'
-    ];
-    for (var i = 0; i < ids.length; i++) {
-        var input = pumpEl(ids[i]);
-        if (!input) continue;
-        input.oninput = function () {
-            markCoolingDirty();
-            updateCoolingSettingsPreview();
-            updateCoolingLockoutHint();
-        };
-        input.onchange = function () {
-            markCoolingDirty();
-            updateCoolingSettingsPreview();
-            updateCoolingLockoutHint();
-        };
-    }
 }
 
 function wireCoolingActions() {
@@ -2148,90 +2132,462 @@ function wireCoolingActions() {
     if (testBtn) testBtn.onclick = function () { setCoolingMode('test_on'); };
 }
 
-function checkCoolingDirty() {
-    if (!coolingConfig) return false;
+function wireCoolingModal() {
+    var openBtn1 = pumpEl('cooling-open-modal-btn');
+    var openBtn2 = pumpEl('cooling-open-modal-btn-2');
+    var closeBtn = pumpEl('cooling-modal-close-x');
+    var cancelBtn = pumpEl('cooling-modal-cancel');
+    var addPointBtn = pumpEl('cooling-add-point-btn');
+    var modal = pumpEl('cooling-rule-modal');
+    var form = pumpEl('cooling-modal-form');
 
-    var threshInput = pumpEl('cooling-threshold-input');
-    var threshVal = threshInput ? threshInput.value.trim() : '';
-    if (threshVal === '') return true;
-    var thresholdX10 = Math.round(Number(threshVal) * 10);
+    if (openBtn1) openBtn1.onclick = function () { openCoolingRuleModal(); };
+    if (openBtn2) openBtn2.onclick = function () { openCoolingRuleModal(); };
+    if (closeBtn) closeBtn.onclick = function () { closeCoolingRuleModal(); };
+    if (cancelBtn) cancelBtn.onclick = function () { closeCoolingRuleModal(); };
 
-    var hystInput = pumpEl('cooling-hysteresis-input');
-    var hystVal = hystInput ? hystInput.value.trim() : '';
-    if (hystVal === '') return true;
-    var hysteresisX10 = Math.round(Number(hystVal) * 10);
+    if (modal) {
+        modal.addEventListener('cancel', function () {
+            closeCoolingRuleModal();
+        });
+        modal.addEventListener('click', function (e) {
+            if (e.target === modal) closeCoolingRuleModal();
+        });
+    }
 
-    var timeoutInput = pumpEl('cooling-test-timeout');
-    var timeoutVal = timeoutInput ? timeoutInput.value.trim() : '';
-    if (timeoutVal === '') return true;
-    var testTimeout = parseInt(timeoutVal, 10);
+    if (addPointBtn) {
+        addPointBtn.onclick = function () { addCoolingRulePoint(); };
+    }
 
-    var minOffInput = pumpEl('cooling-min-off');
-    var minOffVal = minOffInput ? minOffInput.value.trim() : '';
-    if (minOffVal === '') return true;
-    var minOff = parseInt(minOffVal, 10);
+    var linearRadio = pumpEl('cooling-curve-linear');
+    var stepRadio = pumpEl('cooling-curve-step');
+    if (linearRadio) {
+        linearRadio.onchange = function () {
+            coolingModalCurveType = 'linear';
+            refreshCoolingModalPreview();
+        };
+    }
+    if (stepRadio) {
+        stepRadio.onchange = function () {
+            coolingModalCurveType = 'step';
+            refreshCoolingModalPreview();
+        };
+    }
 
-    var autoEnableInput = pumpEl('cooling-auto-enable');
-    var autoEnable = autoEnableInput ? !!autoEnableInput.checked : false;
+    var tbody = pumpEl('cooling-points-tbody');
+    if (tbody) {
+        tbody.addEventListener('input', function (e) {
+            var target = e.target;
+            var idx = parseInt(target.dataset.index, 10);
+            if (isNaN(idx) || !coolingModalPoints[idx]) return;
 
-    if (thresholdX10 !== Number(coolingConfig.threshold_c_x10)) return true;
-    if (hysteresisX10 !== Number(coolingConfig.hysteresis_c_x10)) return true;
-    if (testTimeout !== Number(coolingConfig.test_timeout_sec)) return true;
-    if (minOff !== Number(coolingConfig.compressor_min_off_sec)) return true;
-    if (autoEnable !== !!coolingConfig.auto_enable) return true;
-
-    return false;
-}
-
-function markCoolingDirty() {
-    var dirty = checkCoolingDirty();
-    coolingDirty = dirty;
-    var warning = pumpEl('cooling-unsaved-warning');
-    var saveBar = pumpEl('cooling-settings-save-bar');
-    if (saveBar) saveBar.classList.toggle('is-dirty', dirty);
-    if (warning) {
-        if (dirty) {
-            warning.classList.remove('hidden');
-            setText('cooling-config-state', 'มีแก้ไขที่ยังไม่ได้บันทึก');
-        } else {
-            warning.classList.add('hidden');
-            if (coolingConfig && coolingConfig.settings_status && coolingLastStatus) {
-                setHtml('cooling-config-state', renderSettingsStatus(coolingConfig.settings_status, coolingLastStatus.auto_enable));
-            } else {
-                setText('cooling-config-state', 'โหลดค่า cooling แล้ว');
+            if (target.classList.contains('cooling-point-temp')) {
+                var v = parseFloat(target.value);
+                if (!isNaN(v)) coolingModalPoints[idx].temp_c = v;
+            } else if (target.classList.contains('cooling-point-volt')) {
+                var v = parseFloat(target.value);
+                if (!isNaN(v)) coolingModalPoints[idx].output_volts = v;
             }
-        }
+            refreshCoolingModalPreview();
+        });
+
+        tbody.addEventListener('click', function (e) {
+            var btn = e.target.closest('.cooling-delete-point-btn');
+            if (!btn) return;
+            var idx = parseInt(btn.dataset.index, 10);
+            if (isNaN(idx)) return;
+            deleteCoolingRulePoint(idx);
+        });
     }
-    updateCoolingButtons();
+
+    if (form) {
+        form.onsubmit = function (e) {
+            e.preventDefault();
+            saveCoolingModalRules();
+        };
+    }
 }
 
-function setCoolingClean(label) {
-    coolingDirty = false;
-    var warning = pumpEl('cooling-unsaved-warning');
-    var saveBar = pumpEl('cooling-settings-save-bar');
-    if (saveBar) saveBar.classList.remove('is-dirty');
-    if (warning) warning.classList.add('hidden');
-    if (coolingConfig) {
-        var statusStr = coolingConfig.settings_status || 'loaded';
-        var autoEnabled = coolingConfig.auto_enable !== undefined ? !!coolingConfig.auto_enable : (coolingLastStatus ? coolingLastStatus.auto_enable : false);
-        setHtml('cooling-config-state', renderSettingsStatus(statusStr, autoEnabled));
-    } else {
-        setText('cooling-config-state', label || 'บันทึกแล้ว');
-    }
-    updateCoolingButtons();
-}
+function openCoolingRuleModal() {
+    setCoolingModalAlert('');
+    var modal = pumpEl('cooling-rule-modal');
+    if (!modal) return;
 
-function updateCoolingConfigSaveButton() {
-    var saveBtn = pumpEl('cooling-save-config');
-    if (saveBtn) {
-        var stale = !coolingLastSyncMs || (Date.now() - coolingLastSyncMs > COOLING_STALE_MS);
-        var formDisabled = !coolingConfigLoaded || coolingLoadingConfig || coolingSavingConfig || coolingPending || stale;
-        if (coolingSavingConfig || coolingPending) {
-            setLoading(saveBtn, true);
+    apiGet('/api/cooling/config', function (err, data) {
+        if (!err && data && data.ok) {
+            coolingConfig = data;
+            coolingConfigLoaded = true;
+            populateCoolingModalFromConfig(data);
+            updateCoolingSummaryPanel(data);
         } else {
-            setLoading(saveBtn, false);
-            saveBtn.disabled = formDisabled || !coolingDirty;
+            populateCoolingModalFromConfig(coolingConfig);
         }
+    });
+
+    populateCoolingModalFromConfig(coolingConfig);
+    modal.showModal();
+}
+
+function closeCoolingRuleModal() {
+    var modal = pumpEl('cooling-rule-modal');
+    if (modal && modal.open) {
+        modal.close();
+    }
+    setCoolingModalAlert('');
+}
+
+function setCoolingModalAlert(msg) {
+    setPumpAlert('cooling-modal-error', msg);
+}
+
+function populateCoolingModalFromConfig(config) {
+    coolingModalPoints = [];
+    if (config && Array.isArray(config.points) && config.points.length >= 2) {
+        for (var i = 0; i < config.points.length; i++) {
+            var pt = config.points[i];
+            coolingModalPoints.push({
+                temp_c: typeof pt.temp_c === 'number' ? pt.temp_c : (pt.temp_c_x10 / 10.0),
+                output_volts: typeof pt.output_volts === 'number' ? pt.output_volts : (pt.output_mv / 1000.0)
+            });
+        }
+        coolingModalCurveType = config.curve_type || 'linear';
+    } else {
+        coolingModalPoints = [
+            { temp_c: 24.0, output_volts: 0.0 },
+            { temp_c: 28.0, output_volts: 5.0 },
+            { temp_c: 32.0, output_volts: 10.0 }
+        ];
+        coolingModalCurveType = 'linear';
+    }
+
+    var linearRadio = pumpEl('cooling-curve-linear');
+    var stepRadio = pumpEl('cooling-curve-step');
+    if (coolingModalCurveType === 'step') {
+        if (stepRadio) stepRadio.checked = true;
+    } else {
+        if (linearRadio) linearRadio.checked = true;
+    }
+
+    var minOff = pumpEl('cooling-modal-min-off');
+    if (minOff) {
+        minOff.value = (config && (config.min_off_sec || config.compressor_min_off_sec)) ? (config.min_off_sec || config.compressor_min_off_sec) : 180;
+    }
+
+    var testTimeout = pumpEl('cooling-modal-test-timeout');
+    if (testTimeout) {
+        testTimeout.value = (config && config.test_timeout_sec) ? config.test_timeout_sec : 30;
+    }
+
+    var autoEnable = pumpEl('cooling-modal-auto-enable');
+    if (autoEnable) {
+        autoEnable.checked = config ? !!config.auto_enable : true;
+    }
+
+    renderCoolingPointsTable();
+    refreshCoolingModalPreview();
+}
+
+function renderCoolingPointsTable() {
+    var tbody = pumpEl('cooling-points-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    var canDelete = coolingModalPoints.length > 2;
+    var canAdd = coolingModalPoints.length < 8;
+
+    var addBtn = pumpEl('cooling-add-point-btn');
+    if (addBtn) addBtn.disabled = !canAdd;
+
+    for (var i = 0; i < coolingModalPoints.length; i++) {
+        var pt = coolingModalPoints[i];
+        var tr = document.createElement('tr');
+        tr.dataset.index = i;
+
+        var tdIndex = document.createElement('td');
+        tdIndex.style.textAlign = 'center';
+        tdIndex.innerHTML = '<span class="point-badge">#' + (i + 1) + '</span>';
+        tr.appendChild(tdIndex);
+
+        var tdTemp = document.createElement('td');
+        tdTemp.innerHTML = '<div class="input-with-unit-sm">' +
+            '<input type="number" class="cooling-point-temp" data-index="' + i + '" value="' + pt.temp_c.toFixed(1) + '" step="0.1" min="-50" max="150" required>' +
+            '<span class="unit-sm">°C</span>' +
+        '</div>';
+        tr.appendChild(tdTemp);
+
+        var tdVolt = document.createElement('td');
+        tdVolt.innerHTML = '<div class="input-with-unit-sm">' +
+            '<input type="number" class="cooling-point-volt" data-index="' + i + '" value="' + pt.output_volts.toFixed(1) + '" step="0.1" min="0" max="10" required>' +
+            '<span class="unit-sm">V</span>' +
+        '</div>';
+        tr.appendChild(tdVolt);
+
+        var tdAction = document.createElement('td');
+        tdAction.style.textAlign = 'center';
+        tdAction.innerHTML = '<button type="button" class="btn-icon-danger cooling-delete-point-btn" data-index="' + i + '" ' + (canDelete ? '' : 'disabled') + ' title="ลบจุดนี้">✕</button>';
+        tr.appendChild(tdAction);
+
+        tbody.appendChild(tr);
+    }
+}
+
+function addCoolingRulePoint() {
+    if (coolingModalPoints.length >= 8) return;
+    var last = coolingModalPoints[coolingModalPoints.length - 1];
+    var nextTemp = last ? Math.round((last.temp_c + 2.0) * 10) / 10 : 30.0;
+    var nextVolt = last ? Math.min(10.0, Math.round((last.output_volts + 1.5) * 10) / 10) : 5.0;
+    coolingModalPoints.push({
+        temp_c: nextTemp,
+        output_volts: nextVolt
+    });
+    renderCoolingPointsTable();
+    refreshCoolingModalPreview();
+}
+
+function deleteCoolingRulePoint(idx) {
+    if (coolingModalPoints.length <= 2) return;
+    coolingModalPoints.splice(idx, 1);
+    renderCoolingPointsTable();
+    refreshCoolingModalPreview();
+}
+
+function refreshCoolingModalPreview() {
+    var curTemp = (coolingLastStatus && coolingLastStatus.temperature_valid) ? coolingLastStatus.temperature_c : null;
+    var curVolts = coolingLastStatus ? (typeof coolingLastStatus.output_volts === 'number' ? coolingLastStatus.output_volts : coolingLastStatus.output_mv / 1000.0) : null;
+    drawCoolingCurveSvg(coolingModalPoints, coolingModalCurveType, curTemp, curVolts);
+}
+
+function drawCoolingCurveSvg(points, curveType, currentTemp, currentVolts) {
+    var svg = pumpEl('cooling-curve-svg');
+    if (!svg) return;
+
+    var width = 520;
+    var height = 220;
+    var padLeft = 45;
+    var padRight = 30;
+    var padTop = 20;
+    var padBottom = 35;
+    var graphW = width - padLeft - padRight;
+    var graphH = height - padTop - padBottom;
+
+    if (!points || points.length < 2) {
+        svg.innerHTML = '<text x="' + (width / 2) + '" y="' + (height / 2) + '" text-anchor="middle" fill="#888">ต้องมีอย่างน้อย 2 จุดควบคุม</text>';
+        return;
+    }
+
+    var minT = points[0].temp_c;
+    var maxT = points[points.length - 1].temp_c;
+    for (var i = 0; i < points.length; i++) {
+        if (points[i].temp_c < minT) minT = points[i].temp_c;
+        if (points[i].temp_c > maxT) maxT = points[i].temp_c;
+    }
+    if (typeof currentTemp === 'number' && isFinite(currentTemp)) {
+        if (currentTemp < minT) minT = currentTemp;
+        if (currentTemp > maxT) maxT = currentTemp;
+    }
+    var tSpan = maxT - minT;
+    if (tSpan <= 0) tSpan = 10;
+    var xMin = Math.floor(minT - Math.max(2, tSpan * 0.1));
+    var xMax = Math.ceil(maxT + Math.max(2, tSpan * 0.1));
+    var xRange = xMax - xMin;
+    if (xRange <= 0) xRange = 10;
+
+    function toX(t) {
+        return padLeft + ((t - xMin) / xRange) * graphW;
+    }
+    function toY(v) {
+        var clampedV = Math.max(0, Math.min(10, v));
+        return padTop + (1.0 - (clampedV / 10.0)) * graphH;
+    }
+
+    var elements = [];
+
+    elements.push('<defs>' +
+        '<linearGradient id="cooling-curve-grad" x1="0%" y1="0%" x2="0%" y2="100%">' +
+            '<stop offset="0%" stop-color="#00b4d8" stop-opacity="0.35" />' +
+            '<stop offset="100%" stop-color="#00b4d8" stop-opacity="0.02" />' +
+        '</linearGradient>' +
+    '</defs>');
+
+    // Y-axis grid & labels
+    var vSteps = [0, 2.5, 5, 7.5, 10];
+    for (var j = 0; j < vSteps.length; j++) {
+        var vy = toY(vSteps[j]);
+        elements.push('<line x1="' + padLeft + '" y1="' + vy + '" x2="' + (padLeft + graphW) + '" y2="' + vy + '" stroke="rgba(255,255,255,0.1)" stroke-dasharray="3,3" />');
+        elements.push('<text x="' + (padLeft - 8) + '" y="' + (vy + 4) + '" text-anchor="end" font-size="11" fill="#888">' + vSteps[j].toFixed(1) + 'V</text>');
+    }
+
+    // X-axis ticks & labels
+    var numTicks = 5;
+    for (var k = 0; k <= numTicks; k++) {
+        var tickT = xMin + (k / numTicks) * xRange;
+        var tx = toX(tickT);
+        elements.push('<line x1="' + tx + '" y1="' + (padTop + graphH) + '" x2="' + tx + '" y2="' + (padTop + graphH + 4) + '" stroke="#666" />');
+        elements.push('<text x="' + tx + '" y="' + (padTop + graphH + 18) + '" text-anchor="middle" font-size="11" fill="#888">' + tickT.toFixed(0) + '°C</text>');
+    }
+
+    // Axes
+    elements.push('<line x1="' + padLeft + '" y1="' + padTop + '" x2="' + padLeft + '" y2="' + (padTop + graphH) + '" stroke="#666" stroke-width="1.5" />');
+    elements.push('<line x1="' + padLeft + '" y1="' + (padTop + graphH) + '" x2="' + (padLeft + graphW) + '" y2="' + (padTop + graphH) + '" stroke="#666" stroke-width="1.5" />');
+
+    // Curve Path
+    var pathD = '';
+    if (curveType === 'step') {
+        pathD = 'M ' + padLeft + ' ' + toY(points[0].output_volts);
+        pathD += ' L ' + toX(points[0].temp_c) + ' ' + toY(points[0].output_volts);
+        for (var p = 0; p < points.length - 1; p++) {
+            var currP = points[p];
+            var nextP = points[p + 1];
+            pathD += ' L ' + toX(nextP.temp_c) + ' ' + toY(currP.output_volts);
+            pathD += ' L ' + toX(nextP.temp_c) + ' ' + toY(nextP.output_volts);
+        }
+        pathD += ' L ' + (padLeft + graphW) + ' ' + toY(points[points.length - 1].output_volts);
+    } else {
+        pathD = 'M ' + padLeft + ' ' + toY(points[0].output_volts);
+        pathD += ' L ' + toX(points[0].temp_c) + ' ' + toY(points[0].output_volts);
+        for (var p = 1; p < points.length; p++) {
+            pathD += ' L ' + toX(points[p].temp_c) + ' ' + toY(points[p].output_volts);
+        }
+        pathD += ' L ' + (padLeft + graphW) + ' ' + toY(points[points.length - 1].output_volts);
+    }
+
+    var areaD = pathD + ' L ' + (padLeft + graphW) + ' ' + (padTop + graphH) + ' L ' + padLeft + ' ' + (padTop + graphH) + ' Z';
+
+    elements.push('<path d="' + areaD + '" fill="url(#cooling-curve-grad)" />');
+    elements.push('<path d="' + pathD + '" fill="none" stroke="#00b4d8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />');
+
+    // Points markers
+    for (var m = 0; m < points.length; m++) {
+        var px = toX(points[m].temp_c);
+        var py = toY(points[m].output_volts);
+        elements.push('<circle cx="' + px + '" cy="' + py + '" r="5" fill="#fff" stroke="#00b4d8" stroke-width="2.5" />');
+        var textY = (py < padTop + 20) ? py + 16 : py - 10;
+        elements.push('<text x="' + px + '" y="' + textY + '" text-anchor="middle" font-size="10" font-weight="600" fill="#00b4d8">' +
+            points[m].temp_c.toFixed(1) + '°, ' + points[m].output_volts.toFixed(1) + 'V</text>');
+    }
+
+    // Live operating point marker
+    if (typeof currentTemp === 'number' && isFinite(currentTemp) && currentTemp >= xMin && currentTemp <= xMax) {
+        var cx = toX(currentTemp);
+        var cy = (typeof currentVolts === 'number' && isFinite(currentVolts)) ? toY(currentVolts) : toY(0);
+        elements.push('<line x1="' + cx + '" y1="' + padTop + '" x2="' + cx + '" y2="' + (padTop + graphH) + '" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4,3" />');
+        elements.push('<circle cx="' + cx + '" cy="' + cy + '" r="6" fill="#ef4444" stroke="#fff" stroke-width="2" />');
+        elements.push('<text x="' + cx + '" y="' + (padTop - 5) + '" text-anchor="middle" font-size="10" font-weight="bold" fill="#ef4444">Now ' + currentTemp.toFixed(1) + '°C</text>');
+    }
+
+    svg.innerHTML = elements.join('');
+}
+
+function saveCoolingModalRules() {
+    if (coolingSavingConfig) return;
+    setCoolingModalAlert('');
+
+    if (coolingModalPoints.length < 2 || coolingModalPoints.length > 8) {
+        setCoolingModalAlert('จำนวนจุดควบคุมต้องอยู่ระหว่าง 2 ถึง 8 จุด');
+        return;
+    }
+
+    for (var i = 0; i < coolingModalPoints.length; i++) {
+        var p = coolingModalPoints[i];
+        if (isNaN(p.temp_c) || p.temp_c < -50 || p.temp_c > 150) {
+            setCoolingModalAlert('อุณหภูมิในจุดที่ #' + (i + 1) + ' ต้องอยู่ระหว่าง -50.0 ถึง 150.0 °C');
+            return;
+        }
+        if (isNaN(p.output_volts) || p.output_volts < 0 || p.output_volts > 10.0) {
+            setCoolingModalAlert('แรงดันในจุดที่ #' + (i + 1) + ' ต้องอยู่ระหว่าง 0.0 ถึง 10.0 V');
+            return;
+        }
+        if (i > 0 && p.temp_c <= coolingModalPoints[i - 1].temp_c) {
+            setCoolingModalAlert('อุณหภูมิต้องเรียงจากน้อยไปมาก จุด #' + (i + 1) + ' (' + p.temp_c.toFixed(1) + '°C) ต้องมากกว่าจุด #' + i + ' (' + coolingModalPoints[i - 1].temp_c.toFixed(1) + '°C)');
+            return;
+        }
+    }
+
+    var minOffInput = pumpEl('cooling-modal-min-off');
+    var minOffVal = minOffInput ? parseInt(minOffInput.value, 10) : 180;
+    if (isNaN(minOffVal) || minOffVal < 120 || minOffVal > 86400) {
+        setCoolingModalAlert('เวลา Lockout ต้องเป็นจำนวนเต็มระหว่าง 120 ถึง 86400 วินาที');
+        return;
+    }
+
+    var testTimeoutInput = pumpEl('cooling-modal-test-timeout');
+    var testTimeoutVal = testTimeoutInput ? parseInt(testTimeoutInput.value, 10) : 30;
+    if (isNaN(testTimeoutVal) || testTimeoutVal < 1 || testTimeoutVal > 3600) {
+        setCoolingModalAlert('เวลาทดสอบ Test ON ต้องอยู่ระหว่าง 1 ถึง 3600 วินาที');
+        return;
+    }
+
+    var autoEnableInput = pumpEl('cooling-modal-auto-enable');
+    var autoEnable = autoEnableInput ? !!autoEnableInput.checked : true;
+
+    var payload = {
+        curve_type: coolingModalCurveType,
+        points: coolingModalPoints.map(function (pt) {
+            return {
+                temp_c: Math.round(pt.temp_c * 10) / 10,
+                output_volts: Math.round(pt.output_volts * 100) / 100
+            };
+        }),
+        min_off_sec: minOffVal,
+        compressor_min_off_sec: minOffVal,
+        test_timeout_sec: testTimeoutVal,
+        auto_enable: autoEnable
+    };
+
+    var saveBtn = pumpEl('cooling-modal-save');
+    setLoading(saveBtn, true);
+    coolingSavingConfig = true;
+
+    apiPost('/api/cooling/config', payload, function (err, data) {
+        setLoading(saveBtn, false);
+        coolingSavingConfig = false;
+        if (err || !data || !data.ok) {
+            var msg = (data && data.message) ? data.message : 'บันทึกการตั้งค่าไม่สำเร็จ';
+            setCoolingModalAlert(msg);
+            return;
+        }
+
+        coolingConfig = data.payload || data;
+        coolingConfigLoaded = true;
+        closeCoolingRuleModal();
+        showToast('บันทึกกฎควบคุมความเย็นเรียบร้อย', 'success');
+        updateCoolingSummaryPanel(coolingConfig);
+        if (data.status) applyCoolingStatus(data.status, true);
+        syncCoolingStatus(true);
+    });
+}
+
+function updateCoolingSummaryPanel(config) {
+    if (!config) return;
+    var curveTypeStr = (config.curve_type === 'step') ? 'Discrete Step' : 'Linear Interpolation';
+    var curveTagStr = (config.curve_type === 'step') ? 'Step' : 'Linear';
+    setText('cooling-summary-curve-type', curveTypeStr);
+    setText('cooling-summary-curve-tag', curveTagStr);
+
+    var pts = config.points || [];
+    setText('cooling-summary-point-count', pts.length + ' จุด');
+
+    if (pts.length >= 2) {
+        var minT = (typeof pts[0].temp_c === 'number') ? pts[0].temp_c : (pts[0].temp_c_x10 / 10.0);
+        var maxT = (typeof pts[pts.length - 1].temp_c === 'number') ? pts[pts.length - 1].temp_c : (pts[pts.length - 1].temp_c_x10 / 10.0);
+        setText('cooling-summary-temp-range', minT.toFixed(1) + '°C – ' + maxT.toFixed(1) + '°C');
+    } else {
+        setText('cooling-summary-temp-range', '--');
+    }
+
+    var minOff = config.min_off_sec || config.compressor_min_off_sec || 180;
+    setText('cooling-summary-lockout', minOff + ' วินาที');
+
+    var listEl = pumpEl('cooling-summary-points-list');
+    if (listEl) {
+        var chips = [];
+        for (var i = 0; i < pts.length; i++) {
+            var p = pts[i];
+            var tc = (typeof p.temp_c === 'number') ? p.temp_c : (p.temp_c_x10 / 10.0);
+            var ov = (typeof p.output_volts === 'number') ? p.output_volts : (p.output_mv / 1000.0);
+            chips.push('<span class="cooling-rule-chip">#' + (i + 1) + ' ' + tc.toFixed(1) + '°C → ' + ov.toFixed(1) + 'V</span>');
+        }
+        listEl.innerHTML = chips.join('');
     }
 }
 
@@ -2252,112 +2608,99 @@ function loadCoolingConfig() {
         }
         coolingConfig = data;
         coolingConfigLoaded = true;
-        setCoolingConfigFields(data);
+        updateCoolingSummaryPanel(data);
         if (data.status) applyCoolingStatus(data.status, true);
         setCoolingClean('โหลดค่า cooling แล้ว');
     });
 }
 
 function setCoolingConfigFields(data) {
-    setNumericInput('cooling-threshold-input', x10ToInput(data.threshold_c_x10));
-    setNumericInput('cooling-hysteresis-input', x10ToInput(data.hysteresis_c_x10));
-    setNumericInput('cooling-test-timeout', data.test_timeout_sec);
-    setNumericInput('cooling-min-off', data.compressor_min_off_sec);
-    var auto = pumpEl('cooling-auto-enable');
-    if (auto) auto.checked = !!data.auto_enable;
-    updateCoolingSettingsPreview();
-    updateCoolingLockoutHint();
+    if (!data) return;
+    updateCoolingSummaryPanel(data);
 }
 
-function setNumericInput(id, value) {
-    var el = pumpEl(id);
-    if (el && value !== null && value !== undefined) el.value = value;
+function updateCoolingSettingsPreview() {
+    // backward-compatibility stub
 }
 
-function x10ToInput(value) {
-    if (value === null || value === undefined || isNaN(value)) return '';
-    return (Number(value) / 10).toFixed(1);
-}
-
-function readCoolingX10(id, label, minValue, maxValue) {
-    var el = pumpEl(id);
-    var raw = el ? el.value.trim() : '';
-    var value = Number(raw);
-    if (raw === '' || !isFinite(value)) {
-        return { ok: false, message: label + ': กรุณากรอกตัวเลข', value: 0 };
-    }
-    var x10 = Math.round(value * 10);
-    if (Math.abs((value * 10) - x10) > 0.0001 || x10 < minValue || x10 > maxValue) {
-        return { ok: false, message: label + ': ค่าอยู่นอกช่วงที่รองรับ', value: 0 };
-    }
-    return { ok: true, value: x10 };
-}
-
-function readCoolingU32(id, label, minValue, maxValue) {
-    var el = pumpEl(id);
-    var raw = el ? el.value.trim() : '';
-    if (!/^\d+$/.test(raw)) {
-        return { ok: false, message: label + ': ต้องเป็นจำนวนเต็ม', value: 0 };
-    }
-    var value = parseInt(raw, 10);
-    if (value < minValue || value > maxValue) {
-        return { ok: false, message: label + ': ค่าอยู่นอกช่วงที่รองรับ', value: 0 };
-    }
-    return { ok: true, value: value };
-}
-
-function buildCoolingConfigPayload() {
-    if (!coolingConfig) return null;
-    var threshold = readCoolingX10('cooling-threshold-input', 'อุณหภูมิเป้าหมาย', -550, 1250);
-    var hysteresis = readCoolingX10('cooling-hysteresis-input', 'ช่วงอุณหภูมิเบี่ยงเบน', 1, 500);
-    var testTimeout = readCoolingU32('cooling-test-timeout', 'ระยะเวลาเปิดทดสอบ', 1, 3600);
-    var minOff = readCoolingU32('cooling-min-off', 'เวลาล็อกป้องกันซ้ำ', 120, 86400);
-    if (!threshold.ok) return threshold;
-    if (!hysteresis.ok) return hysteresis;
-    if (!testTimeout.ok) return testTimeout;
-    if (!minOff.ok) return minOff;
-
-    return {
-        ok: true,
-        payload: {
-            threshold_c_x10: threshold.value,
-            hysteresis_c_x10: hysteresis.value,
-            auto_enable: !!(pumpEl('cooling-auto-enable') && pumpEl('cooling-auto-enable').checked),
-            mode: coolingConfig.mode === 'auto' ? 'auto' : 'force_off',
-            test_timeout_sec: testTimeout.value,
-            compressor_min_off_sec: minOff.value,
-            cooling_relay_polarity: coolingConfig.cooling_relay_polarity || 'active_low'
-        }
-    };
+function updateCoolingLockoutHint() {
+    // backward-compatibility stub
 }
 
 function saveCoolingConfig() {
-    if (!coolingConfigLoaded || coolingPending) return;
-    var built = buildCoolingConfigPayload();
-    if (!built || !built.ok) {
-        setCoolingAlert((built && built.message) ? built.message : 'ตรวจสอบค่า cooling แล้วลองบันทึกอีกครั้ง');
-        return;
-    }
+    openCoolingRuleModal();
+}
 
-    coolingSavingConfig = true;
+function setCoolingClean(label) {
+    coolingDirty = false;
+    var warning = pumpEl('cooling-unsaved-warning');
+    var saveBar = pumpEl('cooling-settings-save-bar');
+    if (saveBar) saveBar.classList.remove('is-dirty');
+    if (warning) warning.classList.add('hidden');
+    if (coolingConfig) {
+        var statusStr = coolingConfig.settings_status || 'loaded';
+        var autoEnabled = coolingConfig.auto_enable !== undefined ? !!coolingConfig.auto_enable : (coolingLastStatus ? coolingLastStatus.auto_enable : false);
+        setHtml('cooling-config-state', renderSettingsStatus(statusStr, autoEnabled));
+    } else {
+        setText('cooling-config-state', label || 'บันทึกแล้ว');
+    }
     updateCoolingButtons();
-    setCoolingAlert('');
-    setText('cooling-config-state', 'กำลังบันทึก cooling...');
-    apiPost('/api/cooling/config', built.payload, function (err, data) {
-        coolingSavingConfig = false;
-        if (err || !data || !data.ok) {
-            setText('cooling-config-state', 'บันทึก cooling ไม่สำเร็จ');
-            setCoolingAlert((data && data.message) ? data.message : 'บันทึก cooling ไม่สำเร็จ');
-            updateCoolingButtons();
-            return;
-        }
-        coolingConfig = data.payload || data;
-        coolingConfigLoaded = true;
-        setCoolingClean('บันทึก cooling แล้ว');
-        showToast('บันทึกค่า cooling เรียบร้อย', 'success');
-        if (data.status) applyCoolingStatus(data.status, true);
-        syncCoolingStatus(true);
-    });
+}
+
+function updateCoolingConfigSaveButton() {
+    // Handled in modal
+}
+
+function initTelemetrySSE() {
+    if (typeof EventSource === 'undefined') return;
+    if (sseEventSource && sseEventSource.readyState !== EventSource.CLOSED) return;
+
+    try {
+        sseEventSource = new EventSource('/api/events');
+        sseEventSource.addEventListener('cooling', function (e) {
+            try {
+                var data = JSON.parse(e.data);
+                handleCoolingSseEvent(data);
+            } catch (err) {
+                console.error('SSE cooling parse error', err);
+            }
+        });
+        sseEventSource.onerror = function () {
+            if (sseEventSource) {
+                sseEventSource.close();
+                sseEventSource = null;
+            }
+            if (!sseReconnectTimer) {
+                sseReconnectTimer = setTimeout(function () {
+                    sseReconnectTimer = null;
+                    if (window.location.pathname === '/cooling') {
+                        initTelemetrySSE();
+                    }
+                }, 5000);
+            }
+        };
+    } catch (e) {
+        console.error('SSE init error', e);
+    }
+}
+
+function handleCoolingSseEvent(data) {
+    if (!data) return;
+    var mappedStatus = {
+        temperature_c: data.temp_c,
+        temperature_valid: !!data.valid,
+        sensor_state: data.valid ? 'ok' : 'fault',
+        fault: !data.valid,
+        fault_code: data.valid ? 'none' : 'read_failed',
+        output_volts: typeof data.output_volts === 'number' ? data.output_volts : (data.output_mv / 1000.0),
+        output_mv: data.output_mv || Math.round(data.output_volts * 1000),
+        duty_percent: typeof data.duty_percent === 'number' ? data.duty_percent : 0,
+        lockout_remaining_sec: data.lockout_sec || 0,
+        lockout_active: (data.lockout_sec > 0),
+        mode: data.mode === 0 ? 'auto' : (data.mode === 2 ? 'test_on' : 'force_off'),
+        config_valid: true
+    };
+    applyCoolingStatus(mappedStatus, true);
 }
 
 function setCoolingMode(mode) {
@@ -2402,61 +2745,88 @@ function syncCoolingStatus(force) {
     });
 }
 
+function computeCoolingStatusIndicator(status) {
+    if (!status) return { text: 'STANDBY', cls: 'status-standby' };
+    if (status.fault || status.sensor_state === 'fault' || status.temperature_valid === false) {
+        return { text: 'FAULT', cls: 'status-fault' };
+    }
+    if (status.lockout_active || (status.lockout_remaining_sec > 0)) {
+        return { text: 'LOCKOUT', cls: 'status-lockout' };
+    }
+    var volts = Number(status.output_volts) || 0;
+    if (volts > 0.05 || (status.duty_percent && status.duty_percent > 0.5)) {
+        return { text: 'ACTIVE', cls: 'status-active' };
+    }
+    return { text: 'STANDBY', cls: 'status-standby' };
+}
+
 function applyCoolingStatus(status, authoritative) {
     coolingLastStatus = status;
     if (authoritative) coolingLastSyncMs = Date.now();
 
+    // 1. PT100 Temperature readout
     setHtml('cooling-temperature', renderCoolingTemperature(status));
-    setHtml('cooling-relay-state', status.relay_energized
-        ? '<span class="status-success">ON</span>'
-        : '<span class="status-danger">OFF</span>');
 
-    updateBadgeCardState('cooling-relay-card', status.relay_energized);
-    updateBadgeCardState('cooling-sensor-card', status.sensor_state === 'ok');
+    // 2. Inverter Voltage and Duty
+    var volts = typeof status.output_volts === 'number' ? status.output_volts : (status.output_mv ? status.output_mv / 1000.0 : 0);
+    var duty = typeof status.duty_percent === 'number' ? status.duty_percent : (volts / 10.0 * 100);
+    setText('cooling-voltage-val', volts.toFixed(2) + ' V');
+    setText('cooling-duty-val', duty.toFixed(1) + '%');
 
-    setHtml('cooling-mode-state', renderCoolingMode(status.mode));
-    setHtml('cooling-sensor-state', renderCoolingSensor(status.sensor_state));
-    setHtml('cooling-fault-state', renderCoolingFault(status));
-    if (typeof status.threshold_c === 'number') {
-        setText('cooling-start-temp', renderCoolingCelsius(status.threshold_c));
-        if (typeof status.hysteresis_c === 'number') {
-            setText('cooling-stop-temp', renderCoolingCelsius(status.threshold_c - status.hysteresis_c));
-        } else {
-            setText('cooling-stop-temp', '--');
-        }
-    } else {
-        setText('cooling-start-temp', '--');
-        setText('cooling-stop-temp', '--');
+    // 3. 0-10V Output Level Progress Bar / Gauge
+    var gaugePct = Math.max(0, Math.min(100, (volts / 10.0) * 100));
+    var gaugeFill = pumpEl('cooling-gauge-fill');
+    if (gaugeFill) gaugeFill.style.width = gaugePct.toFixed(1) + '%';
+    setText('cooling-gauge-current-label', volts.toFixed(2) + ' V (' + duty.toFixed(1) + '%)');
+
+    // 4. Status Indicator (ACTIVE, STANDBY, LOCKOUT, FAULT)
+    var ind = computeCoolingStatusIndicator(status);
+    var statusPill = pumpEl('cooling-status-pill');
+    if (statusPill) {
+        statusPill.className = 'cooling-status-pill ' + ind.cls;
+        statusPill.textContent = ind.text;
     }
-    setHtml('cooling-auto-enable-state', status.auto_enable
-        ? renderSvgIcon('icon-auto', 'status-success') + ' <span class="status-success">ON</span>'
-        : renderSvgIcon('icon-stop', 'status-danger') + ' <span class="status-danger">OFF</span>');
-    setHtml('cooling-blocked-reason', renderCoolingBlocked(status.blocked_reason));
-    setText('cooling-lockout', status.lockout_active ? formatPumpCountdown(status.lockout_remaining_sec) : '--');
-    setText('cooling-test-remaining', status.test_remaining_sec ? formatPumpCountdown(status.test_remaining_sec) : '--');
+
+    // 5. Badges
+    var sensorOk = status.sensor_state === 'ok' && status.temperature_valid !== false;
+    updateBadgeCardState('cooling-sensor-card', sensorOk);
+    setHtml('cooling-sensor-state', sensorOk ? '<span class="status-success">ปกติ</span>' : '<span class="status-danger">FAULT</span>');
+
+    var inverterActive = (volts > 0.05);
+    updateBadgeCardState('cooling-inverter-card', inverterActive);
+    setText('cooling-inverter-state', volts.toFixed(2) + ' V (' + duty.toFixed(0) + '%)');
+
+    setHtml('cooling-fault-state', renderCoolingFault(status));
+
     var lockoutTestStr = '--';
     if (status.test_remaining_sec > 0) {
         lockoutTestStr = 'TEST ' + formatPumpCountdown(status.test_remaining_sec);
-    } else if (status.lockout_active) {
+    } else if (status.lockout_active || (status.lockout_remaining_sec > 0)) {
         lockoutTestStr = 'LOCK ' + formatPumpCountdown(status.lockout_remaining_sec);
     }
     setText('cooling-lockout-test-state', lockoutTestStr);
+    setText('cooling-lockout', status.lockout_active ? formatPumpCountdown(status.lockout_remaining_sec) : '--');
+    setText('cooling-test-remaining', status.test_remaining_sec ? formatPumpCountdown(status.test_remaining_sec) : '--');
 
-    if (!coolingDirty && coolingConfig) {
-        var statusStr = coolingConfig.settings_status || 'loaded';
-        setHtml('cooling-config-state', renderSettingsStatus(statusStr, status.auto_enable));
-    }
+    setHtml('cooling-mode-state', renderCoolingMode(status.mode));
 
+    // Sync state
     var sync = pumpEl('cooling-sync-state');
     if (sync) {
         sync.className = status.fault || status.sensor_state === 'fault'
             ? 'runtime-eyebrow error'
             : (status.lockout_active || status.mode === 'test_on' ? 'runtime-eyebrow warn' : 'runtime-eyebrow good');
         sync.innerHTML = status.fault || status.sensor_state === 'fault'
-            ? renderSvgIcon('icon-x-circle') + ' Sensor Fault (Relay OFF)'
+            ? renderSvgIcon('icon-x-circle') + ' Sensor Fault'
             : (status.lockout_active ? renderSvgIcon('icon-timer') + ' Compressor Lockout' : renderSvgIcon('icon-check-circle') + ' Synced');
     }
-    setCoolingAlert(status.fault ? 'พบ sensor fault ระบบบังคับปิด cooling relay แล้ว' : '');
+
+    // If modal is open, refresh graph with live temperature marker
+    var modal = pumpEl('cooling-rule-modal');
+    if (modal && modal.open) {
+        refreshCoolingModalPreview();
+    }
+
     updateCoolingButtons();
 }
 
@@ -2470,14 +2840,22 @@ function handleCoolingStatusFailure() {
     if (stale) {
         setCoolingAlert('ไม่สามารถอ่านสถานะ cooling ได้ชั่วคราว');
         setHtml('cooling-temperature', '--');
-        setHtml('cooling-relay-state', '--');
+        setText('cooling-voltage-val', '--');
+        setText('cooling-duty-val', '--');
+        setText('cooling-gauge-current-label', '--');
+        var gaugeFill = pumpEl('cooling-gauge-fill');
+        if (gaugeFill) gaugeFill.style.width = '0%';
+        var pill = pumpEl('cooling-status-pill');
+        if (pill) { pill.className = 'cooling-status-pill status-standby'; pill.textContent = 'STANDBY'; }
 
         updateBadgeCardState('cooling-relay-card', false);
+        updateBadgeCardState('cooling-inverter-card', false);
         updateBadgeCardState('cooling-sensor-card', false);
 
         setHtml('cooling-mode-state', '--');
         setHtml('cooling-sensor-state', '--');
         setHtml('cooling-fault-state', '--');
+        setText('cooling-inverter-state', '--');
         setText('cooling-start-temp', '--');
         setText('cooling-stop-temp', '--');
         setHtml('cooling-auto-enable-state', '--');
@@ -2500,23 +2878,6 @@ function updateCoolingButtons() {
     if (autoBtn) autoBtn.disabled = disabled || (currentMode === 'auto');
     if (forceBtn) forceBtn.disabled = disabled || (currentMode === 'force_off');
     if (testBtn) testBtn.disabled = disabled || (currentMode === 'test_on');
-
-    var formDisabled = !coolingConfigLoaded || coolingLoadingConfig || coolingSavingConfig || coolingPending || stale;
-    var ids = [
-        'cooling-threshold-input',
-        'cooling-hysteresis-input',
-        'cooling-test-timeout',
-        'cooling-min-off',
-        'cooling-auto-enable'
-    ];
-    for (var i = 0; i < ids.length; i++) {
-        var input = pumpEl(ids[i]);
-        if (input) {
-            input.disabled = formDisabled;
-        }
-    }
-
-    updateCoolingConfigSaveButton();
 }
 
 function startCoolingStatusTimer() {
@@ -2541,10 +2902,10 @@ function handleCoolingVisibilityChange() {
 }
 
 function renderCoolingTemperature(status) {
-    if (!status || !status.temperature_valid) return '--';
+    if (!status || status.temperature_valid === false) return '--';
     var value = Number(status.temperature_c);
     if (!isFinite(value)) return '--';
-    return value.toFixed(1) + ' °C';
+    return value.toFixed(2) + ' °C';
 }
 
 function renderCoolingCelsius(value) {
@@ -2560,14 +2921,14 @@ function renderCoolingMode(value) {
 }
 
 function renderCoolingSensor(value) {
-    if (value === 'ok') return '<span class="status-success">OK</span>';
+    if (value === 'ok') return '<span class="status-success">ปกติ</span>';
     if (value === 'fault') return '<span class="status-danger">FAULT</span>';
     return 'Unknown';
 }
 
 function renderCoolingFault(status) {
     if (!status) return '--';
-    if (!status.fault) return '<span class="status-success">None</span>';
+    if (!status.fault) return '<span class="status-success">ปกติ</span>';
     return '<span class="status-danger">' + (status.fault_code || 'FAULT') + '</span>';
 }
 
