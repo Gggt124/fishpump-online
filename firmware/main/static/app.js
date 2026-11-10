@@ -16,6 +16,7 @@ function cleanupCurrentView() {
     if (typeof pumpTickTimer !== 'undefined' && pumpTickTimer) { clearInterval(pumpTickTimer); pumpTickTimer = null; }
     if (typeof coolingPollTimer !== 'undefined' && coolingPollTimer) { clearInterval(coolingPollTimer); coolingPollTimer = null; }
     if (typeof sseEventSource !== 'undefined' && sseEventSource) { try { sseEventSource.close(); } catch (e) {} sseEventSource = null; }
+    if (typeof sseReconnectTimer !== 'undefined' && sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
     if (typeof handlePumpVisibilityChange !== 'undefined') document.removeEventListener('visibilitychange', handlePumpVisibilityChange);
     if (typeof handleCoolingVisibilityChange !== 'undefined') document.removeEventListener('visibilitychange', handleCoolingVisibilityChange);
 }
@@ -534,6 +535,7 @@ var coolingStatusRequestInFlight = false;
 var coolingPollTimer = null;
 var coolingModalPoints = [];
 var coolingModalCurveType = 'linear';
+var coolingModalWired = false;
 var sseEventSource = null;
 var sseReconnectTimer = null;
 var COOLING_STATUS_POLL_MS = 5000; /* A8 audit: align with pump poll interval */
@@ -2133,6 +2135,9 @@ function wireCoolingActions() {
 }
 
 function wireCoolingModal() {
+    if (coolingModalWired) return;
+    coolingModalWired = true;
+
     var openBtn1 = pumpEl('cooling-open-modal-btn');
     var openBtn2 = pumpEl('cooling-open-modal-btn-2');
     var closeBtn = pumpEl('cooling-modal-close-x');
@@ -2430,11 +2435,13 @@ function drawCoolingCurveSvg(points, curveType, currentTemp, currentVolts) {
     elements.push('<line x1="' + padLeft + '" y1="' + padTop + '" x2="' + padLeft + '" y2="' + (padTop + graphH) + '" stroke="#666" stroke-width="1.5" />');
     elements.push('<line x1="' + padLeft + '" y1="' + (padTop + graphH) + '" x2="' + (padLeft + graphW) + '" y2="' + (padTop + graphH) + '" stroke="#666" stroke-width="1.5" />');
 
-    // Curve Path
+    // Curve Path: below T0, inverter output is 0V
     var pathD = '';
+    pathD = 'M ' + padLeft + ' ' + toY(0.0);
+    pathD += ' L ' + toX(points[0].temp_c) + ' ' + toY(0.0);
+    pathD += ' L ' + toX(points[0].temp_c) + ' ' + toY(points[0].output_volts);
+
     if (curveType === 'step') {
-        pathD = 'M ' + padLeft + ' ' + toY(points[0].output_volts);
-        pathD += ' L ' + toX(points[0].temp_c) + ' ' + toY(points[0].output_volts);
         for (var p = 0; p < points.length - 1; p++) {
             var currP = points[p];
             var nextP = points[p + 1];
@@ -2443,8 +2450,6 @@ function drawCoolingCurveSvg(points, curveType, currentTemp, currentVolts) {
         }
         pathD += ' L ' + (padLeft + graphW) + ' ' + toY(points[points.length - 1].output_volts);
     } else {
-        pathD = 'M ' + padLeft + ' ' + toY(points[0].output_volts);
-        pathD += ' L ' + toX(points[0].temp_c) + ' ' + toY(points[0].output_volts);
         for (var p = 1; p < points.length; p++) {
             pathD += ' L ' + toX(points[p].temp_c) + ' ' + toY(points[p].output_volts);
         }
@@ -2482,26 +2487,60 @@ function saveCoolingModalRules() {
     if (coolingSavingConfig) return;
     setCoolingModalAlert('');
 
-    if (coolingModalPoints.length < 2 || coolingModalPoints.length > 8) {
+    // Read directly from DOM input elements to ensure sync even if inputs were cleared
+    var tbody = pumpEl('cooling-points-tbody');
+    var tempInputs = tbody ? tbody.querySelectorAll('.cooling-point-temp') : [];
+    var voltInputs = tbody ? tbody.querySelectorAll('.cooling-point-volt') : [];
+
+    if (tempInputs.length < 2 || tempInputs.length > 8) {
         setCoolingModalAlert('จำนวนจุดควบคุมต้องอยู่ระหว่าง 2 ถึง 8 จุด');
         return;
     }
 
-    for (var i = 0; i < coolingModalPoints.length; i++) {
-        var p = coolingModalPoints[i];
-        if (isNaN(p.temp_c) || p.temp_c < -50 || p.temp_c > 150) {
+    var parsedPoints = [];
+    for (var i = 0; i < tempInputs.length; i++) {
+        var tRaw = tempInputs[i].value.trim();
+        var vRaw = voltInputs[i].value.trim();
+
+        if (tRaw === '') {
+            setCoolingModalAlert('กรุณากรอกอุณหภูมิในจุดที่ #' + (i + 1));
+            tempInputs[i].focus();
+            return;
+        }
+        if (vRaw === '') {
+            setCoolingModalAlert('กรุณากรอกแรงดันในจุดที่ #' + (i + 1));
+            voltInputs[i].focus();
+            return;
+        }
+
+        var t = parseFloat(tRaw);
+        var v = parseFloat(vRaw);
+
+        if (isNaN(t) || t < -50 || t > 150) {
             setCoolingModalAlert('อุณหภูมิในจุดที่ #' + (i + 1) + ' ต้องอยู่ระหว่าง -50.0 ถึง 150.0 °C');
+            tempInputs[i].focus();
             return;
         }
-        if (isNaN(p.output_volts) || p.output_volts < 0 || p.output_volts > 10.0) {
+        if (isNaN(v) || v < 0 || v > 10.0) {
             setCoolingModalAlert('แรงดันในจุดที่ #' + (i + 1) + ' ต้องอยู่ระหว่าง 0.0 ถึง 10.0 V');
+            voltInputs[i].focus();
             return;
         }
-        if (i > 0 && p.temp_c <= coolingModalPoints[i - 1].temp_c) {
-            setCoolingModalAlert('อุณหภูมิต้องเรียงจากน้อยไปมาก จุด #' + (i + 1) + ' (' + p.temp_c.toFixed(1) + '°C) ต้องมากกว่าจุด #' + i + ' (' + coolingModalPoints[i - 1].temp_c.toFixed(1) + '°C)');
+
+        if (i > 0 && t <= parsedPoints[i - 1].temp_c) {
+            setCoolingModalAlert('อุณหภูมิต้องเรียงจากน้อยไปมาก จุด #' + (i + 1) + ' (' + t.toFixed(1) + '°C) ต้องมากกว่าจุด #' + i + ' (' + parsedPoints[i - 1].temp_c.toFixed(1) + '°C)');
+            tempInputs[i].focus();
             return;
         }
+
+        parsedPoints.push({
+            temp_c: t,
+            output_volts: v
+        });
     }
+
+    // Sync validated points to coolingModalPoints
+    coolingModalPoints = parsedPoints;
 
     var minOffInput = pumpEl('cooling-modal-min-off');
     var minOffVal = minOffInput ? parseInt(minOffInput.value, 10) : 180;
@@ -2778,6 +2817,8 @@ function applyCoolingStatus(status, authoritative) {
     var gaugeFill = pumpEl('cooling-gauge-fill');
     if (gaugeFill) gaugeFill.style.width = gaugePct.toFixed(1) + '%';
     setText('cooling-gauge-current-label', volts.toFixed(2) + ' V (' + duty.toFixed(1) + '%)');
+    var gaugeBar = pumpEl('cooling-gauge-bar');
+    if (gaugeBar) gaugeBar.setAttribute('aria-valuenow', volts.toFixed(2));
 
     // 4. Status Indicator (ACTIVE, STANDBY, LOCKOUT, FAULT)
     var ind = computeCoolingStatusIndicator(status);
@@ -2821,6 +2862,8 @@ function applyCoolingStatus(status, authoritative) {
             : (status.lockout_active ? renderSvgIcon('icon-timer') + ' Compressor Lockout' : renderSvgIcon('icon-check-circle') + ' Synced');
     }
 
+    setPumpAlert('cooling-status-error', status.fault ? 'พบ sensor fault ระบบบังคับปิดการทำงานแล้ว' : '');
+
     // If modal is open, refresh graph with live temperature marker
     var modal = pumpEl('cooling-rule-modal');
     if (modal && modal.open) {
@@ -2838,13 +2881,15 @@ function handleCoolingStatusFailure() {
         sync.innerHTML = stale ? renderSvgIcon('icon-wifi-off') + ' Stale' : renderSvgIcon('icon-sync') + ' Syncing...';
     }
     if (stale) {
-        setCoolingAlert('ไม่สามารถอ่านสถานะ cooling ได้ชั่วคราว');
+        setPumpAlert('cooling-status-error', 'ไม่สามารถอ่านสถานะ cooling ได้ชั่วคราว');
         setHtml('cooling-temperature', '--');
         setText('cooling-voltage-val', '--');
         setText('cooling-duty-val', '--');
         setText('cooling-gauge-current-label', '--');
         var gaugeFill = pumpEl('cooling-gauge-fill');
         if (gaugeFill) gaugeFill.style.width = '0%';
+        var gaugeBar = pumpEl('cooling-gauge-bar');
+        if (gaugeBar) gaugeBar.setAttribute('aria-valuenow', '0');
         var pill = pumpEl('cooling-status-pill');
         if (pill) { pill.className = 'cooling-status-pill status-standby'; pill.textContent = 'STANDBY'; }
 
