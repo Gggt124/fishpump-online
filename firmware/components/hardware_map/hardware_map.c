@@ -10,15 +10,18 @@
 _Static_assert(HARDWARE_ROLE_FLOAT == HARDWARE_ROLE_FLOAT_INPUT, "Role alias mismatch");
 _Static_assert(HARDWARE_ROLE_PUMP1 == HARDWARE_ROLE_PUMP_RELAY_1, "Role alias mismatch");
 _Static_assert(HARDWARE_ROLE_PUMP2 == HARDWARE_ROLE_PUMP_RELAY_2, "Role alias mismatch");
-_Static_assert(HARDWARE_ROLE_TEMP_DATA == HARDWARE_ROLE_DS18B20_DATA, "Role alias mismatch");
-_Static_assert(HARDWARE_ROLE_COOLING == HARDWARE_ROLE_COOLING_RELAY, "Role alias mismatch");
+_Static_assert(HARDWARE_ROLE_TEMP_DATA == HARDWARE_ROLE_MAX31865_CS, "Role alias mismatch");
+_Static_assert(HARDWARE_ROLE_COOLING == HARDWARE_ROLE_COOLING_PWM, "Role alias mismatch");
+_Static_assert(HARDWARE_ROLE_DS18B20_DATA == HARDWARE_ROLE_MAX31865_CS, "Role alias mismatch");
+_Static_assert(HARDWARE_ROLE_COOLING_RELAY == HARDWARE_ROLE_COOLING_PWM, "Role alias mismatch");
 
 /* Only pins described below are considered reusable application GPIOs.
  *
  * ESP32-S3 deliberately excludes:
  * - GPIO 0, 3, 45, 46: strapping pins
  * - GPIO 4: weak pull-up during reset
- * - GPIO 9-14: Unassigned (archived peripheral wiring)
+ * - GPIO 9, 14: Unassigned (archived peripheral wiring)
+ * - GPIO 10, 11, 12, 13: Native SPI2 (MAX31865 PT100 RTD)
  * - GPIO 19-20: native USB D-/D+
  * - GPIO 21, 38-42, 47: USB OTG download/boot-mode signals
  * - GPIO 27-37: WROOM-1 Octal Flash/PSRAM connections
@@ -29,7 +32,7 @@ _Static_assert(HARDWARE_ROLE_COOLING == HARDWARE_ROLE_COOLING_RELAY, "Role alias
  * is technically routable through the GPIO matrix is not automatically safe
  * to expose as a user-selectable hardware role.
  *
- * ESP32-S3 safe pool: GPIO 1, 2, 5, 6, 7, 8, 15, 16, 17, 18.
+ * ESP32-S3 safe pool: GPIO 1, 2, 5, 6, 7, 8, 10, 11, 12, 13, 15, 16, 17, 18.
  */
 
 static const hardware_pin_descriptor_t s_pin_descriptors[] = {
@@ -57,6 +60,22 @@ static const hardware_pin_descriptor_t s_pin_descriptors[] = {
      HARDWARE_PIN_CAP_INPUT | HARDWARE_PIN_CAP_OUTPUT |
          HARDWARE_PIN_CAP_INTERNAL_PULL,
      "GPIO8"},
+    {HARDWARE_PIN_GPIO10, GPIO_NUM_10,
+     HARDWARE_PIN_CAP_INPUT | HARDWARE_PIN_CAP_OUTPUT |
+         HARDWARE_PIN_CAP_INTERNAL_PULL,
+     "GPIO10"},
+    {HARDWARE_PIN_GPIO11, GPIO_NUM_11,
+     HARDWARE_PIN_CAP_INPUT | HARDWARE_PIN_CAP_OUTPUT |
+         HARDWARE_PIN_CAP_INTERNAL_PULL,
+     "GPIO11"},
+    {HARDWARE_PIN_GPIO12, GPIO_NUM_12,
+     HARDWARE_PIN_CAP_INPUT | HARDWARE_PIN_CAP_OUTPUT |
+         HARDWARE_PIN_CAP_INTERNAL_PULL,
+     "GPIO12"},
+    {HARDWARE_PIN_GPIO13, GPIO_NUM_13,
+     HARDWARE_PIN_CAP_INPUT | HARDWARE_PIN_CAP_OUTPUT |
+         HARDWARE_PIN_CAP_INTERNAL_PULL,
+     "GPIO13"},
     {HARDWARE_PIN_GPIO15, GPIO_NUM_15,
      HARDWARE_PIN_CAP_INPUT | HARDWARE_PIN_CAP_OUTPUT |
          HARDWARE_PIN_CAP_INTERNAL_PULL,
@@ -133,41 +152,46 @@ static const hardware_gpio_option_t s_pump_relay2_options[] = {
                          false),
 };
 
-static const hardware_gpio_option_t s_ds18b20_options[] = {
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_DS18B20_DATA, 1, true, true, true,
+static const hardware_gpio_option_t s_max31865_cs_options[] = {
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_MAX31865_CS, 1, true, true, true,
                          false),
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_DS18B20_DATA, 2, true, true, true,
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_MAX31865_CS, 2, true, true, true,
                          false),
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_DS18B20_DATA, 7, true, true, true,
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_MAX31865_CS, 7, true, true, true,
+                         false),
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_MAX31865_CS, 10, true, true, true,
                          true),
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_DS18B20_DATA, 15, true, true, true,
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_MAX31865_CS, 15, true, true, true,
                          false),
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_DS18B20_DATA, 16, true, true, true,
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_MAX31865_CS, 16, true, true, true,
                          false),
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_DS18B20_DATA, 17, true, true, true,
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_MAX31865_CS, 17, true, true, true,
                          false),
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_DS18B20_DATA, 18, true, true, true,
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_MAX31865_CS, 18, true, true, true,
                          false),
 };
 
-static const hardware_gpio_option_t s_cooling_relay_options[] = {
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_RELAY, 5, true, true, true,
+static const hardware_gpio_option_t s_cooling_pwm_options[] = {
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_PWM, 5, true, true, true,
                          false),
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_RELAY, 6, true, true, true,
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_PWM, 6, true, true, true,
                          false),
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_RELAY, 7, true, true, true,
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_PWM, 7, true, true, true,
                          false),
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_RELAY, 8, true, true, true,
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_PWM, 8, true, true, true,
                          true),
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_RELAY, 15, true, true, true,
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_PWM, 15, true, true, true,
                          false),
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_RELAY, 16, true, true, true,
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_PWM, 16, true, true, true,
                          false),
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_RELAY, 17, true, true, true,
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_PWM, 17, true, true, true,
                          false),
-    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_RELAY, 18, true, true, true,
+    HARDWARE_GPIO_OPTION(HARDWARE_ROLE_COOLING_PWM, 18, true, true, true,
                          false),
 };
+
+#define s_ds18b20_options s_max31865_cs_options
+#define s_cooling_relay_options s_cooling_pwm_options
 
 #undef HARDWARE_GPIO_OPTION
 
@@ -186,12 +210,28 @@ static bool s_hardware_map_initialized = false;
 #define APP_TEMPLATE_HW_DEFAULT_PUMP_RELAY2_GPIO GPIO_NUM_6
 #endif
 
+#ifndef APP_TEMPLATE_MAX31865_CS_GPIO
+#define APP_TEMPLATE_MAX31865_CS_GPIO GPIO_NUM_10
+#endif
+
+#ifndef APP_TEMPLATE_HW_DEFAULT_MAX31865_CS_GPIO
+#define APP_TEMPLATE_HW_DEFAULT_MAX31865_CS_GPIO APP_TEMPLATE_MAX31865_CS_GPIO
+#endif
+
 #ifndef APP_TEMPLATE_HW_DEFAULT_DS18B20_GPIO
-#define APP_TEMPLATE_HW_DEFAULT_DS18B20_GPIO GPIO_NUM_7
+#define APP_TEMPLATE_HW_DEFAULT_DS18B20_GPIO APP_TEMPLATE_HW_DEFAULT_MAX31865_CS_GPIO
+#endif
+
+#ifndef APP_TEMPLATE_COOLING_PWM_GPIO
+#define APP_TEMPLATE_COOLING_PWM_GPIO GPIO_NUM_8
+#endif
+
+#ifndef APP_TEMPLATE_HW_DEFAULT_COOLING_PWM_GPIO
+#define APP_TEMPLATE_HW_DEFAULT_COOLING_PWM_GPIO APP_TEMPLATE_COOLING_PWM_GPIO
 #endif
 
 #ifndef APP_TEMPLATE_HW_DEFAULT_COOLING_RELAY_GPIO
-#define APP_TEMPLATE_HW_DEFAULT_COOLING_RELAY_GPIO GPIO_NUM_8
+#define APP_TEMPLATE_HW_DEFAULT_COOLING_RELAY_GPIO APP_TEMPLATE_HW_DEFAULT_COOLING_PWM_GPIO
 #endif
 
 #ifndef APP_TEMPLATE_HW_DEFAULT_PUMP_RELAY1_ACTIVE_LOW
@@ -231,10 +271,10 @@ gpio_num_t hardware_map_get_active_pin(hardware_role_t role) {
     return s_active_hardware_map.pump_relay1_gpio;
   case HARDWARE_ROLE_PUMP_RELAY_2:
     return s_active_hardware_map.pump_relay2_gpio;
-  case HARDWARE_ROLE_DS18B20_DATA:
-    return s_active_hardware_map.ds18b20_data_gpio;
-  case HARDWARE_ROLE_COOLING_RELAY:
-    return s_active_hardware_map.cooling_relay_gpio;
+  case HARDWARE_ROLE_MAX31865_CS:
+    return s_active_hardware_map.max31865_cs_gpio;
+  case HARDWARE_ROLE_COOLING_PWM:
+    return s_active_hardware_map.cooling_pwm_gpio;
   default:
     return GPIO_NUM_NC;
   }
@@ -248,6 +288,10 @@ bool hardware_map_is_pin_allowed(gpio_num_t pin) {
   case GPIO_NUM_6:
   case GPIO_NUM_7:
   case GPIO_NUM_8:
+  case GPIO_NUM_10:
+  case GPIO_NUM_11:
+  case GPIO_NUM_12:
+  case GPIO_NUM_13:
   case GPIO_NUM_15:
   case GPIO_NUM_16:
   case GPIO_NUM_17:
@@ -294,9 +338,9 @@ hardware_map_t hardware_map_defaults(void) {
       .float_input_gpio = (gpio_num_t)APP_TEMPLATE_HW_DEFAULT_FLOAT_GPIO,
       .pump_relay1_gpio = (gpio_num_t)APP_TEMPLATE_HW_DEFAULT_PUMP_RELAY1_GPIO,
       .pump_relay2_gpio = (gpio_num_t)APP_TEMPLATE_HW_DEFAULT_PUMP_RELAY2_GPIO,
-      .ds18b20_data_gpio = (gpio_num_t)APP_TEMPLATE_HW_DEFAULT_DS18B20_GPIO,
-      .cooling_relay_gpio =
-          (gpio_num_t)APP_TEMPLATE_HW_DEFAULT_COOLING_RELAY_GPIO,
+      .max31865_cs_gpio = (gpio_num_t)APP_TEMPLATE_HW_DEFAULT_MAX31865_CS_GPIO,
+      .cooling_pwm_gpio =
+          (gpio_num_t)APP_TEMPLATE_HW_DEFAULT_COOLING_PWM_GPIO,
   };
 }
 
@@ -341,10 +385,10 @@ required_capabilities_for_role(hardware_role_t role) {
     return HARDWARE_PIN_CAP_INPUT;
   case HARDWARE_ROLE_PUMP_RELAY_1:
   case HARDWARE_ROLE_PUMP_RELAY_2:
-  case HARDWARE_ROLE_COOLING_RELAY:
+  case HARDWARE_ROLE_COOLING_PWM:
     return HARDWARE_PIN_CAP_OUTPUT;
-  case HARDWARE_ROLE_DS18B20_DATA:
-    return HARDWARE_PIN_CAP_INPUT | HARDWARE_PIN_CAP_OUTPUT;
+  case HARDWARE_ROLE_MAX31865_CS:
+    return HARDWARE_PIN_CAP_OUTPUT;
   default:
     return HARDWARE_PIN_CAP_NONE;
   }
@@ -358,10 +402,10 @@ const char *hardware_map_role_name(hardware_role_t role) {
     return "pump_relay_1";
   case HARDWARE_ROLE_PUMP_RELAY_2:
     return "pump_relay_2";
-  case HARDWARE_ROLE_DS18B20_DATA:
-    return "ds18b20_data";
-  case HARDWARE_ROLE_COOLING_RELAY:
-    return "cooling_relay";
+  case HARDWARE_ROLE_MAX31865_CS:
+    return "max31865_cs";
+  case HARDWARE_ROLE_COOLING_PWM:
+    return "cooling_pwm";
   default:
     return "unknown";
   }
@@ -425,16 +469,16 @@ hardware_map_options_for_role(hardware_role_t role, size_t *count) {
       *count = ARRAY_SIZE(s_pump_relay2_options);
     }
     return s_pump_relay2_options;
-  case HARDWARE_ROLE_DS18B20_DATA:
+  case HARDWARE_ROLE_MAX31865_CS:
     if (count) {
-      *count = ARRAY_SIZE(s_ds18b20_options);
+      *count = ARRAY_SIZE(s_max31865_cs_options);
     }
-    return s_ds18b20_options;
-  case HARDWARE_ROLE_COOLING_RELAY:
+    return s_max31865_cs_options;
+  case HARDWARE_ROLE_COOLING_PWM:
     if (count) {
-      *count = ARRAY_SIZE(s_cooling_relay_options);
+      *count = ARRAY_SIZE(s_cooling_pwm_options);
     }
-    return s_cooling_relay_options;
+    return s_cooling_pwm_options;
   default:
     return NULL;
   }
@@ -473,7 +517,7 @@ bool hardware_map_validate(const hardware_map_t *map) {
 
   gpio_num_t gpios[HARDWARE_ROLE_COUNT] = {
       map->float_input_gpio,  map->pump_relay1_gpio,   map->pump_relay2_gpio,
-      map->ds18b20_data_gpio, map->cooling_relay_gpio,
+      map->max31865_cs_gpio,  map->cooling_pwm_gpio,
   };
 
   for (int role = HARDWARE_ROLE_FLOAT_INPUT; role < HARDWARE_ROLE_COUNT;
@@ -496,8 +540,8 @@ bool hardware_map_equal(const hardware_map_t *a, const hardware_map_t *b) {
   return a && b && a->float_input_gpio == b->float_input_gpio &&
          a->pump_relay1_gpio == b->pump_relay1_gpio &&
          a->pump_relay2_gpio == b->pump_relay2_gpio &&
-         a->ds18b20_data_gpio == b->ds18b20_data_gpio &&
-         a->cooling_relay_gpio == b->cooling_relay_gpio;
+         a->max31865_cs_gpio == b->max31865_cs_gpio &&
+         a->cooling_pwm_gpio == b->cooling_pwm_gpio;
 }
 
 bool hardware_map_reboot_required(const hardware_map_t *active,

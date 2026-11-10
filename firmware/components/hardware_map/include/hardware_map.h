@@ -13,17 +13,19 @@ typedef enum {
   HARDWARE_ROLE_FLOAT_INPUT = 0,
   HARDWARE_ROLE_PUMP_RELAY_1,
   HARDWARE_ROLE_PUMP_RELAY_2,
-  HARDWARE_ROLE_DS18B20_DATA,
-  HARDWARE_ROLE_COOLING_RELAY,
+  HARDWARE_ROLE_MAX31865_CS,
+  HARDWARE_ROLE_COOLING_PWM,
   HARDWARE_ROLE_COUNT,
 } hardware_role_t;
 
-/* Role convenience aliases */
+/* Role convenience & backward compatibility aliases */
 #define HARDWARE_ROLE_FLOAT HARDWARE_ROLE_FLOAT_INPUT
 #define HARDWARE_ROLE_PUMP1 HARDWARE_ROLE_PUMP_RELAY_1
 #define HARDWARE_ROLE_PUMP2 HARDWARE_ROLE_PUMP_RELAY_2
-#define HARDWARE_ROLE_TEMP_DATA HARDWARE_ROLE_DS18B20_DATA
-#define HARDWARE_ROLE_COOLING HARDWARE_ROLE_COOLING_RELAY
+#define HARDWARE_ROLE_TEMP_DATA HARDWARE_ROLE_MAX31865_CS
+#define HARDWARE_ROLE_COOLING HARDWARE_ROLE_COOLING_PWM
+#define HARDWARE_ROLE_DS18B20_DATA HARDWARE_ROLE_MAX31865_CS
+#define HARDWARE_ROLE_COOLING_RELAY HARDWARE_ROLE_COOLING_PWM
 
 typedef enum {
   HARDWARE_PIN_INVALID = -1,
@@ -106,8 +108,14 @@ typedef struct {
   gpio_num_t float_input_gpio;
   gpio_num_t pump_relay1_gpio;
   gpio_num_t pump_relay2_gpio;
-  gpio_num_t ds18b20_data_gpio;
-  gpio_num_t cooling_relay_gpio;
+  union {
+    gpio_num_t max31865_cs_gpio;
+    gpio_num_t ds18b20_data_gpio;
+  };
+  union {
+    gpio_num_t cooling_pwm_gpio;
+    gpio_num_t cooling_relay_gpio;
+  };
 } hardware_map_t;
 
 typedef struct {
