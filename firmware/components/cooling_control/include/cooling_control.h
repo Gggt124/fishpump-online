@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cooling_rule_engine.h"
 #include "driver/gpio.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -51,6 +52,7 @@ typedef struct {
   cooling_control_mode_t mode;
   uint32_t test_timeout_sec;
   uint32_t compressor_min_off_sec;
+  cooling_settings_t settings;
 } cooling_control_config_t;
 
 typedef struct {
@@ -73,6 +75,12 @@ typedef struct {
   cooling_control_blocked_reason_t blocked_reason;
   uint32_t lockout_remaining_sec;
   uint32_t test_remaining_sec;
+  /* Multi-point inverter rule engine status */
+  uint16_t output_mv;
+  float duty_percent;
+  cooling_curve_type_t curve_type;
+  uint8_t point_count;
+  cooling_rule_point_t points[COOLING_MAX_RULE_POINTS];
 } cooling_control_status_t;
 
 cooling_control_config_t cooling_control_default_config(void);

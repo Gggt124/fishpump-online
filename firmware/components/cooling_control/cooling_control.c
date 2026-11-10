@@ -535,6 +535,7 @@ cooling_control_config_t cooling_control_default_config(void) {
       .test_timeout_sec = APP_TEMPLATE_COOLING_TEST_TIMEOUT_SEC,
       .compressor_min_off_sec = APP_TEMPLATE_COOLING_MIN_OFF_SEC,
   };
+  cooling_settings_set_defaults(&config.settings);
   return config;
 }
 
@@ -559,6 +560,9 @@ bool cooling_control_init(const cooling_control_config_t *config) {
   }
   deinit_sensor();
   s_config = *config;
+  if (!cooling_validate_settings(&s_config.settings)) {
+    cooling_settings_set_defaults(&s_config.settings);
+  }
   reset_runtime_state_locked();
   s_runtime_enabled = config->allow_runtime_control;
   int64_t now_ms = esp_timer_get_time() / 1000;
@@ -664,6 +668,9 @@ bool cooling_control_apply_config(const cooling_control_config_t *config) {
   uint32_t lockout_remaining_sec =
       seconds_until_deadline(now_ms, s_next_allowed_on_ms);
   s_config = *config;
+  if (!cooling_validate_settings(&s_config.settings)) {
+    cooling_settings_set_defaults(&s_config.settings);
+  }
   if (!s_runtime_enabled) {
     s_config.auto_enable = false;
     s_config.mode = COOLING_CONTROL_MODE_FORCE_OFF;
@@ -745,6 +752,20 @@ bool cooling_control_get_status(cooling_control_status_t *out) {
   out->blocked_reason = s_blocked_reason;
   out->lockout_remaining_sec = lockout_remaining_locked(now_ms);
   out->test_remaining_sec = test_remaining_locked(now_ms);
+  out->output_mv = 0;
+  out->duty_percent = 0.0f;
+  if (s_config.settings.point_count >= COOLING_MIN_RULE_POINTS &&
+      s_config.settings.point_count <= COOLING_MAX_RULE_POINTS) {
+    out->curve_type = s_config.settings.curve_type;
+    out->point_count = s_config.settings.point_count;
+    memcpy(out->points, s_config.settings.points, sizeof(out->points));
+  } else {
+    cooling_settings_t def;
+    cooling_settings_set_defaults(&def);
+    out->curve_type = def.curve_type;
+    out->point_count = def.point_count;
+    memcpy(out->points, def.points, sizeof(out->points));
+  }
   xSemaphoreGive(s_cooling_mutex);
   return true;
 }
