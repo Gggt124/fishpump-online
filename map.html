@@ -1,0 +1,1631 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FishPump ESP32-S3 Firmware — Architecture & Data Flow Map</title>
+<style>
+  :root {
+    --bg-main: #0b1120;
+    --bg-card: rgba(15, 23, 42, 0.85);
+    --bg-card-hover: rgba(30, 41, 59, 0.95);
+    --border-subtle: #1e293b;
+    --border-bright: #334155;
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    
+    --c-cyan: #06b6d4;
+    --c-emerald: #10b981;
+    --c-amber: #f59e0b;
+    --c-purple: #a855f7;
+    --c-rose: #f43f5e;
+    --c-blue: #3b82f6;
+
+    --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: 'Consolas', 'Courier New', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background-color: var(--bg-main);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+  }
+
+  /* Header Bar */
+  header {
+    background: rgba(15, 23, 42, 0.95);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 20;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .brand-icon {
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, #0284c7, #06b6d4);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 16px rgba(6, 182, 212, 0.4);
+  }
+
+  .brand-icon svg {
+    width: 22px;
+    height: 22px;
+    fill: #ffffff;
+  }
+
+  .header-title h1 {
+    font-size: 15px;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .header-title .tag {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #0369a1;
+    color: #e0f2fe;
+  }
+
+  .header-title p {
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  /* Hardware Chip Badges */
+  .chip-badges {
+    display: flex;
+    gap: 8px;
+  }
+
+  .chip-pill {
+    font-size: 11px;
+    padding: 4px 10px;
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid var(--border-subtle);
+    border-radius: 20px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .chip-pill .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+
+  /* Scenario Switcher Tabs */
+  #scenario-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(2, 6, 23, 0.6);
+    padding: 4px;
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .scenario-btn {
+    background: transparent;
+    border: none;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .scenario-btn:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .scenario-btn.active {
+    background: #0284c7;
+    color: #ffffff;
+    box-shadow: 0 0 12px rgba(2, 132, 199, 0.4);
+  }
+
+  /* Header Controls */
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-icon {
+    background: rgba(30, 41, 59, 0.7);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+
+  .btn-icon:hover {
+    color: #ffffff;
+    border-color: var(--border-bright);
+    background: rgba(51, 65, 85, 0.8);
+  }
+
+  /* Guidance Banner */
+  #guidance-banner {
+    background: rgba(15, 23, 42, 0.9);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 8px 24px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 15;
+  }
+
+  .banner-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .banner-badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 700;
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+
+  .banner-desc {
+    color: var(--text-secondary);
+  }
+
+  .banner-legend {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .legend-circle {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  /* Canvas Container */
+  #canvas-container {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: radial-gradient(circle at 50% 30%, #0f172a 0%, #020617 100%);
+  }
+
+  #architecture-svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: grab;
+  }
+
+  #architecture-svg:active {
+    cursor: grabbing;
+  }
+
+  /* SVG Styles */
+  .layer-band {
+    fill-opacity: 0.12;
+    stroke-width: 1;
+    stroke-dasharray: 4 6;
+    rx: 12;
+  }
+
+  .layer-label {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    fill: var(--text-muted);
+    text-anchor: start;
+  }
+
+  /* Component Nodes */
+  .component-node {
+    cursor: pointer;
+    transition: transform 0.2s ease, filter 0.2s ease;
+  }
+
+  .component-node:hover {
+    filter: drop-shadow(0 0 14px rgba(6, 182, 212, 0.45));
+  }
+
+  .node-bg {
+    fill: #0f172a;
+    stroke: var(--border-bright);
+    stroke-width: 1.5;
+    rx: 10;
+    transition: all 0.2s ease;
+  }
+
+  .component-node:hover .node-bg {
+    stroke: var(--c-cyan);
+    fill: #1e293b;
+  }
+
+  .node-selected .node-bg {
+    stroke: #38bdf8 !important;
+    stroke-width: 2.5 !important;
+    fill: #1e293b !important;
+    filter: drop-shadow(0 0 16px rgba(56, 189, 248, 0.6));
+  }
+
+  .node-title-thai {
+    font-size: 12.5px;
+    font-weight: 700;
+    fill: #ffffff;
+  }
+
+  .node-title-eng {
+    font-size: 10px;
+    font-weight: 500;
+    fill: var(--text-secondary);
+  }
+
+  .node-core-badge {
+    font-size: 9px;
+    font-weight: 700;
+  }
+
+  .node-file-tag {
+    font-size: 9px;
+    font-family: var(--font-mono);
+    fill: var(--text-muted);
+  }
+
+  /* SVG Connection Paths */
+  .flow-path-bg {
+    fill: none;
+    stroke: rgba(30, 41, 59, 0.6);
+    stroke-width: 2;
+    transition: opacity 0.3s ease;
+  }
+
+  .flow-path {
+    fill: none;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    transition: opacity 0.3s ease, stroke-width 0.2s ease;
+  }
+
+  /* Particle Motion CSS Dash Animation */
+  @keyframes flowMotion {
+    from { stroke-dashoffset: 40; }
+    to { stroke-dashoffset: 0; }
+  }
+
+  .flow-active {
+    stroke-dasharray: 8 12;
+    animation: flowMotion 1.2s linear infinite;
+  }
+
+  .flow-dimmed {
+    opacity: 0.1 !important;
+  }
+
+  .flow-highlighted {
+    stroke-width: 4 !important;
+    filter: drop-shadow(0 0 8px currentColor);
+    opacity: 1 !important;
+  }
+
+  .node-dimmed {
+    opacity: 0.25;
+    filter: grayscale(80%);
+  }
+
+  /* Slide-over Inspector Drawer */
+  #inspector-drawer {
+    position: absolute;
+    top: 0;
+    right: -480px;
+    width: 460px;
+    height: 100%;
+    background: rgba(15, 23, 42, 0.96);
+    backdrop-filter: blur(16px);
+    border-left: 1px solid var(--border-bright);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.6);
+    z-index: 30;
+    transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    flex-direction: column;
+  }
+
+  #inspector-drawer.open {
+    right: 0;
+  }
+
+  .drawer-header {
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    background: rgba(2, 6, 23, 0.5);
+  }
+
+  .drawer-title-group h2 {
+    font-size: 16px;
+    font-weight: 700;
+    color: #ffffff;
+    margin-bottom: 4px;
+  }
+
+  .drawer-title-group p {
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  .drawer-close-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 20px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.2s;
+  }
+
+  .drawer-close-btn:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .drawer-section {
+    background: rgba(30, 41, 59, 0.4);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+
+  .drawer-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .drawer-desc {
+    font-size: 12.5px;
+    color: #e2e8f0;
+    line-height: 1.6;
+  }
+
+  .rtos-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+
+  .rtos-item {
+    background: rgba(15, 23, 42, 0.6);
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .rtos-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    display: block;
+  }
+
+  .rtos-val {
+    font-size: 12px;
+    font-weight: 600;
+    color: #ffffff;
+    font-family: var(--font-mono);
+  }
+
+  .pill-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .pill-item {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 11.5px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .pill-item:hover {
+    border-color: var(--c-cyan);
+    background: rgba(6, 182, 212, 0.1);
+  }
+
+  .pill-item-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #ffffff;
+  }
+
+  .pill-item-type {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .api-block {
+    background: #020617;
+    border-radius: 6px;
+    padding: 10px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: #38bdf8;
+    overflow-x: auto;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .api-line {
+    margin-bottom: 4px;
+    white-space: nowrap;
+  }
+
+  .badge-tag {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    margin-right: 4px;
+    margin-bottom: 4px;
+  }
+
+  /* Floating Canvas Controls */
+  .canvas-tools {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    background: rgba(15, 23, 42, 0.9);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 10;
+  }
+
+  .canvas-tools button {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    transition: all 0.2s;
+  }
+
+  .canvas-tools button:hover {
+    color: #ffffff;
+    background: #334155;
+  }
+
+  /* Tooltip */
+  #node-tooltip {
+    position: absolute;
+    background: rgba(2, 6, 23, 0.95);
+    border: 1px solid var(--border-bright);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    color: #ffffff;
+    pointer-events: none;
+    z-index: 50;
+    display: none;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    max-width: 280px;
+  }
+</style>
+</head>
+<body>
+
+<!-- Header Navigation -->
+<header>
+  <div class="header-left">
+    <div class="brand-icon">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+      </svg>
+    </div>
+    <div class="header-title">
+      <h1>FishPump Architecture & Data Flow <span class="tag">ESP32-S3</span></h1>
+      <p>ผังการทำงานของระบบและการไหลของข้อมูลระหว่าง Components & App Main</p>
+    </div>
+  </div>
+
+  <div class="chip-badges">
+    <div class="chip-pill"><span class="dot" style="background:#06b6d4"></span> Dual-Core Xtensa LX7 240MHz</div>
+    <div class="chip-pill"><span class="dot" style="background:#10b981"></span> FreeRTOS SMP</div>
+    <div class="chip-pill"><span class="dot" style="background:#f59e0b"></span> 16MB Flash / 8MB PSRAM</div>
+  </div>
+
+  <!-- Scenario Switcher -->
+  <div id="scenario-bar">
+    <button class="scenario-btn active" data-scenario="overview" onclick="switchScenario('overview')">
+      🌐 <span>Overview</span>
+    </button>
+    <button class="scenario-btn" data-scenario="boot" onclick="switchScenario('boot')">
+      ⚡ <span>Boot & Safe Init</span>
+    </button>
+    <button class="scenario-btn" data-scenario="telemetry" onclick="switchScenario('telemetry')">
+      🔄 <span>Telemetry Loop</span>
+    </button>
+    <button class="scenario-btn" data-scenario="staging_rollback" onclick="switchScenario('staging_rollback')">
+      🛡️ <span>Web & Rollback</span>
+    </button>
+  </div>
+
+  <div class="header-actions">
+    <button class="btn-icon" id="toggle-motion-btn" title="Play/Pause Motion Animation" onclick="toggleMotion()">
+      ⏸️
+    </button>
+    <button class="btn-icon" title="Reset View" onclick="resetCanvasView()">
+      ↺
+    </button>
+  </div>
+</header>
+
+<!-- Scenario Guidance Banner -->
+<div id="guidance-banner">
+  <div class="banner-left">
+    <span class="banner-badge" id="banner-badge" style="background:#0284c7; color:#ffffff;">Overview</span>
+    <span class="banner-desc" id="banner-desc">แสดงโครงสร้างภาพรวมของระบบและเส้นทางเชื่อมโยงระหว่างคอมโพเนนต์ทั้ง 4 เลเยอร์</span>
+  </div>
+  <div class="banner-legend">
+    <div class="legend-item"><span class="legend-circle" style="background:var(--c-cyan)"></span> เซนเซอร์ & Telemetry</div>
+    <div class="legend-item"><span class="legend-circle" style="background:var(--c-emerald)"></span> ควบคุมรีเลย์ & State</div>
+    <div class="legend-item"><span class="legend-circle" style="background:var(--c-amber)"></span> Flash NVS & Config</div>
+    <div class="legend-item"><span class="legend-circle" style="background:var(--c-purple)"></span> Network & Web SSE</div>
+    <div class="legend-item"><span class="legend-circle" style="background:var(--c-rose)"></span> Safety & Rollback</div>
+  </div>
+</div>
+
+<!-- Main Canvas Container -->
+<div id="canvas-container">
+  <svg id="architecture-svg" viewBox="0 0 1600 980" preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <!-- Glow Filters -->
+      <filter id="glow-cyan" x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur stdDeviation="3" result="blur" />
+        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+      </filter>
+      <filter id="glow-emerald" x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur stdDeviation="3" result="blur" />
+        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+      </filter>
+      <filter id="glow-amber" x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur stdDeviation="3" result="blur" />
+        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+      </filter>
+      <filter id="glow-purple" x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur stdDeviation="3" result="blur" />
+        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+      </filter>
+      <filter id="glow-rose" x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur stdDeviation="3" result="blur" />
+        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+      </filter>
+
+      <!-- Markers for Arrowheads -->
+      <marker id="arrow-cyan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 9 5 L 0 9 z" fill="#06b6d4"/>
+      </marker>
+      <marker id="arrow-emerald" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 9 5 L 0 9 z" fill="#10b981"/>
+      </marker>
+      <marker id="arrow-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 9 5 L 0 9 z" fill="#f59e0b"/>
+      </marker>
+      <marker id="arrow-purple" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 9 5 L 0 9 z" fill="#a855f7"/>
+      </marker>
+      <marker id="arrow-rose" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 9 5 L 0 9 z" fill="#f43f5e"/>
+      </marker>
+    </defs>
+
+    <!-- Layer Background Bands -->
+    <!-- Layer 4: Network & UI -->
+    <rect class="layer-band" x="20" y="30" width="1560" height="190" fill="#a855f7" stroke="#a855f7"/>
+    <text class="layer-label" x="40" y="55">LAYER 4: CONNECTIVITY &amp; USER INTERFACE (AP/STA, REST APIs, SSE STREAM)</text>
+
+    <!-- Layer 3: Core & Bus -->
+    <rect class="layer-band" x="20" y="240" width="1560" height="235" fill="#f59e0b" stroke="#f59e0b"/>
+    <text class="layer-label" x="40" y="265">LAYER 3: SYSTEM CORE, DATA BUS &amp; PERSISTENCE (APP MAIN, TELEMETRY HUB, NVS FLASH)</text>
+
+    <!-- Layer 2: Tasks -->
+    <rect class="layer-band" x="20" y="495" width="1560" height="225" fill="#10b981" stroke="#10b981"/>
+    <text class="layer-label" x="40" y="520">LAYER 2: REAL-TIME CONTROL &amp; FREERTOS TASKS (STATE MACHINES, THERMOSTAT, TWDT)</text>
+
+    <!-- Layer 1: Hardware -->
+    <rect class="layer-band" x="20" y="740" width="1560" height="210" fill="#06b6d4" stroke="#06b6d4"/>
+    <text class="layer-label" x="40" y="765">LAYER 1: PHYSICAL HARDWARE &amp; I/O (RELAYS, SENSORS, BUTTONS, LEDS)</text>
+
+    <!-- Group for SVG Connection Paths -->
+    <g id="svg-paths-container"></g>
+
+    <!-- Group for Component Nodes -->
+    <g id="svg-nodes-container"></g>
+  </svg>
+
+  <!-- Canvas Floating Tools -->
+  <div class="canvas-tools">
+    <button onclick="zoomCanvas(1.2)" title="Zoom In">+</button>
+    <button onclick="zoomCanvas(0.8)" title="Zoom Out">−</button>
+    <button onclick="resetCanvasView()" title="Fit View">⛶</button>
+  </div>
+
+  <!-- Interactive Slide-Over Inspector Drawer -->
+  <div id="inspector-drawer">
+    <div class="drawer-header">
+      <div class="drawer-title-group">
+        <h2 id="inspector-title">Component Name</h2>
+        <p id="inspector-sub">Module Category &bull; source.c</p>
+      </div>
+      <button class="drawer-close-btn" onclick="closeInspector()">&times;</button>
+    </div>
+
+    <div class="drawer-body">
+      <!-- Section: Responsibility -->
+      <div class="drawer-section">
+        <div class="drawer-section-title">📌 หน้าที่และความรับผิดชอบหลัก</div>
+        <p class="drawer-desc" id="inspector-desc">Description text in Thai...</p>
+      </div>
+
+      <!-- Section: FreeRTOS Execution Specs -->
+      <div class="drawer-section">
+        <div class="drawer-section-title">⚙️ บริบทการประมวลผล (FreeRTOS Specs)</div>
+        <div class="rtos-grid" id="inspector-rtos">
+          <div class="rtos-item"><span class="rtos-label">CPU CORE AFFINITY</span><span class="rtos-val" id="rtos-core">Core 0</span></div>
+          <div class="rtos-item"><span class="rtos-label">TASK PRIORITY</span><span class="rtos-val" id="rtos-priority">5 (High)</span></div>
+          <div class="rtos-item"><span class="rtos-label">STACK ALLOCATION</span><span class="rtos-val" id="rtos-stack">4,096 Bytes</span></div>
+          <div class="rtos-item"><span class="rtos-label">LOOP FREQUENCY</span><span class="rtos-val" id="rtos-rate">100 ms</span></div>
+        </div>
+      </div>
+
+      <!-- Section: Safety & Protections -->
+      <div class="drawer-section">
+        <div class="drawer-section-title">🛡️ กลไกความปลอดภัย (Safety & Guarding)</div>
+        <div id="inspector-safety">
+          <!-- Dynamic safety tags -->
+        </div>
+      </div>
+
+      <!-- Section: Inbound Data -->
+      <div class="drawer-section">
+        <div class="drawer-section-title">📥 ข้อมูลที่รับเข้ามา (Inbound Data Streams)</div>
+        <div class="pill-list" id="inspector-inbound">
+          <!-- Inbound items -->
+        </div>
+      </div>
+
+      <!-- Section: Outbound Data -->
+      <div class="drawer-section">
+        <div class="drawer-section-title">📤 ข้อมูลที่ส่งออกไป (Outbound Data Streams)</div>
+        <div class="pill-list" id="inspector-outbound">
+          <!-- Outbound items -->
+        </div>
+      </div>
+
+      <!-- Section: Key C APIs -->
+      <div class="drawer-section">
+        <div class="drawer-section-title">💻 ฟังก์ชันและโครงสร้างสำคัญ (Key C APIs)</div>
+        <div class="api-block" id="inspector-apis">
+          <!-- API Code lines -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hover Tooltip -->
+  <div id="node-tooltip"></div>
+</div>
+
+<script>
+// Master System Map Data (Embedded)
+const MAP_DATA = {
+  components: {
+    // Layer 1: Hardware
+    hardware_relays: {
+      layer: "hardware",
+      id: "hardware_relays",
+      x: 960, y: 785, w: 340, h: 125,
+      thaiName: "รีเลย์ขับโหลด (Pumps & Chiller)",
+      engName: "Relay Outputs",
+      sourceFile: "Hardware Relay Board (GPIO 10, 11, 12)",
+      rtosContext: { core: "N/A", priority: "Hardware", stack: "N/A", rate: "Immediate" },
+      desc: "หน้าสัมผัสตัด-ต่อกระแสไฟฟ้าขับปั๊มน้ำหมุนเวียนคู่ (Pump 1/2) และคอมเพรสเซอร์ทำความเย็น (Cooling Chiller) ด้วยลอจิก Active-Low พร้อมระบบ Safe Clamping ป้องกันไฟกระชาก",
+      responsibilities: [
+        "ขับมอเตอร์ปั๊มน้ำ 1 (GPIO 10) และปั๊มน้ำ 2 (GPIO 11)",
+        "ขับมอเตอร์คอมเพรสเซอร์ทำความเย็น (GPIO 12)",
+        "รองรับการสลับวงจรตามตัวจับเวลาของ pump_control และ cooling_control"
+      ],
+      safetyFeatures: ["Glitch-free Safe Clamping ตอนบูต", "Minimum Dwell Protection ป้องกันการสลับรีเลย์ถี่"],
+      keyAPIs: ["relay_safe_init_pins()", "relay_safe_configure()", "gpio_set_level()"]
+    },
+    hardware_sensors: {
+      layer: "hardware",
+      id: "hardware_sensors",
+      x: 580, y: 785, w: 320, h: 125,
+      thaiName: "เซนเซอร์ระดับน้ำและอุณหภูมิ",
+      engName: "Sensors & Level Input",
+      sourceFile: "Hardware Sensors (GPIO 4, GPIO 5)",
+      rtosContext: { core: "N/A", priority: "Hardware", stack: "N/A", rate: "Continuous" },
+      desc: "สวิตช์ลูกลอยตรวจระดับน้ำในบ่อ (Float Switch GPIO 4) และหัววัดอุณหภูมิดิจิทัลความแม่นยำสูง DS18B20 สื่อสารผ่านบัส 1-Wire (GPIO 5)",
+      responsibilities: [
+        "ตรวจจับระดับน้ำแห้งเพื่อตัดปั๊มทันที (Dry-Run Protection)",
+        "วัดอุณหภูมิน้ำส่งข้อมูลดิจิทัลความละเอียด 9-12 bit",
+        "มีวงจร Pull-up ป้องกันสัญญาณลอย (Floating Signal)"
+      ],
+      safetyFeatures: ["CRC Check ป้องกันข้อมูลอุณหภูมิเพี้ยน", "ตรวจจับเซนเซอร์หลุดเพื่อ Safe Off"],
+      keyAPIs: ["gpio_get_level(FLOAT_GPIO)", "ds18b20_trigger_temperature_conversion()", "ds18b20_get_temperature()"]
+    },
+    hardware_ui_buttons: {
+      layer: "hardware",
+      id: "hardware_ui_buttons",
+      x: 230, y: 785, w: 290, h: 125,
+      thaiName: "ปุ่มกดคำสั่งและไฟแสดงผล",
+      engName: "Buttons & Status LED",
+      sourceFile: "Hardware UI (GPIO 0, 21, 48)",
+      rtosContext: { core: "N/A", priority: "Hardware", stack: "N/A", rate: "Immediate" },
+      desc: "ปุ่มกด Boot บนบอร์ด (GPIO 0), ปุ่มกดภายนอก (GPIO 21) และไฟ LED แสดงสถานะระบบ (GPIO 48) สำหรับสั่งการฉุกเฉินและแสดงโหมด",
+      responsibilities: [
+        "รับสัญญาณกดปุ่มเพื่อเริ่ม Recovery AP หรือ Factory Reset",
+        "ขับไฟ LED แสดงสภาวะระบบ: ปกติ, Staging รอยืนยัน, กู้คืน",
+        "วงจรกรองสัญญาณกดปุ่มพร้อม Mutual Exclusion"
+      ],
+      safetyFeatures: ["Hardware Debounce", "Release Veto Check ป้องกันสวิตช์ค้าง"],
+      keyAPIs: ["gpio_get_level(BOOT_BTN)", "gpio_get_level(EXT_BTN)", "update_status_leds()"]
+    },
+
+    // Layer 2: Tasks
+    twdt: {
+      layer: "tasks",
+      id: "twdt",
+      x: 40, y: 550, w: 160, h: 130,
+      thaiName: "Task Watchdog (10s)",
+      engName: "Task Watchdog Timer",
+      sourceFile: "ESP-IDF esp_task_wdt",
+      rtosContext: { core: "Hardware", priority: "Kernel ISR", stack: "Internal", rate: "10,000 ms Timeout" },
+      desc: "วงจรจับเวลาความปลอดภัยระดับฮาร์ดแวร์ ตรวจสอบว่า app_main loop ป้อน Keep-Alive ทุก 5 วินาที หากระบบค้างเกิน 10s จะสั่ง Panic Reset ทันที",
+      responsibilities: [
+        "นับเวลาถอยหลัง 10,000 ms ตรวจสอบความปลอดภัย",
+        "สั่งรีเซ็ต CPU ทันทีหากซอฟต์แวร์ติดขัดหรือ Deadlock",
+        "บันทึกสาเหตุลง Flash Memory ก่อนชิปดับ"
+      ],
+      safetyFeatures: ["Hardware Panic Trigger", "Auto Panic Reset on Lockup"],
+      keyAPIs: ["esp_task_wdt_init()", "esp_task_wdt_add()", "esp_task_wdt_reset()"]
+    },
+    hardware_ui_task: {
+      layer: "tasks",
+      id: "hardware_ui_task",
+      x: 230, y: 550, w: 290, h: 130,
+      thaiName: "UI & Recovery Task",
+      engName: "Button & LED Task",
+      sourceFile: "main/app_main.c",
+      rtosContext: { core: "Core 1", priority: "2 (Low-Med)", stack: "4,096 B", rate: "50 ms Polling" },
+      desc: "FreeRTOS Task บน Core 1 ตรวจสอบระยะเวลาการกดปุ่ม Boot/Ext เพื่อเข้าสู่ Recovery AP หรือทำการล้างค่าโรงงาน (Factory Reset) และขับไฟ LED",
+      responsibilities: [
+        "สแกนปุ่มกดทุก 50ms พร้อมระบบ Debounce",
+        "กดค้าง 2-5 วินาที: บังคับเปิด Recovery AP (FishPump_Setup)",
+        "กดค้าง > 5 วินาที: Trigger สัญญาณ Factory Reset ล้าง NVS ทั้งหมด",
+        "ขับไฟกะพริบ LED แสดงสถานะ Staging รอยืนยัน"
+      ],
+      safetyFeatures: ["Mutual Exclusion กรองการกด 2 ปุ่มพร้อมกัน", "Atomic Trigger Flags"],
+      keyAPIs: ["wifi_manager_start_recovery_ap()", "nvs_store_factory_reset()", "update_status_leds()"]
+    },
+    cooling_control: {
+      layer: "tasks",
+      id: "cooling_control",
+      x: 580, y: 550, w: 320, h: 130,
+      thaiName: "ระบบคุมความเย็น (Chiller Task)",
+      engName: "Cooling Controller Task",
+      sourceFile: "components/cooling_control/cooling_control.c",
+      rtosContext: { core: "Core 0", priority: "4 (Med-High)", stack: "4,096 B", rate: "1,000 ms (1 Hz)" },
+      desc: "FreeRTOS Task ดึงอุณหภูมิจาก DS18B20 ผ่าน 1-Wire, คำนวณตรรกะ Hysteresis สั่งเปิด-ปิดรีเลย์ และป้องกันคอมเพรสเซอร์ด้วย Anti-Short Cycle Delay 180s",
+      responsibilities: [
+        "อ่านค่าอุณหภูมิน้ำทุกๆ 1 วินาที พร้อมตรวจสอบความถูกต้องของข้อมูล",
+        "รัน FSM: Idle, Chilling, Compressor Lockout, Sensor Safe Off",
+        "ป้องกันคอมเพรสเซอร์พังด้วยตัวจับเวลา Lockout 180 วินาที",
+        "ส่ง TELEMETRY_EVT_COOLING เข้าสู่ telemetry_hub"
+      ],
+      safetyFeatures: ["Anti-Short Cycle Min-Off Lockout 180s", "Sensor Fault Safe-Off ตัดรีเลย์ทันทีเมื่อเซนเซอร์มีปัญหา"],
+      keyAPIs: ["cooling_control_start_task()", "cooling_control_set_mode()", "telemetry_hub_publish()"]
+    },
+    pump_control: {
+      layer: "tasks",
+      id: "pump_control",
+      x: 960, y: 550, w: 340, h: 130,
+      thaiName: "ระบบคุมปั๊มน้ำ (Pump Task)",
+      engName: "Pump Control State Machine",
+      sourceFile: "components/pump_control/pump_control.c",
+      rtosContext: { core: "Core 0", priority: "5 (High)", stack: "4,096 B", rate: "100 ms Tick" },
+      desc: "FreeRTOS Task ควบคุม State Machine ของปั๊มน้ำ สลับการทำงานตามช่วงเวลา Timer 1/2, โหมดล้าง (Wash Cycle), ตรวจสอบสวิตช์ลูกลอย และป้องกันการกระชากของรีเลย์",
+      responsibilities: [
+        "ประมวลผล FSM: Idle, Water Run, Wash Run, Float Low Wait",
+        "สลับการทำงานระหว่างปั๊ม 1 และ 2 ตามที่ตั้งค่าใน NVS",
+        "ตรวจจับน้ำแห้งและตัดการทำงานของปั๊มทันทีเพื่อป้องกันปั๊มไหม้",
+        "ส่ง TELEMETRY_EVT_PUMP & FLOAT เข้าสู่ telemetry_hub"
+      ],
+      safetyFeatures: ["Min Dwell Protection หน่วงเวลาสลับรีเลย์", "ตัดการทำงานทันทีเมื่อลูกลอยตรวจพบน้ำแห้ง"],
+      keyAPIs: ["pump_control_start_task()", "pump_control_set_mode()", "pump_control_start_wash()", "telemetry_hub_publish()"]
+    },
+
+    // Layer 3: Core & Bus
+    hardware_map: {
+      layer: "bus_core",
+      id: "hardware_map",
+      x: 40, y: 295, w: 160, h: 100,
+      thaiName: "ตัวตรวจขาพิน (Pin Map)",
+      engName: "Hardware Map Validator",
+      sourceFile: "components/hardware_map/hardware_map.c",
+      rtosContext: { core: "Core 0", priority: "Library", stack: "Stack", rate: "On Boot / Config" },
+      desc: "โมดูลตรวจสอบความถูกต้องของการกำหนดขาพิน GPIO ป้องกันการตั้งขาซ้ำซ้อน และป้องกันการใช้ขาที่สงวนไว้สำหรับ Flash / PSRAM ของ ESP32-S3",
+      responsibilities: [
+        "ตรวจสอบว่าขาที่เลือกเป็น GPIO ที่ปลอดภัย (Safe GPIO Check)",
+        "ตรวจสอบว่าไม่มีขาใดถูกกำหนดให้ 2 อุปกรณ์พร้อมกัน (Conflict Detection)",
+        "แปลงค่า Enums และชื่อขาพินสำหรับการแสดงผลบนหน้าเว็บ"
+      ],
+      safetyFeatures: ["Safe ESP32-S3 Pin Range Filtering", "ป้องกันฮาร์ดแวร์ช็อตจากการคอนฟิกขาพินชนกัน"],
+      keyAPIs: ["hardware_map_validate()", "hardware_map_has_conflicts()", "hardware_map_default()"]
+    },
+    relay_safe_init: {
+      layer: "bus_core",
+      id: "relay_safe_init",
+      x: 40, y: 410, w: 160, h: 55,
+      thaiName: "ล็อกรีเลย์ตอนบูต",
+      engName: "Relay Safe Initializer",
+      sourceFile: "components/relay_safe_init/relay_safe_init.c",
+      rtosContext: { core: "Core 0", priority: "Pre-Init", stack: "Minimal", rate: "Boot Instant" },
+      desc: "ไดรเวอร์เริ่มต้นขารีเลย์ทันทีในสเต็ปแรกสุดของ app_main เพื่อดึงสัญญาณให้อยู่ในสถานะปิด (Inactive) เสมอ ป้องกันการกระตุกของหน้าสัมผัสรีเลย์",
+      responsibilities: [
+        "ตัดสัญญาณขับรีเลย์ทั้งหมดทันทีที่ชิปเริ่มทำงาน",
+        "ตั้งค่าขารีเลย์เป็น Output ในสถานะ Off ก่อนที่โมดูลอื่นจะเริ่มทำงาน"
+      ],
+      safetyFeatures: ["Glitch-free Contact Clamping", "ป้องกันไฟกระชากเข้ามอเตอร์ปั๊มตอนเปิดเครื่อง"],
+      keyAPIs: ["relay_safe_init_pins()", "relay_safe_configure()"]
+    },
+    app_main: {
+      layer: "bus_core",
+      id: "app_main",
+      x: 230, y: 295, w: 290, h: 140,
+      thaiName: "แกนระบบ (App Main)",
+      engName: "System Lifecycle & Coordinator",
+      sourceFile: "main/app_main.c",
+      rtosContext: { core: "Core 0", priority: "1 (Main Loop)", stack: "8,192 B", rate: "5,000 ms (5s Loop)" },
+      desc: "ศูนย์กลางควบคุมวงจรชีวิต (Lifecycle) ของเฟิร์มแวร์ จัดการลำดับการบูตระบบ, ตรวจสุขภาพ (Health Telemetry), ป้อน TWDT, จัดการ Rollback Timers และตรวจเช็คคิว HTTP",
+      responsibilities: [
+        "ประสานงานขั้นตอนการบูตเครื่องตามลำดับความปลอดภัยอย่างเคร่งครัด",
+        "วนลูปทุก 5 วินาทีเพื่อรีเซ็ต TWDT และส่ง Health Telemetry สู่ Hub",
+        "ตรวจจับ HTTP Queue Full ติดต่อกัน 3 ครั้ง (15s) เพื่อสั่งรีบูตป้องกันเว็บค้าง",
+        "จัดการตัวจับเวลา Staging Rollback (180s) เพื่อป้องกันการตั้งค่าผิดพลาด"
+      ],
+      safetyFeatures: ["Emergency Rollback Timer 180s", "HTTP Server Queue Health Monitor", "Crash Detail Logger"],
+      keyAPIs: ["app_main()", "esp_task_wdt_reset()", "telemetry_hub_publish()", "nvs_store_rollback_staging()", "esp_restart()"]
+    },
+    telemetry_hub: {
+      layer: "bus_core",
+      id: "telemetry_hub",
+      x: 580, y: 295, w: 320, h: 140,
+      thaiName: "ศูนย์ข้อมูลสด (Telemetry Hub)",
+      engName: "In-Memory Pub/Sub Hub",
+      sourceFile: "components/telemetry_hub/telemetry_hub.c",
+      rtosContext: { core: "Both Cores", priority: "Thread-Safe", stack: "In-Memory", rate: "Event-driven" },
+      desc: "ตัวกลางรับ-ส่งข้อมูลสถานะระบบแบบ Decoupled จัดเก็บ Snapshot สถานะล่าสุดใน RAM และกระจาย Event ไปยัง Callback ของผู้ติดตาม (Subscribers) อย่างปลอดภัยด้วย Mutex",
+      responsibilities: [
+        "รับ Event จาก pump_control, cooling_control และ app_main",
+        "ป้องกันข้อมูลชนกันระหว่าง Core ด้วย s_telemetry_mutex",
+        "เก็บข้อมูลล่าสุดของระบบ (Pump, Float, Temp, Health) ใน telemetry_snapshot_t",
+        "เรียก Callback ของ web_server ทันทีที่มีการเปลี่ยนแปลงสถานะ"
+      ],
+      safetyFeatures: ["Non-blocking Subscriber Callback Constraint", "FreeRTOS Mutex Reentrancy Protection"],
+      keyAPIs: ["telemetry_hub_init()", "telemetry_hub_subscribe()", "telemetry_hub_publish()", "telemetry_hub_get_snapshot()"]
+    },
+    nvs_store: {
+      layer: "bus_core",
+      id: "nvs_store",
+      x: 960, y: 295, w: 340, h: 140,
+      thaiName: "คลังข้อมูลถาวร (NVS Store)",
+      engName: "Flash Persistence & Staging",
+      sourceFile: "components/nvs_store/nvs_store.c",
+      rtosContext: { core: "Both Cores", priority: "Thread-Safe", stack: "Flash Sector", rate: "On-demand" },
+      desc: "Single Source of Truth จัดเก็บการตั้งค่าทั้งหมดลงใน Flash Memory แบบ Atomic พร้อมพื้นที่ Staging พิเศษสำหรับทดสอบการตั้งค่าใหม่ก่อนกดยืนยัน",
+      responsibilities: [
+        "บันทึกและโหลด Wi-Fi Multi-profile (สูงสุด 5 รายการ)",
+        "จัดเก็บค่าตัวจับเวลาของปั๊มน้ำ (Pump Settings) และระบบทำความเย็น",
+        "จัดเก็บแผนผังขาพินปัจจุบัน (Active Map) และขาพินใหม่ (Pending Map)",
+        "บริหารจัดการ Staging Type และดำเนินการ Rollback กู้คืนค่าเดิมอัตโนมัติ"
+      ],
+      safetyFeatures: ["CRC Data Integrity Verification", "Dual-Slot Staging & Auto-Rollback", "Flash Wear-Leveling"],
+      keyAPIs: ["nvs_store_init()", "nvs_store_load_pump_settings()", "nvs_store_save_staging()", "nvs_store_rollback_staging()", "nvs_store_confirm_staging()"]
+    },
+    session: {
+      layer: "bus_core",
+      id: "session",
+      x: 1350, y: 295, w: 210, h: 140,
+      thaiName: "ระบบความปลอดภัย Session",
+      engName: "Token Auth & IP Binding",
+      sourceFile: "components/session/session.c",
+      rtosContext: { core: "Core 1", priority: "Thread-Safe", stack: "Heap", rate: "On HTTP Request" },
+      desc: "ระบบบริหารจัดการ Session Token สำหรับการเข้าใช้งานเว็บ ควบคุมการตรวจสอบสิทธิ์ ผูก Token เข้ากับ IP ของผู้ใช้ และตัดการเชื่อมต่อเมื่อหมดเวลา",
+      responsibilities: [
+        "สร้าง Session Token แบบสุ่มความยาว 32 ไบต์ Hex เมื่อล็อกอินสำเร็จ",
+        "ตรวจสอบความถูกต้องของ Token ทุกครั้งที่มีคำขอ API แก้ไขการตั้งค่า",
+        "ผูก Token กับ Client IP เพื่อป้องกันการขโมย Token ข้ามเครื่อง",
+        "หมดอายุอัตโนมัติเมื่อไม่มีการใช้งานเกิน 30 นาที (Idle Expiration)"
+      ],
+      safetyFeatures: ["Client IP Binding Guard", "Brute-force Throttling", "Invalidate All on Factory Reset"],
+      keyAPIs: ["session_init()", "session_create()", "session_validate()", "session_destroy()", "session_invalidate_all()"]
+    },
+
+    // Layer 4: Network & UI
+    dns_server: {
+      layer: "network_ui",
+      id: "dns_server",
+      x: 40, y: 80, w: 160, h: 120,
+      thaiName: "Captive Portal DNS",
+      engName: "Captive DNS Resolver",
+      sourceFile: "components/dns_server/dns_server.c",
+      rtosContext: { core: "Core 1", priority: "3 (Medium)", stack: "3,072 B", rate: "UDP 53 Listener" },
+      desc: "เซิร์ฟเวอร์ DNS น้ำหนักเบา ดักฟังพอร์ต UDP 53 ทุกคำขอโดเมนเนมจากมือถือหรือคอมพิวเตอร์ที่ต่อ AP จะถูกตอบกลับด้วย IP 192.168.4.1 เพื่อเปิดหน้าตั้งค่าทันที",
+      responsibilities: [
+        "ดักจับคำขอ DNS Query จากอุปกรณ์ที่เชื่อมต่อกับ AP",
+        "ตอบกลับด้วย IP ของ ESP32 AP ทันทีทุกคำขอ (Wildcard DNS Response)",
+        "ช่วยให้อุปกรณ์มือถือเด้งหน้าต่างตั้งค่า (Captive Popup) อัตโนมัติ"
+      ],
+      safetyFeatures: ["Minimal Buffer UDP Parser", "Zero Dynamic Allocation เพื่อประหยัด RAM"],
+      keyAPIs: ["dns_server_start()", "dns_server_stop()"]
+    },
+    wifi_manager: {
+      layer: "network_ui",
+      id: "wifi_manager",
+      x: 230, y: 80, w: 290, h: 120,
+      thaiName: "Wi-Fi Dual Mode (AP/STA)",
+      engName: "Wi-Fi Manager",
+      sourceFile: "components/wifi_manager/wifi_manager.c",
+      rtosContext: { core: "Core 0", priority: "3 (Medium)", stack: "4,096 B", rate: "Event-driven" },
+      desc: "ควบคุมไดรเวอร์ Wi-Fi ของ ESP-IDF ในโหมด AP และ STA พร้อมกัน ปล่อย Hotspot FishPump_Setup สำหรับตั้งค่า และเชื่อมต่อ Wi-Fi บ้านอัตโนมัติ",
+      responsibilities: [
+        "เปิด Access Point (AP) ตลอดเวลาสำหรับเข้าตั้งค่า (192.168.4.1)",
+        "เชื่อมต่อ Wi-Fi Station (STA) และดึง IP จากเร้าเตอร์",
+        "Auto-reconnect อัตโนมัติเมื่อสัญญาณหลุด พร้อมระบบ Exponential Backoff",
+        "รองรับการสลับเข้าสู่ Recovery AP เมื่อกดปุ่มฉุกเฉิน"
+      ],
+      safetyFeatures: ["WIFI_PS_NONE ป้องกัน mDNS แพ็กเกจตกหล่น", "Auto Fallback สู่ AP Mode เสมอ"],
+      keyAPIs: ["wifi_manager_init()", "wifi_manager_connect_sta()", "wifi_manager_get_ap_ip()", "wifi_manager_start_recovery_ap()"]
+    },
+    web_server: {
+      layer: "network_ui",
+      id: "web_server",
+      x: 580, y: 80, w: 320, h: 120,
+      thaiName: "Web Server & SSE Pusher",
+      engName: "ESP-HTTPD & SSE Gateway",
+      sourceFile: "main/web_server.c",
+      rtosContext: { core: "Core 1", priority: "5 (High)", stack: "10,240 B", rate: "Port 80 HTTP" },
+      desc: "ESP-HTTPD Server ให้บริการ REST API endpoints, เสิร์ฟหน้าเว็บ Single Page App (Gzip Compressed) จาก Flash และสตรีมข้อมูลสดสู่เบราว์เซอร์ผ่าน SSE",
+      responsibilities: [
+        "เสิร์ฟไฟล์ Static Web (HTML, CSS, JS, Fonts) แบบ Gzip โดยตรงจาก Flash",
+        "ให้บริการ REST API ควบคุมปั๊ม, ตั้งเวลา, แก้ไข Wi-Fi และทำ OTA Update",
+        "สมัครรับข้อมูลจาก telemetry_hub (Observer Callback)",
+        "แปลงข้อมูลสถานะเป็น JSON และ Push สู่เบราว์เซอร์ผ่าน SSE (/api/events)"
+      ],
+      safetyFeatures: ["HTTP Server Queue Health Monitor", "Token Authentication On Mutating Routes"],
+      keyAPIs: ["web_server_start()", "web_server_telemetry_cb()", "web_server_queue_health_check()", "httpd_register_uri_handler()"]
+    },
+    browser_ui: {
+      layer: "network_ui",
+      id: "browser_ui",
+      x: 960, y: 80, w: 340, h: 120,
+      thaiName: "แดชบอร์ดเบราว์เซอร์ (Web SPA)",
+      engName: "Browser Single-Page App",
+      sourceFile: "frontend-app (Client Web Browser)",
+      rtosContext: { core: "Client Device", priority: "Browser JS", stack: "Client RAM", rate: "Real-time" },
+      desc: "หน้าเว็บ Single Page Application ที่รันบนเบราว์เซอร์ของผู้ใช้ รับข้อมูลสดผ่าน SSE สตรีม แสดงกราฟสถานะ และส่งคำสั่งควบคุมผ่าน HTTP POST",
+      responsibilities: [
+        "แสดงสถานะสดของปั๊มน้ำ 1/2, อุณหภูมิ, ระดับน้ำ และความจำระบบ",
+        "เปิดหน้าต่างกดยืนยันการตั้งค่า (Staging Confirmation) ภายใน 180s",
+        "ส่งคำสั่งควบคุม Manual Start/Stop และแก้ไขการตั้งค่าผ่าน REST APIs"
+      ],
+      safetyFeatures: ["Live Connection Indicator", "Warning Countdown Timer ขณะอยู่ในช่วง Staging"],
+      keyAPIs: ["EventSource('/api/events')", "fetch('/api/settings/*')", "fetch('/api/login')"]
+    }
+  },
+
+  connections: [
+    // Telemetry Flow
+    { id: "c_float_to_pump", from: "hardware_sensors", to: "pump_control", color: "var(--c-cyan)", marker: "arrow-cyan", label: "Float Switch Level (High/Low)", category: "telemetry", scenarios: ["overview", "telemetry"], desc: "สัญญาณระดับน้ำจากสวิตช์ลูกลอยส่งเข้าสู่ State Machine ปั๊มน้ำ" },
+    { id: "c_ds18b20_to_cooling", from: "hardware_sensors", to: "cooling_control", color: "var(--c-cyan)", marker: "arrow-cyan", label: "1-Wire Temp Data (CRC Checked)", category: "telemetry", scenarios: ["overview", "telemetry"], desc: "สัญญาณอุณหภูมิดิจิทัลส่งผ่าน 1-Wire บัสเข้าสู่ Task ควบคุมความเย็น" },
+    { id: "c_pump_to_telem", from: "pump_control", to: "telemetry_hub", color: "var(--c-cyan)", marker: "arrow-cyan", label: "TELEMETRY_EVT_PUMP / FLOAT", category: "telemetry", scenarios: ["overview", "telemetry"], desc: "ส่ง Event สถานะปั๊มและระดับน้ำเข้าสู่ Telemetry Hub (Pub/Sub)" },
+    { id: "c_cooling_to_telem", from: "cooling_control", to: "telemetry_hub", color: "var(--c-cyan)", marker: "arrow-cyan", label: "TELEMETRY_EVT_COOLING", category: "telemetry", scenarios: ["overview", "telemetry"], desc: "ส่ง Event อุณหภูมิและสถานะคอมเพรสเซอร์เข้าสู่ Telemetry Hub" },
+    { id: "c_app_to_telem", from: "app_main", to: "telemetry_hub", color: "var(--c-cyan)", marker: "arrow-cyan", label: "TELEMETRY_EVT_HEALTH (5s)", category: "telemetry", scenarios: ["overview", "telemetry"], desc: "ส่งสถิติสุขภาพเครื่อง (Heap, PSRAM, RSSI, Uptime) ทุก 5 วินาที" },
+    { id: "c_telem_to_web", from: "telemetry_hub", to: "web_server", color: "var(--c-cyan)", marker: "arrow-cyan", label: "Non-Blocking Observer Callback", category: "telemetry", scenarios: ["overview", "telemetry"], desc: "Hub เรียก Callback ของ web_server เพื่อส่งต่อข้อมูลสด" },
+    { id: "c_web_to_browser_sse", from: "web_server", to: "browser_ui", color: "var(--c-purple)", marker: "arrow-purple", label: "SSE Live Stream (/api/events)", category: "network", scenarios: ["overview", "telemetry"], desc: "สตรีม JSON ผ่าน Server-Sent Events เข้าสู่เบราว์เซอร์แบบ Real-time" },
+
+    // Control Flow
+    { id: "c_pump_to_relay", from: "pump_control", to: "hardware_relays", color: "var(--c-emerald)", marker: "arrow-emerald", label: "Active-Low Drive (Pump 1/2)", category: "control", scenarios: ["overview", "telemetry"], desc: "ส่งสัญญาณลอจิกเปิด-ปิดรีเลย์ขับปั๊มน้ำ 1 และ 2" },
+    { id: "c_cooling_to_relay", from: "cooling_control", to: "hardware_relays", color: "var(--c-emerald)", marker: "arrow-emerald", label: "Active-Low Drive (Chiller)", category: "control", scenarios: ["overview", "telemetry"], desc: "ส่งสัญญาณลอจิกเปิด-ปิดรีเลย์คอมเพรสเซอร์ทำความเย็น" },
+    { id: "c_ui_to_led", from: "hardware_ui_task", to: "hardware_ui_buttons", color: "var(--c-emerald)", marker: "arrow-emerald", label: "Status LED Blinking Pattern", category: "control", scenarios: ["overview", "boot", "staging_rollback"], desc: "ขับสัญญาณไฟแสดงสถานะระบบ (ปกติ, รอคอนเฟิร์ม Staging, กู้คืน)" },
+
+    // Boot Flow
+    { id: "c_app_to_safe_init", from: "app_main", to: "relay_safe_init", color: "var(--c-rose)", marker: "arrow-rose", label: "0. Safe Clamping Relays", category: "safety", scenarios: ["boot"], desc: "สั่งล็อกขารีเลย์ทั้งหมดให้ตัดไฟทันทีในสเต็ปแรกสุดเพื่อความปลอดภัย" },
+    { id: "c_safe_init_to_relay", from: "relay_safe_init", to: "hardware_relays", color: "var(--c-rose)", marker: "arrow-rose", label: "Glitch-Free Low Clamp", category: "safety", scenarios: ["boot"], desc: "บังคับขา GPIO ของรีเลย์เป็น Inactive ก่อนที่โมดูลอื่นจะเริ่มทำงาน" },
+    { id: "c_app_to_nvs_init", from: "app_main", to: "nvs_store", color: "var(--c-amber)", marker: "arrow-amber", label: "1. Init NVS & Pop Last Detail", category: "nvs", scenarios: ["boot"], desc: "เริ่มต้นระบบ NVS และอ่านสาเหตุการรีสตาร์ตรอบก่อนหน้า" },
+    { id: "c_nvs_to_hwmap", from: "nvs_store", to: "hardware_map", color: "var(--c-amber)", marker: "arrow-amber", label: "Load Active Pin Configuration", category: "nvs", scenarios: ["boot"], desc: "โหลดการกำหนดขาพิน GPIO จาก NVS มาตรวจสอบความถูกต้อง" },
+    { id: "c_app_to_wdt", from: "app_main", to: "twdt", color: "var(--c-rose)", marker: "arrow-rose", label: "2. Init TWDT (10s Panic)", category: "safety", scenarios: ["boot"], desc: "เปิดการทำงานของระบบเฝ้าระวัง Task Watchdog Timer" },
+    { id: "c_app_to_cooling_task", from: "app_main", to: "cooling_control", color: "var(--c-emerald)", marker: "arrow-emerald", label: "Start Cooling Task (Core 0)", category: "control", scenarios: ["boot"], desc: "สั่งสตาร์ต FreeRTOS Task ของระบบควบคุมอุณหภูมิ" },
+    { id: "c_app_to_pump_task", from: "app_main", to: "pump_control", color: "var(--c-emerald)", marker: "arrow-emerald", label: "Start Pump Task (Core 0)", category: "control", scenarios: ["boot"], desc: "สั่งสตาร์ต FreeRTOS Task ของระบบควบคุมปั๊มน้ำ" },
+    { id: "c_app_to_wifi", from: "app_main", to: "wifi_manager", color: "var(--c-purple)", marker: "arrow-purple", label: "3. Init Wi-Fi (AP + STA)", category: "network", scenarios: ["boot"], desc: "เริ่มต้นระบบเครือข่าย Wi-Fi ทั้งโหมด Hotspot และ Station" },
+    { id: "c_app_to_web", from: "app_main", to: "web_server", color: "var(--c-purple)", marker: "arrow-purple", label: "4. Start HTTP Server (Port 80)", category: "network", scenarios: ["boot"], desc: "เปิดบริการเว็บเซิร์ฟเวอร์พอร์ต 80" },
+    { id: "c_app_to_dns", from: "app_main", to: "dns_server", color: "var(--c-purple)", marker: "arrow-purple", label: "5. Start Captive DNS (UDP 53)", category: "network", scenarios: ["boot"], desc: "เปิด Captive Portal DNS สำหรับดักจับอุปกรณ์ที่ต่อ AP" },
+    { id: "c_app_to_ui_task", from: "app_main", to: "hardware_ui_task", color: "var(--c-emerald)", marker: "arrow-emerald", label: "6. Start UI Task (Core 1)", category: "control", scenarios: ["boot"], desc: "เริ่มงานสแกนปุ่มกดและแสดงผลไฟ LED บน Core 1" },
+
+    // Web Command & Staging Rollback
+    { id: "c_browser_to_web_cmd", from: "browser_ui", to: "web_server", color: "var(--c-purple)", marker: "arrow-purple", label: "HTTP POST /api/settings/*", category: "network", scenarios: ["overview", "staging_rollback"], desc: "ส่งคำสั่งปรับค่าการทำงานหรือตั้งเวลาผ่าน HTTP REST" },
+    { id: "c_web_to_session", from: "web_server", to: "session", color: "var(--c-rose)", marker: "arrow-rose", label: "Verify Session Token & IP Binding", category: "safety", scenarios: ["staging_rollback"], desc: "ตรวจสอบสิทธิ์ผู้ใช้และผูก IP กับ Session Token" },
+    { id: "c_web_to_nvs_staging", from: "web_server", to: "nvs_store", color: "var(--c-amber)", marker: "arrow-amber", label: "Write Staging Config (stg_type>0)", category: "nvs", scenarios: ["staging_rollback"], desc: "บันทึกการตั้งค่าใหม่ลงพื้นที่ Staging และตั้งเวลา Rollback" },
+    { id: "c_nvs_to_app_timer", from: "nvs_store", to: "app_main", color: "var(--c-rose)", marker: "arrow-rose", label: "Start 180s Rollback Timer", category: "safety", scenarios: ["staging_rollback"], desc: "เริ่มนับเวลาถอยหลัง 180 วินาที หากไม่ยืนยันจะ Rollback อัตโนมัติ" },
+    { id: "c_app_rollback_exec", from: "app_main", to: "nvs_store", color: "var(--c-rose)", marker: "arrow-rose", label: "Auto Rollback on Timeout", category: "safety", scenarios: ["staging_rollback"], desc: "กู้คืนการตั้งค่าเดิมจาก Backup Slot และรีสตาร์ตเครื่องป้องกัน Brick" },
+
+    // Hardware Recovery
+    { id: "c_button_to_ui_task", from: "hardware_ui_buttons", to: "hardware_ui_task", color: "var(--c-rose)", marker: "arrow-rose", label: "Scan Button Hold (50ms)", category: "safety", scenarios: ["overview", "boot"], desc: "สแกนระยะเวลากดปุ่ม Boot และ External Button" },
+    { id: "c_ui_to_wifi_recovery", from: "hardware_ui_task", to: "wifi_manager", color: "var(--c-rose)", marker: "arrow-rose", label: "Force Recovery AP (Hold 2-5s)", category: "safety", scenarios: ["overview"], desc: "บังคับเปิด Wi-Fi AP ฉุกเฉินเมื่อกดปุ่มค้าง 2-5 วินาที" },
+    { id: "c_ui_to_factory_reset", from: "hardware_ui_task", to: "app_main", color: "var(--c-rose)", marker: "arrow-rose", label: "Erase All NVS (Hold >5s)", category: "safety", scenarios: ["overview"], desc: "ส่งสัญญาณล้างค่าโรงงานเมื่อกดปุ่มค้างเกิน 5 วินาที" },
+    { id: "c_app_to_twdt_feed", from: "app_main", to: "twdt", color: "var(--c-rose)", marker: "arrow-rose", label: "Feed Watchdog (Every 5s)", category: "safety", scenarios: ["overview", "telemetry"], desc: "ป้อนสัญญาณ Keep-Alive ทุก 5 วินาที เพื่อยืนยันว่าลูปหลักไม่ค้าง" }
+  ],
+
+  scenarios: {
+    overview: {
+      badge: "Overview",
+      badgeColor: "#0284c7",
+      desc: "แสดงโครงสร้างภาพรวมของระบบและเส้นทางเชื่อมโยงระหว่างคอมโพเนนต์ทั้ง 4 เลเยอร์",
+      activeConnections: ["c_float_to_pump", "c_ds18b20_to_cooling", "c_pump_to_telem", "c_cooling_to_telem", "c_app_to_telem", "c_telem_to_web", "c_web_to_browser_sse", "c_pump_to_relay", "c_cooling_to_relay", "c_app_to_twdt_feed", "c_browser_to_web_cmd"]
+    },
+    boot: {
+      badge: "Boot & Safe Init",
+      badgeColor: "#10b981",
+      desc: "ขั้นตอนการเปิดเครื่อง: สั่งล็อกรีเลย์ (Safe Clamping) ➔ โหลด NVS ➔ เริ่ม Task Watchdog ➔ รัน Tasks ➔ เริ่ม Wi-Fi และ Web Server",
+      activeConnections: ["c_app_to_safe_init", "c_safe_init_to_relay", "c_app_to_nvs_init", "c_nvs_to_hwmap", "c_app_to_wdt", "c_app_to_cooling_task", "c_app_to_pump_task", "c_app_to_wifi", "c_app_to_web", "c_app_to_dns", "c_app_to_ui_task"]
+    },
+    telemetry: {
+      badge: "Telemetry Loop",
+      badgeColor: "#06b6d4",
+      desc: "การอ่านเซนเซอร์ (Float Switch, DS18B20) ➔ ส่งเข้า Telemetry Hub (Pub/Sub) ➔ ผลักดันผ่าน Server-Sent Events (SSE) ตรงสู่หน้าเว็บ",
+      activeConnections: ["c_float_to_pump", "c_ds18b20_to_cooling", "c_pump_to_telem", "c_cooling_to_telem", "c_app_to_telem", "c_telem_to_web", "c_web_to_browser_sse", "c_pump_to_relay", "c_cooling_to_relay", "c_app_to_twdt_feed"]
+    },
+    staging_rollback: {
+      badge: "Web & Rollback",
+      badgeColor: "#f59e0b",
+      desc: "การส่งคำสั่งเปลี่ยนการตั้งค่าผ่านเว็บ ➔ ตรวจ Session ➔ บันทึก Staging ➔ จับเวลา 180s หากไม่ยืนยันจะ Rollback คืนค่าเดิมอัตโนมัติ",
+      activeConnections: ["c_browser_to_web_cmd", "c_web_to_session", "c_web_to_nvs_staging", "c_nvs_to_app_timer", "c_ui_to_led", "c_app_rollback_exec"]
+    }
+  }
+};
+
+let currentScenario = 'overview';
+let selectedComponent = null;
+let isMotionActive = true;
+let currentZoom = 1;
+
+// Initialize Application
+document.addEventListener('DOMContentLoaded', () => {
+  renderNodes();
+  renderPaths();
+  applyScenario('overview');
+  setupCanvasPanZoom();
+});
+
+// Render Component Nodes
+function renderNodes() {
+  const container = document.getElementById('svg-nodes-container');
+  container.innerHTML = '';
+
+  Object.values(MAP_DATA.components).forEach(comp => {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'component-node');
+    g.setAttribute('data-component-id', comp.id);
+    g.setAttribute('transform', `translate(${comp.x}, ${comp.y})`);
+    g.onclick = (e) => {
+      e.stopPropagation();
+      selectComponent(comp.id);
+    };
+
+    // Node Background Card
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('class', 'node-bg');
+    rect.setAttribute('width', comp.w);
+    rect.setAttribute('height', comp.h);
+
+    // Title (Thai)
+    const textThai = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    textThai.setAttribute('class', 'node-title-thai');
+    textThai.setAttribute('x', '14');
+    textThai.setAttribute('y', '26');
+    textThai.textContent = comp.thaiName;
+
+    // Subtitle (English)
+    const textEng = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    textEng.setAttribute('class', 'node-title-eng');
+    textEng.setAttribute('x', '14');
+    textEng.setAttribute('y', '44');
+    textEng.textContent = comp.engName;
+
+    // Core Badge Pill
+    const badgeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    badgeGroup.setAttribute('transform', `translate(${comp.w - 74}, 12)`);
+    
+    const badgeRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    badgeRect.setAttribute('width', '60');
+    badgeRect.setAttribute('height', '18');
+    badgeRect.setAttribute('rx', '4');
+    let badgeColor = '#334155';
+    if (comp.rtosContext.core.includes('Core 0')) badgeColor = '#0369a1';
+    else if (comp.rtosContext.core.includes('Core 1')) badgeColor = '#6d28d9';
+    else if (comp.rtosContext.core.includes('Both')) badgeColor = '#059669';
+    badgeRect.setAttribute('fill', badgeColor);
+
+    const badgeText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    badgeText.setAttribute('class', 'node-core-badge');
+    badgeText.setAttribute('x', '30');
+    badgeText.setAttribute('y', '12');
+    badgeText.setAttribute('text-anchor', 'middle');
+    badgeText.setAttribute('fill', '#ffffff');
+    badgeText.textContent = comp.rtosContext.core.split(' ')[0];
+
+    badgeGroup.appendChild(badgeRect);
+    badgeGroup.appendChild(badgeText);
+
+    // Source File Tag
+    const fileText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    fileText.setAttribute('class', 'node-file-tag');
+    fileText.setAttribute('x', '14');
+    fileText.setAttribute('y', comp.h - 14);
+    fileText.textContent = comp.sourceFile.length > 38 ? comp.sourceFile.substring(0, 36) + '...' : comp.sourceFile;
+
+    // Hover Tooltip
+    g.onmouseenter = (e) => showTooltip(e, comp);
+    g.onmouseleave = hideTooltip;
+
+    g.appendChild(rect);
+    g.appendChild(textThai);
+    g.appendChild(textEng);
+    g.appendChild(badgeGroup);
+    g.appendChild(fileText);
+    container.appendChild(g);
+  });
+}
+
+// Compute Node Anchor Point
+function getNodeAnchor(nodeId, side) {
+  const comp = MAP_DATA.components[nodeId];
+  if (!comp) return { x: 0, y: 0 };
+  if (side === 'top') return { x: comp.x + comp.w / 2, y: comp.y };
+  if (side === 'bottom') return { x: comp.x + comp.w / 2, y: comp.y + comp.h };
+  if (side === 'left') return { x: comp.x, y: comp.y + comp.h / 2 };
+  if (side === 'right') return { x: comp.x + comp.w, y: comp.y + comp.h / 2 };
+  return { x: comp.x + comp.w / 2, y: comp.y + comp.h / 2 };
+}
+
+// Generate Smooth Curved Path
+function calculatePathD(fromComp, toComp) {
+  let fromSide = 'bottom';
+  let toSide = 'top';
+
+  if (fromComp.y > toComp.y) {
+    fromSide = 'top';
+    toSide = 'bottom';
+  } else if (Math.abs(fromComp.y - toComp.y) < 60) {
+    if (fromComp.x < toComp.x) {
+      fromSide = 'right';
+      toSide = 'left';
+    } else {
+      fromSide = 'left';
+      toSide = 'right';
+    }
+  }
+
+  const p1 = getNodeAnchor(fromComp.id, fromSide);
+  const p2 = getNodeAnchor(toComp.id, toSide);
+
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+
+  if (fromSide === 'right' || fromSide === 'left') {
+    const cx1 = p1.x + dx * 0.5;
+    const cy1 = p1.y;
+    const cx2 = p1.x + dx * 0.5;
+    const cy2 = p2.y;
+    return `M ${p1.x} ${p1.y} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${p2.x} ${p2.y}`;
+  } else {
+    const cx1 = p1.x;
+    const cy1 = p1.y + dy * 0.5;
+    const cx2 = p2.x;
+    const cy2 = p1.y + dy * 0.5;
+    return `M ${p1.x} ${p1.y} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${p2.x} ${p2.y}`;
+  }
+}
+
+// Render SVG Paths
+function renderPaths() {
+  const container = document.getElementById('svg-paths-container');
+  container.innerHTML = '';
+
+  MAP_DATA.connections.forEach(conn => {
+    const fromComp = MAP_DATA.components[conn.from];
+    const toComp = MAP_DATA.components[conn.to];
+    if (!fromComp || !toComp) return;
+
+    const d = calculatePathD(fromComp, toComp);
+
+    // Background track
+    const pathBg = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    pathBg.setAttribute('class', 'flow-path-bg');
+    pathBg.setAttribute('data-conn-id', conn.id);
+    pathBg.setAttribute('d', d);
+
+    // Foreground animated flow path
+    const pathFg = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    pathFg.setAttribute('class', 'flow-path flow-active');
+    pathFg.setAttribute('data-conn-id', conn.id);
+    pathFg.setAttribute('d', d);
+    pathFg.setAttribute('stroke', conn.color);
+    pathFg.setAttribute('marker-end', `url(#${conn.marker})`);
+
+    container.appendChild(pathBg);
+    container.appendChild(pathFg);
+  });
+}
+
+// Switch Scenario
+function switchScenario(scenarioId) {
+  currentScenario = scenarioId;
+
+  // Update tabs UI
+  document.querySelectorAll('.scenario-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.scenario === scenarioId);
+  });
+
+  applyScenario(scenarioId);
+}
+
+function applyScenario(scenarioId) {
+  const scenario = MAP_DATA.scenarios[scenarioId];
+  if (!scenario) return;
+
+  // Update Guidance Banner
+  const badge = document.getElementById('banner-badge');
+  badge.textContent = scenario.badge;
+  badge.style.background = scenario.badgeColor;
+  document.getElementById('banner-desc').textContent = scenario.desc;
+
+  // Update Path Styles
+  const activeSet = new Set(scenario.activeConnections);
+  document.querySelectorAll('.flow-path').forEach(path => {
+    const connId = path.getAttribute('data-conn-id');
+    const isActive = activeSet.has(connId);
+
+    if (isActive) {
+      path.classList.remove('flow-dimmed');
+      path.classList.add('flow-active');
+    } else {
+      path.classList.remove('flow-active');
+      path.classList.add('flow-dimmed');
+    }
+  });
+
+  document.querySelectorAll('.flow-path-bg').forEach(path => {
+    const connId = path.getAttribute('data-conn-id');
+    const isActive = activeSet.has(connId);
+    path.style.opacity = isActive ? '0.6' : '0.1';
+  });
+
+  // Dim unrelated nodes slightly in specific scenarios
+  if (scenarioId !== 'overview') {
+    const relevantNodes = new Set();
+    scenario.activeConnections.forEach(connId => {
+      const conn = MAP_DATA.connections.find(c => c.id === connId);
+      if (conn) {
+        relevantNodes.add(conn.from);
+        relevantNodes.add(conn.to);
+      }
+    });
+
+    document.querySelectorAll('.component-node').forEach(node => {
+      const id = node.getAttribute('data-component-id');
+      node.classList.toggle('node-dimmed', !relevantNodes.has(id));
+    });
+  } else {
+    document.querySelectorAll('.component-node').forEach(node => {
+      node.classList.remove('node-dimmed');
+    });
+  }
+}
+
+// Component Selection & Inspector Drawer
+function selectComponent(compId) {
+  selectedComponent = compId;
+  const comp = MAP_DATA.components[compId];
+  if (!comp) return;
+
+  // Highlight Node
+  document.querySelectorAll('.component-node').forEach(node => {
+    const id = node.getAttribute('data-component-id');
+    node.classList.toggle('node-selected', id === compId);
+  });
+
+  // Focus Mode: Highlight Inbound/Outbound paths
+  const inboundConns = MAP_DATA.connections.filter(c => c.to === compId);
+  const outboundConns = MAP_DATA.connections.filter(c => c.from === compId);
+  const connectedIds = new Set([...inboundConns.map(c => c.id), ...outboundConns.map(c => c.id)]);
+
+  document.querySelectorAll('.flow-path').forEach(path => {
+    const connId = path.getAttribute('data-conn-id');
+    if (connectedIds.has(connId)) {
+      path.classList.remove('flow-dimmed');
+      path.classList.add('flow-highlighted');
+    } else {
+      path.classList.remove('flow-highlighted');
+      path.classList.add('flow-dimmed');
+    }
+  });
+
+  // Populate Drawer Content
+  document.getElementById('inspector-title').textContent = comp.thaiName;
+  document.getElementById('inspector-sub').textContent = `${comp.engName} • ${comp.sourceFile}`;
+  document.getElementById('inspector-desc').textContent = comp.desc;
+
+  // RTOS Specs
+  document.getElementById('rtos-core').textContent = comp.rtosContext.core;
+  document.getElementById('rtos-priority').textContent = comp.rtosContext.priority;
+  document.getElementById('rtos-stack').textContent = comp.rtosContext.stack;
+  document.getElementById('rtos-rate').textContent = comp.rtosContext.rate;
+
+  // Safety Badges
+  const safetyContainer = document.getElementById('inspector-safety');
+  safetyContainer.innerHTML = '';
+  comp.safetyFeatures.forEach(feat => {
+    const span = document.createElement('span');
+    span.className = 'badge-tag';
+    span.style.background = '#0284c7';
+    span.style.color = '#ffffff';
+    span.textContent = `🛡️ ${feat}`;
+    safetyContainer.appendChild(span);
+  });
+
+  // Inbound List
+  const inboundContainer = document.getElementById('inspector-inbound');
+  inboundContainer.innerHTML = '';
+  if (inboundConns.length === 0) {
+    inboundContainer.innerHTML = '<span style="font-size:11px;color:var(--text-muted)">ไม่มี Inbound Streams</span>';
+  } else {
+    inboundConns.forEach(c => {
+      const fromNode = MAP_DATA.components[c.from];
+      const div = document.createElement('div');
+      div.className = 'pill-item';
+      div.onclick = () => selectComponent(c.from);
+      div.innerHTML = `
+        <div class="pill-item-label">
+          <span style="color:${c.color}">◀</span>
+          <span>${fromNode ? fromNode.thaiName : c.from}</span>
+        </div>
+        <span class="pill-item-type">${c.label}</span>
+      `;
+      inboundContainer.appendChild(div);
+    });
+  }
+
+  // Outbound List
+  const outboundContainer = document.getElementById('inspector-outbound');
+  outboundContainer.innerHTML = '';
+  if (outboundConns.length === 0) {
+    outboundContainer.innerHTML = '<span style="font-size:11px;color:var(--text-muted)">ไม่มี Outbound Streams</span>';
+  } else {
+    outboundConns.forEach(c => {
+      const toNode = MAP_DATA.components[c.to];
+      const div = document.createElement('div');
+      div.className = 'pill-item';
+      div.onclick = () => selectComponent(c.to);
+      div.innerHTML = `
+        <div class="pill-item-label">
+          <span style="color:${c.color}">▶</span>
+          <span>${toNode ? toNode.thaiName : c.to}</span>
+        </div>
+        <span class="pill-item-type">${c.label}</span>
+      `;
+      outboundContainer.appendChild(div);
+    });
+  }
+
+  // Key C APIs
+  const apiContainer = document.getElementById('inspector-apis');
+  apiContainer.innerHTML = '';
+  comp.keyAPIs.forEach(api => {
+    const line = document.createElement('div');
+    line.className = 'api-line';
+    line.textContent = `extern ${api};`;
+    apiContainer.appendChild(line);
+  });
+
+  // Open Drawer
+  document.getElementById('inspector-drawer').classList.add('open');
+}
+
+// Close Inspector
+function closeInspector() {
+  document.getElementById('inspector-drawer').classList.remove('open');
+  document.querySelectorAll('.component-node').forEach(node => {
+    node.classList.remove('node-selected');
+  });
+  selectedComponent = null;
+  applyScenario(currentScenario);
+}
+
+// Keyboard ESC to close drawer
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeInspector();
+});
+
+// Tooltip Handlers
+function showTooltip(e, comp) {
+  const tooltip = document.getElementById('node-tooltip');
+  tooltip.style.display = 'block';
+  tooltip.innerHTML = `<strong>${comp.thaiName}</strong><br><span style="color:var(--text-secondary)">${comp.engName}</span>`;
+  tooltip.style.left = `${e.pageX + 12}px`;
+  tooltip.style.top = `${e.pageY + 12}px`;
+}
+
+function hideTooltip() {
+  document.getElementById('node-tooltip').style.display = 'none';
+}
+
+// Toggle Motion Animation
+function toggleMotion() {
+  isMotionActive = !isMotionActive;
+  const btn = document.getElementById('toggle-motion-btn');
+  btn.textContent = isMotionActive ? '⏸️' : '▶️';
+
+  document.querySelectorAll('.flow-path').forEach(path => {
+    if (isMotionActive) {
+      if (!path.classList.contains('flow-dimmed')) {
+        path.classList.add('flow-active');
+      }
+    } else {
+      path.classList.remove('flow-active');
+    }
+  });
+}
+
+// Pan & Zoom Setup
+function setupCanvasPanZoom() {
+  const svg = document.getElementById('architecture-svg');
+  let isPanning = false;
+  let startX = 0, startY = 0;
+  let viewBox = { x: 0, y: 0, w: 1600, h: 980 };
+
+  svg.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.component-node')) return;
+    isPanning = true;
+    startX = e.clientX;
+    startY = e.clientY;
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!isPanning) return;
+    const dx = (e.clientX - startX) * (viewBox.w / svg.clientWidth);
+    const dy = (e.clientY - startY) * (viewBox.h / svg.clientHeight);
+    viewBox.x -= dx;
+    viewBox.y -= dy;
+    svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+    startX = e.clientX;
+    startY = e.clientY;
+  });
+
+  window.addEventListener('mouseup', () => {
+    isPanning = false;
+  });
+}
+
+function zoomCanvas(factor) {
+  const svg = document.getElementById('architecture-svg');
+  const vb = svg.viewBox.baseVal;
+  const newW = vb.width * factor;
+  const newH = vb.height * factor;
+  vb.x += (vb.width - newW) / 2;
+  vb.y += (vb.height - newH) / 2;
+  vb.width = newW;
+  vb.height = newH;
+}
+
+function resetCanvasView() {
+  const svg = document.getElementById('architecture-svg');
+  svg.setAttribute('viewBox', '0 0 1600 980');
+  closeInspector();
+}
+</script>
+</body>
+</html>
