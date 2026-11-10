@@ -31,9 +31,13 @@ typedef struct {
 typedef struct {
     float current_temp_c;
     bool is_sensor_valid;
-    bool cooling_relay_active;
+    uint16_t output_mv;
+    float duty_percent;
     uint32_t lockout_remaining_sec;
-} telemetry_cooling_payload_t;
+    uint8_t mode;
+} telemetry_cooling_t;
+
+typedef telemetry_cooling_t telemetry_cooling_payload_t;
 
 typedef struct {
     uint32_t free_heap_bytes;

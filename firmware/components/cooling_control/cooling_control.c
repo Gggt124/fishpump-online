@@ -131,8 +131,10 @@ static void get_cooling_telemetry_locked(telemetry_event_t *out_evt) {
     out_evt->type = TELEMETRY_EVT_COOLING;
     out_evt->data.cooling.current_temp_c = s_temperature_c;
     out_evt->data.cooling.is_sensor_valid = s_temperature_valid;
-    out_evt->data.cooling.cooling_relay_active = (s_current_output_mv > 0);
+    out_evt->data.cooling.output_mv = s_current_output_mv;
+    out_evt->data.cooling.duty_percent = s_current_duty_percent;
     out_evt->data.cooling.lockout_remaining_sec = s_lockout_remaining_sec;
+    out_evt->data.cooling.mode = (uint8_t)s_mode;
   }
 }
 

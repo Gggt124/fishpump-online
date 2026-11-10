@@ -360,24 +360,26 @@ static void log_board_and_hardware_diagnostics(void) {
     ESP_LOGI(
         TAG,
         "[COOLING_DIAG] init=%s config=%s fault=%s sensor=%s fault_code=%s "
-        "temp_valid=%s temp_c=%.2f ds18b20_gpio=%d mode=%s auto=%s demand=%s "
-        "relay_gpio=%d relay=%s blocked=%s lockout=%s lockout_sec=%lu "
-        "test_sec=%lu threshold_x10=%ld hysteresis_x10=%ld",
+        "temp_valid=%s temp_c=%.2f pt100_cs=%d mode=%s auto=%s demand=%s "
+        "pwm_gpio=%d output_mv=%u output_v=%.2f duty=%.1f%% blocked=%s "
+        "lockout=%s lockout_sec=%lu test_sec=%lu curve=%s pts=%u",
         cooling.initialized ? "true" : "false",
         cooling.config_valid ? "true" : "false",
         cooling.fault ? "true" : "false",
         cooling_sensor_state_name(cooling.sensor_state),
         cooling_fault_name(cooling.fault_code),
         cooling.temperature_valid ? "true" : "false", cooling.temperature_c,
-        cooling.ds18b20_gpio, cooling_mode_name(cooling.mode),
+        cooling.max31865_cs_gpio, cooling_mode_name(cooling.mode),
         cooling.auto_enable ? "true" : "false",
-        cooling.cooling_demand ? "true" : "false", cooling.cooling_relay_gpio,
-        cooling.relay_energized ? "on" : "off",
+        cooling.cooling_demand ? "true" : "false", cooling.cooling_pwm_gpio,
+        cooling.output_mv, (float)cooling.output_mv / 1000.0f,
+        cooling.duty_percent,
         cooling_blocked_reason_name(cooling.blocked_reason),
         cooling.lockout_active ? "true" : "false",
         (unsigned long)cooling.lockout_remaining_sec,
         (unsigned long)cooling.test_remaining_sec,
-        (long)cooling.threshold_c_x10, (long)cooling.hysteresis_c_x10);
+        cooling.curve_type == COOLING_CURVE_STEP ? "step" : "linear",
+        cooling.point_count);
   } else {
     ESP_LOGW(TAG, "[COOLING_DIAG] status=unavailable");
   }
@@ -467,8 +469,16 @@ apply_cooling_settings_to_config(cooling_control_config_t *config,
     return;
   }
 
+  /* Hardware map pins */
   config->ds18b20_gpio = hardware_map->ds18b20_data_gpio;
   config->cooling_relay_gpio = hardware_map->cooling_relay_gpio;
+  config->max31865_cs_gpio = hardware_map->max31865_cs_gpio;
+  config->cooling_pwm_gpio = hardware_map->cooling_pwm_gpio;
+  config->spi_host = SPI2_HOST;
+  config->max31865_mosi_gpio = GPIO_NUM_11;
+  config->max31865_clk_gpio = GPIO_NUM_12;
+  config->max31865_miso_gpio = GPIO_NUM_13;
+
   config->relay_polarity =
       cooling_relay_polarity_from_hardware(settings->relay_polarity);
   config->threshold_c_x10 = settings->threshold_c_x10;
@@ -476,7 +486,19 @@ apply_cooling_settings_to_config(cooling_control_config_t *config,
   config->auto_enable = settings->auto_enable;
   config->mode = cooling_mode_from_hardware(settings->mode);
   config->test_timeout_sec = settings->test_timeout_sec;
-  config->compressor_min_off_sec = settings->compressor_min_off_sec;
+  uint32_t min_off = settings->min_off_sec > 0
+                         ? settings->min_off_sec
+                         : settings->compressor_min_off_sec;
+  config->compressor_min_off_sec = min_off;
+
+  /* Inverter multi-point rule engine settings */
+  config->settings.auto_enable = settings->auto_enable;
+  config->settings.curve_type = settings->curve_type;
+  config->settings.point_count = settings->point_count;
+  memcpy(config->settings.points, settings->points,
+         sizeof(config->settings.points));
+  config->settings.min_off_sec = min_off;
+  config->settings.test_timeout_sec = settings->test_timeout_sec;
 }
 
 static void update_status_leds(app_led_state_t state, int blink_phase,
@@ -832,6 +854,12 @@ void app_main(void) {
   cooling_control_config_t cooling_config = cooling_control_default_config();
   apply_cooling_settings_to_config(&cooling_config, &cooling_settings,
                                    &active_hardware_map);
+  cooling_config.spi_host = SPI2_HOST;
+  cooling_config.max31865_cs_gpio = GPIO_NUM_10;
+  cooling_config.max31865_mosi_gpio = GPIO_NUM_11;
+  cooling_config.max31865_clk_gpio = GPIO_NUM_12;
+  cooling_config.max31865_miso_gpio = GPIO_NUM_13;
+  cooling_config.cooling_pwm_gpio = GPIO_NUM_8;
   if (cooling_settings_status != NVS_STORE_COOLING_SETTINGS_LOADED) {
     cooling_config.auto_enable = false;
     cooling_config.mode = COOLING_CONTROL_MODE_FORCE_OFF;
@@ -889,13 +917,13 @@ void app_main(void) {
 
   ESP_LOGI(TAG,
            "Active hardware map (%s): float GPIO=%d, relay1 GPIO=%d, relay2 "
-           "GPIO=%d, ds18b20 GPIO=%d, cooling GPIO=%d",
+           "GPIO=%d, pt100 CS GPIO=%d, cooling PWM GPIO=%d",
            hardware_map_load_status_name(hardware_map_status),
            active_hardware_map.float_input_gpio,
            active_hardware_map.pump_relay1_gpio,
            active_hardware_map.pump_relay2_gpio,
-           active_hardware_map.ds18b20_data_gpio,
-           active_hardware_map.cooling_relay_gpio);
+           active_hardware_map.max31865_cs_gpio,
+           active_hardware_map.cooling_pwm_gpio);
   if (hardware_map_promoted) {
     ESP_LOGI(
         TAG,
@@ -909,14 +937,16 @@ void app_main(void) {
                   "unavailable");
   }
   ESP_LOGI(TAG,
-           "Cooling settings (%s): mode=%s, threshold_x10=%ld, "
-           "hysteresis_x10=%ld, auto_enable=%s, min_off=%lu sec",
+           "Cooling settings (%s): mode=%s, curve=%s, pts=%u, "
+           "auto_enable=%s, min_off=%lu sec",
            cooling_settings_load_status_name(cooling_settings_status),
            hardware_map_cooling_mode_name(cooling_settings.mode),
-           (long)cooling_settings.threshold_c_x10,
-           (long)cooling_settings.hysteresis_c_x10,
+           cooling_settings.curve_type == COOLING_CURVE_STEP ? "step" : "linear",
+           cooling_settings.point_count,
            cooling_settings.auto_enable ? "true" : "false",
-           (unsigned long)cooling_settings.compressor_min_off_sec);
+           (unsigned long)(cooling_settings.min_off_sec > 0
+                               ? cooling_settings.min_off_sec
+                               : cooling_settings.compressor_min_off_sec));
 
   /* 2. Initialize task watchdog (10s timeout with panic) */
   uint32_t idle_mask = 0;
@@ -969,9 +999,9 @@ void app_main(void) {
 
   if (cooling_control_start_task(&cooling_config)) {
     ESP_LOGI(TAG,
-             "Cooling runtime initialized: ds18b20 GPIO=%d, relay GPIO=%d, "
+             "Cooling runtime initialized: PT100 CS=%d (SPI2), PWM GPIO=%d, "
              "auto_enable=%s, min_off=%lu sec",
-             cooling_config.ds18b20_gpio, cooling_config.cooling_relay_gpio,
+             cooling_config.max31865_cs_gpio, cooling_config.cooling_pwm_gpio,
              cooling_config.auto_enable ? "true" : "false",
              (unsigned long)cooling_config.compressor_min_off_sec);
   } else {

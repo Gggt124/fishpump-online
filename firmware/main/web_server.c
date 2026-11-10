@@ -28,6 +28,7 @@
 #include "telemetry_hub.h"
 #include "wifi_manager.h"
 #include <errno.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -1119,11 +1120,37 @@ static const char *api_cooling_mode_name(cooling_control_mode_t mode) {
   case COOLING_CONTROL_MODE_AUTO:
     return "auto";
   case COOLING_CONTROL_MODE_TEST_ON:
-    return "test_on";
+    return "test";
   case COOLING_CONTROL_MODE_FORCE_OFF:
   default:
     return "force_off";
   }
+}
+
+static const char *api_cooling_curve_type_name(cooling_curve_type_t curve_type) {
+  switch (curve_type) {
+  case COOLING_CURVE_STEP:
+    return "step";
+  case COOLING_CURVE_LINEAR:
+  default:
+    return "linear";
+  }
+}
+
+static bool api_cooling_parse_curve_type(const cJSON *item,
+                                         cooling_curve_type_t *curve_type) {
+  if (!item || !cJSON_IsString(item) || !curve_type) {
+    return false;
+  }
+  if (strcmp(item->valuestring, "linear") == 0) {
+    *curve_type = COOLING_CURVE_LINEAR;
+    return true;
+  }
+  if (strcmp(item->valuestring, "step") == 0) {
+    *curve_type = COOLING_CURVE_STEP;
+    return true;
+  }
+  return false;
 }
 
 static const char *api_cooling_settings_status_name(
@@ -1154,7 +1181,8 @@ static bool api_cooling_parse_mode(const cJSON *item,
     *mode = HARDWARE_COOLING_MODE_FORCE_OFF;
     return true;
   }
-  if (strcmp(item->valuestring, "test_on") == 0) {
+  if (strcmp(item->valuestring, "test_on") == 0 ||
+      strcmp(item->valuestring, "test") == 0) {
     *mode = HARDWARE_COOLING_MODE_TEST_ON;
     return true;
   }
@@ -1494,6 +1522,9 @@ static bool api_cooling_add_status_fields_gen(json_gen_t *gen) {
   json_gen_add_string(gen, "fault_code",
                       api_cooling_fault_code_name(status.fault_code));
   json_gen_add_bool(gen, "relay_energized", status.relay_energized);
+  json_gen_add_number(gen, "output_volts", (double)status.output_mv / 1000.0);
+  json_gen_add_number(gen, "output_mv", (double)status.output_mv);
+  json_gen_add_number(gen, "duty_percent", (double)status.duty_percent);
   json_gen_add_number(gen, "threshold_c",
                       (double)(status.threshold_c_x10) / 10.0);
   json_gen_add_number(gen, "hysteresis_c",
@@ -1509,6 +1540,8 @@ static bool api_cooling_add_status_fields_gen(json_gen_t *gen) {
   json_gen_add_number(gen, "ds18b20_gpio", (double)(status.ds18b20_gpio));
   json_gen_add_number(gen, "cooling_relay_gpio",
                       (double)(status.cooling_relay_gpio));
+  json_gen_add_number(gen, "max31865_cs_gpio", (double)(status.max31865_cs_gpio));
+  json_gen_add_number(gen, "cooling_pwm_gpio", (double)(status.cooling_pwm_gpio));
   return true;
 }
 
@@ -1534,6 +1567,9 @@ static bool api_cooling_add_status_fields(cJSON *root) {
   cJSON_AddStringToObject(root, "fault_code",
                           api_cooling_fault_code_name(status.fault_code));
   cJSON_AddBoolToObject(root, "relay_energized", status.relay_energized);
+  cJSON_AddNumberToObject(root, "output_volts", (double)status.output_mv / 1000.0);
+  cJSON_AddNumberToObject(root, "output_mv", status.output_mv);
+  cJSON_AddNumberToObject(root, "duty_percent", status.duty_percent);
   cJSON_AddNumberToObject(root, "threshold_c",
                           (double)status.threshold_c_x10 / 10.0);
   cJSON_AddNumberToObject(root, "hysteresis_c",
@@ -1550,6 +1586,8 @@ static bool api_cooling_add_status_fields(cJSON *root) {
   cJSON_AddNumberToObject(root, "ds18b20_gpio", status.ds18b20_gpio);
   cJSON_AddNumberToObject(root, "cooling_relay_gpio",
                           status.cooling_relay_gpio);
+  cJSON_AddNumberToObject(root, "max31865_cs_gpio", status.max31865_cs_gpio);
+  cJSON_AddNumberToObject(root, "cooling_pwm_gpio", status.cooling_pwm_gpio);
   return true;
 }
 
@@ -1563,18 +1601,47 @@ api_cooling_add_config_fields(cJSON *root,
 
   cJSON_AddStringToObject(root, "settings_status",
                           api_cooling_settings_status_name(status));
+  cJSON_AddBoolToObject(root, "auto_enable", settings->auto_enable);
+  cJSON_AddStringToObject(root, "curve_type",
+                          api_cooling_curve_type_name(settings->curve_type));
+  uint8_t count = settings->point_count;
+  if (count < COOLING_MIN_RULE_POINTS || count > COOLING_MAX_RULE_POINTS) {
+    count = 2;
+  }
+  cJSON_AddNumberToObject(root, "point_count", count);
+
+  cJSON *pts_array = cJSON_AddArrayToObject(root, "points");
+  if (pts_array) {
+    for (uint8_t i = 0; i < count; i++) {
+      cJSON *pt_obj = cJSON_CreateObject();
+      if (pt_obj) {
+        cJSON_AddNumberToObject(pt_obj, "temp_c",
+                                (double)settings->points[i].temp_c_x10 / 10.0);
+        cJSON_AddNumberToObject(pt_obj, "temp_c_x10",
+                                settings->points[i].temp_c_x10);
+        cJSON_AddNumberToObject(pt_obj, "output_volts",
+                                (double)settings->points[i].output_mv / 1000.0);
+        cJSON_AddNumberToObject(pt_obj, "output_mv",
+                                settings->points[i].output_mv);
+        cJSON_AddItemToArray(pts_array, pt_obj);
+      }
+    }
+  }
+
+  uint32_t min_off = settings->min_off_sec > 0
+                         ? settings->min_off_sec
+                         : settings->compressor_min_off_sec;
+  cJSON_AddNumberToObject(root, "min_off_sec", min_off);
+  cJSON_AddNumberToObject(root, "test_timeout_sec", settings->test_timeout_sec);
   cJSON_AddNumberToObject(root, "threshold_c",
                           (double)settings->threshold_c_x10 / 10.0);
   cJSON_AddNumberToObject(root, "threshold_c_x10", settings->threshold_c_x10);
   cJSON_AddNumberToObject(root, "hysteresis_c",
                           (double)settings->hysteresis_c_x10 / 10.0);
   cJSON_AddNumberToObject(root, "hysteresis_c_x10", settings->hysteresis_c_x10);
-  cJSON_AddBoolToObject(root, "auto_enable", settings->auto_enable);
   cJSON_AddStringToObject(root, "mode",
                           hardware_map_cooling_mode_name(settings->mode));
-  cJSON_AddNumberToObject(root, "test_timeout_sec", settings->test_timeout_sec);
-  cJSON_AddNumberToObject(root, "compressor_min_off_sec",
-                          settings->compressor_min_off_sec);
+  cJSON_AddNumberToObject(root, "compressor_min_off_sec", min_off);
   cJSON_AddStringToObject(root, "cooling_relay_polarity",
                           hardware_map_polarity_name(settings->relay_polarity));
   return true;
@@ -1597,17 +1664,27 @@ static bool api_cooling_add_limits(cJSON *root) {
   cJSON_AddNumberToObject(limits, "test_timeout_sec_max", 3600);
   cJSON_AddNumberToObject(limits, "compressor_min_off_sec_min", 120);
   cJSON_AddNumberToObject(limits, "compressor_min_off_sec_max", 86400);
+  cJSON_AddNumberToObject(limits, "min_off_sec_min", 120);
+  cJSON_AddNumberToObject(limits, "min_off_sec_max", 86400);
+  cJSON_AddNumberToObject(limits, "min_points", COOLING_MIN_RULE_POINTS);
+  cJSON_AddNumberToObject(limits, "max_points", COOLING_MAX_RULE_POINTS);
+  cJSON_AddNumberToObject(limits, "max_output_volts", 10.0);
+  cJSON_AddNumberToObject(limits, "max_output_mv", COOLING_RULE_MAX_OUTPUT_MV);
 
   cJSON *modes = cJSON_AddArrayToObject(root, "modes");
   cJSON *polarities = cJSON_AddArrayToObject(root, "relay_polarities");
-  if (!modes || !polarities) {
+  cJSON *curve_types = cJSON_AddArrayToObject(root, "curve_types");
+  if (!modes || !polarities || !curve_types) {
     return false;
   }
   cJSON_AddItemToArray(modes, cJSON_CreateString("auto"));
   cJSON_AddItemToArray(modes, cJSON_CreateString("force_off"));
+  cJSON_AddItemToArray(modes, cJSON_CreateString("test"));
   cJSON_AddItemToArray(modes, cJSON_CreateString("test_on"));
   cJSON_AddItemToArray(polarities, cJSON_CreateString("active_low"));
   cJSON_AddItemToArray(polarities, cJSON_CreateString("active_high"));
+  cJSON_AddItemToArray(curve_types, cJSON_CreateString("linear"));
+  cJSON_AddItemToArray(curve_types, cJSON_CreateString("step"));
   return true;
 }
 
@@ -1622,12 +1699,13 @@ static void api_cooling_settings_to_runtime_config(
   hardware_map_t active_map = hardware_map_defaults();
   nvs_store_hardware_map_load_status_t map_status =
       nvs_store_load_hardware_map(&active_map);
-  if (map_status == NVS_STORE_HARDWARE_MAP_DEFAULTS_ERROR) {
-    return;
+  if (map_status != NVS_STORE_HARDWARE_MAP_DEFAULTS_ERROR) {
+    config->ds18b20_gpio = active_map.ds18b20_data_gpio;
+    config->cooling_relay_gpio = active_map.cooling_relay_gpio;
+    config->max31865_cs_gpio = active_map.max31865_cs_gpio;
+    config->cooling_pwm_gpio = active_map.cooling_pwm_gpio;
   }
 
-  config->ds18b20_gpio = active_map.ds18b20_data_gpio;
-  config->cooling_relay_gpio = active_map.cooling_relay_gpio;
   config->relay_polarity =
       api_cooling_polarity_from_hardware(settings->relay_polarity);
   config->threshold_c_x10 = settings->threshold_c_x10;
@@ -1635,7 +1713,18 @@ static void api_cooling_settings_to_runtime_config(
   config->auto_enable = settings->auto_enable;
   config->mode = api_cooling_mode_from_hardware(settings->mode);
   config->test_timeout_sec = settings->test_timeout_sec;
-  config->compressor_min_off_sec = settings->compressor_min_off_sec;
+  uint32_t min_off = settings->min_off_sec > 0
+                         ? settings->min_off_sec
+                         : settings->compressor_min_off_sec;
+  config->compressor_min_off_sec = min_off;
+
+  /* Multi-point rule engine settings */
+  config->settings.auto_enable = settings->auto_enable;
+  config->settings.curve_type = settings->curve_type;
+  config->settings.point_count = settings->point_count;
+  memcpy(config->settings.points, settings->points, sizeof(config->settings.points));
+  config->settings.min_off_sec = min_off;
+  config->settings.test_timeout_sec = settings->test_timeout_sec;
 }
 
 static esp_err_t api_cooling_send_config(
@@ -1934,6 +2023,15 @@ static bool api_cooling_required_bool(const cJSON *root, const char *name,
   return true;
 }
 
+static const cJSON *api_json_get_item(const cJSON *root, const char *key1,
+                                      const char *key2) {
+  const cJSON *item = cJSON_GetObjectItem(root, key1);
+  if (!item && key2) {
+    item = cJSON_GetObjectItem(root, key2);
+  }
+  return item;
+}
+
 static bool api_cooling_parse_config_payload(
     const cJSON *root, nvs_store_cooling_settings_t *settings,
     const char **error_code, const char **error_message) {
@@ -1943,6 +2041,175 @@ static bool api_cooling_parse_config_payload(
     return false;
   }
 
+  const cJSON *points_item = cJSON_GetObjectItem(root, "points");
+  if (points_item) {
+    if (!cJSON_IsArray(points_item)) {
+      *error_code = "invalid_type";
+      *error_message = "points must be an array";
+      return false;
+    }
+    int pt_count = cJSON_GetArraySize(points_item);
+    if (pt_count < COOLING_MIN_RULE_POINTS ||
+        pt_count > COOLING_MAX_RULE_POINTS) {
+      *error_code = "invalid_points_count";
+      *error_message = "points array must have 2 to 8 points";
+      return false;
+    }
+
+    cooling_rule_point_t parsed_points[COOLING_MAX_RULE_POINTS];
+    memset(parsed_points, 0, sizeof(parsed_points));
+
+    for (int i = 0; i < pt_count; i++) {
+      const cJSON *pt_obj = cJSON_GetArrayItem(points_item, i);
+      if (!pt_obj || !cJSON_IsObject(pt_obj)) {
+        *error_code = "invalid_point";
+        *error_message = "Each point must be an object";
+        return false;
+      }
+
+      const cJSON *temp_c_item = cJSON_GetObjectItem(pt_obj, "temp_c");
+      const cJSON *temp_x10_item = cJSON_GetObjectItem(pt_obj, "temp_c_x10");
+      int32_t temp_c_x10 = 0;
+      if (temp_c_item && cJSON_IsNumber(temp_c_item)) {
+        temp_c_x10 = (int32_t)round(temp_c_item->valuedouble * 10.0);
+      } else if (temp_x10_item && cJSON_IsNumber(temp_x10_item)) {
+        temp_c_x10 = (int32_t)round(temp_x10_item->valuedouble);
+      } else {
+        *error_code = "missing_field";
+        *error_message = "Point requires temp_c";
+        return false;
+      }
+
+      if (temp_c_x10 < -500 || temp_c_x10 > 1500) {
+        *error_code = "value_out_of_range";
+        *error_message = "temp_c must be between -50.0 and 150.0 C";
+        return false;
+      }
+
+      const cJSON *out_v_item = cJSON_GetObjectItem(pt_obj, "output_volts");
+      const cJSON *out_mv_item = cJSON_GetObjectItem(pt_obj, "output_mv");
+      uint16_t out_mv = 0;
+      if (out_mv_item && cJSON_IsNumber(out_mv_item)) {
+        if (out_mv_item->valuedouble < 0.0 ||
+            out_mv_item->valuedouble > (double)COOLING_RULE_MAX_OUTPUT_MV) {
+          *error_code = "value_out_of_range";
+          *error_message = "output_mv must be between 0 and 10000";
+          return false;
+        }
+        out_mv = (uint16_t)round(out_mv_item->valuedouble);
+      } else if (out_v_item && cJSON_IsNumber(out_v_item)) {
+        if (out_v_item->valuedouble < 0.0 || out_v_item->valuedouble > 10.0) {
+          *error_code = "value_out_of_range";
+          *error_message = "output_volts must be between 0.0 and 10.0";
+          return false;
+        }
+        out_mv = (uint16_t)round(out_v_item->valuedouble * 1000.0);
+      } else {
+        *error_code = "missing_field";
+        *error_message = "Point requires output_volts or output_mv";
+        return false;
+      }
+
+      parsed_points[i].temp_c_x10 = temp_c_x10;
+      parsed_points[i].output_mv = out_mv;
+    }
+
+    /* Optional curve_type */
+    const cJSON *ct_item = cJSON_GetObjectItem(root, "curve_type");
+    if (ct_item) {
+      if (!api_cooling_parse_curve_type(ct_item, &settings->curve_type)) {
+        *error_code = "invalid_curve_type";
+        *error_message = "curve_type must be 'linear' or 'step'";
+        return false;
+      }
+    }
+
+    /* Optional min_off_sec */
+    const cJSON *min_off_item =
+        api_json_get_item(root, "min_off_sec", "compressor_min_off_sec");
+    if (min_off_item && cJSON_IsNumber(min_off_item)) {
+      if (min_off_item->valuedouble < 120.0 ||
+          min_off_item->valuedouble > 86400.0) {
+        *error_code = "hardware_safety";
+        *error_message = "min_off_sec must be between 120 and 86400 sec";
+        return false;
+      }
+      settings->min_off_sec = (uint32_t)min_off_item->valuedouble;
+      settings->compressor_min_off_sec = settings->min_off_sec;
+    }
+
+    /* Optional auto_enable */
+    const cJSON *ae_item = cJSON_GetObjectItem(root, "auto_enable");
+    if (ae_item && cJSON_IsBool(ae_item)) {
+      settings->auto_enable = cJSON_IsTrue(ae_item);
+    }
+
+    /* Optional test_timeout_sec */
+    const cJSON *tt_item = cJSON_GetObjectItem(root, "test_timeout_sec");
+    if (tt_item && cJSON_IsNumber(tt_item)) {
+      if (tt_item->valuedouble < 1.0 || tt_item->valuedouble > 3600.0) {
+        *error_code = "value_out_of_range";
+        *error_message = "test_timeout_sec must be between 1 and 3600 sec";
+        return false;
+      }
+      settings->test_timeout_sec = (uint32_t)tt_item->valuedouble;
+    }
+
+    /* Optional mode */
+    const cJSON *mode = cJSON_GetObjectItem(root, "mode");
+    if (mode) {
+      if (!api_cooling_parse_mode(mode, &settings->mode)) {
+        *error_code = "invalid_cooling_mode";
+        *error_message = "mode";
+        return false;
+      }
+      if (settings->mode == HARDWARE_COOLING_MODE_TEST_ON) {
+        *error_code = "test_mode_not_persistent";
+        *error_message = "Use /api/cooling/mode for runtime Test ON";
+        return false;
+      }
+    }
+
+    /* Optional polarity */
+    const cJSON *polarity = cJSON_GetObjectItem(root, "cooling_relay_polarity");
+    if (polarity) {
+      if (!api_cooling_parse_polarity(polarity, &settings->relay_polarity)) {
+        *error_code = "invalid_relay_polarity";
+        *error_message = "cooling_relay_polarity";
+        return false;
+      }
+    }
+
+    /* Validate curve rule monotonicity and constraints */
+    cooling_settings_t validate_test = {
+        .auto_enable = settings->auto_enable,
+        .curve_type = settings->curve_type,
+        .point_count = (uint8_t)pt_count,
+        .min_off_sec = settings->min_off_sec > 0 ? settings->min_off_sec : 180,
+        .test_timeout_sec =
+            settings->test_timeout_sec > 0 ? settings->test_timeout_sec : 30,
+    };
+    memcpy(validate_test.points, parsed_points, sizeof(parsed_points));
+    if (!cooling_validate_settings(&validate_test)) {
+      *error_code = "invalid_curve_points";
+      *error_message =
+          "Points must have strictly ascending temperatures (T0 < T1 < ... < "
+          "Tn)";
+      return false;
+    }
+
+    /* Commit parsed points to settings */
+    settings->point_count = (uint8_t)pt_count;
+    memcpy(settings->points, parsed_points, sizeof(settings->points));
+    settings->threshold_c_x10 = parsed_points[0].temp_c_x10;
+    settings->hysteresis_c_x10 =
+        (pt_count > 1)
+            ? (parsed_points[1].temp_c_x10 - parsed_points[0].temp_c_x10)
+            : 10;
+    return true;
+  }
+
+  /* Legacy parameter parsing fallback */
   if (!api_cooling_required_i32_range(root, "threshold_c_x10", -550, 1250,
                                       &settings->threshold_c_x10, error_code,
                                       error_message) ||
@@ -1960,6 +2227,7 @@ static bool api_cooling_parse_config_payload(
     return false;
   }
 
+  settings->min_off_sec = settings->compressor_min_off_sec;
   if (settings->compressor_min_off_sec < 120) {
     *error_code = "hardware_safety";
     *error_message = "min_off_sec must be >= 120 (hardware safety minimum)";
@@ -1985,15 +2253,20 @@ static bool api_cooling_parse_config_payload(
     return false;
   }
 
+  /* Sync legacy to 2 default points */
+  settings->curve_type = COOLING_CURVE_LINEAR;
+  settings->point_count = 2;
+  settings->points[0].temp_c_x10 = settings->threshold_c_x10;
+  settings->points[0].output_mv = 5000;
+  settings->points[1].temp_c_x10 =
+      settings->threshold_c_x10 + settings->hysteresis_c_x10;
+  settings->points[1].output_mv = COOLING_RULE_MAX_OUTPUT_MV;
+
   return true;
 }
 
 static const cJSON *api_pump_get_item(const cJSON *root, const char *key1, const char *key2) {
-  const cJSON *item = cJSON_GetObjectItem(root, key1);
-  if (!item && key2) {
-    item = cJSON_GetObjectItem(root, key2);
-  }
-  return item;
+  return api_json_get_item(root, key1, key2);
 }
 
 static bool api_pump_parse_settings_payload(const cJSON *root,
@@ -3951,7 +4224,7 @@ static esp_err_t handle_api_cooling_config_post(httpd_req_t *req) {
                           "403 Forbidden");
   }
 
-  char body[512] = {0};
+  char body[1536] = {0};
   if (!read_request_body(req, body, sizeof(body))) {
     return send_api_error(req, "empty_body", "Request body is required",
                           "400 Bad Request");
@@ -4011,7 +4284,7 @@ static esp_err_t handle_api_cooling_mode_post(httpd_req_t *req) {
                           "403 Forbidden");
   }
 
-  char body[128] = {0};
+  char body[256] = {0};
   if (!read_request_body(req, body, sizeof(body))) {
     return send_api_error(req, "empty_body", "Request body is required",
                           "400 Bad Request");
@@ -4030,8 +4303,8 @@ static esp_err_t handle_api_cooling_mode_post(httpd_req_t *req) {
   const cJSON *mode_item = cJSON_GetObjectItem(root, "mode");
   bool mode_present = mode_item != NULL;
   bool valid = api_cooling_parse_mode(mode_item, &mode);
-  cJSON_Delete(root);
   if (!valid) {
+    cJSON_Delete(root);
     return send_api_error(
         req, mode_present ? "invalid_cooling_mode" : "missing_field", "mode",
         "400 Bad Request");
@@ -4039,7 +4312,23 @@ static esp_err_t handle_api_cooling_mode_post(httpd_req_t *req) {
 
   bool mode_ok = false;
   if (mode == HARDWARE_COOLING_MODE_TEST_ON) {
-    mode_ok = cooling_control_start_test();
+    uint16_t test_mv = COOLING_RULE_MAX_OUTPUT_MV;
+    const cJSON *tmv = cJSON_GetObjectItem(root, "test_mv");
+    const cJSON *tv = cJSON_GetObjectItem(root, "test_volts");
+    if (tmv && cJSON_IsNumber(tmv) && tmv->valuedouble >= 0.0) {
+      double val = tmv->valuedouble;
+      if (val > (double)COOLING_RULE_MAX_OUTPUT_MV) {
+        val = (double)COOLING_RULE_MAX_OUTPUT_MV;
+      }
+      test_mv = (uint16_t)round(val);
+    } else if (tv && cJSON_IsNumber(tv) && tv->valuedouble >= 0.0) {
+      double val = tv->valuedouble * 1000.0;
+      if (val > (double)COOLING_RULE_MAX_OUTPUT_MV) {
+        val = (double)COOLING_RULE_MAX_OUTPUT_MV;
+      }
+      test_mv = (uint16_t)round(val);
+    }
+    mode_ok = cooling_control_start_test(test_mv);
   } else {
     mode_ok = cooling_control_set_mode(api_cooling_mode_from_hardware(mode));
     if (mode_ok) {
@@ -4047,13 +4336,21 @@ static esp_err_t handle_api_cooling_mode_post(httpd_req_t *req) {
       nvs_store_cooling_settings_defaults(&settings);
       nvs_store_load_cooling_settings(&settings);
       settings.mode = mode;
+      if (mode == HARDWARE_COOLING_MODE_AUTO) {
+        settings.auto_enable = true;
+      } else if (mode == HARDWARE_COOLING_MODE_FORCE_OFF) {
+        settings.auto_enable = false;
+      }
       if (!nvs_store_save_cooling_settings(&settings)) {
+        cJSON_Delete(root);
         return send_api_error(req, "settings_save_failed",
                               "Cooling mode changed but could not be saved",
                               "500 Internal Server Error");
       }
     }
   }
+  cJSON_Delete(root);
+
   if (!mode_ok) {
     return send_api_error(req, "mode_change_failed",
                           "Cooling mode could not be changed", "409 Conflict");
@@ -4759,12 +5056,17 @@ static void web_server_telemetry_cb(const telemetry_event_t *event,
 
   case TELEMETRY_EVT_COOLING:
     evt_name = "cooling";
-    snprintf(json_buf, sizeof(json_buf),
-             "{\"temp_c\":%.2f,\"valid\":%s,\"relay\":%s,\"lockout_sec\":%lu}",
-             event->data.cooling.current_temp_c,
-             event->data.cooling.is_sensor_valid ? "true" : "false",
-             event->data.cooling.cooling_relay_active ? "true" : "false",
-             (unsigned long)event->data.cooling.lockout_remaining_sec);
+    snprintf(
+        json_buf, sizeof(json_buf),
+        "{\"temp_c\":%.2f,\"valid\":%s,\"output_volts\":%.2f,\"output_mv\":%u,"
+        "\"duty_percent\":%.1f,\"lockout_sec\":%lu,\"mode\":%u}",
+        event->data.cooling.current_temp_c,
+        event->data.cooling.is_sensor_valid ? "true" : "false",
+        (float)event->data.cooling.output_mv / 1000.0f,
+        (unsigned int)event->data.cooling.output_mv,
+        event->data.cooling.duty_percent,
+        (unsigned long)event->data.cooling.lockout_remaining_sec,
+        (unsigned int)event->data.cooling.mode);
     break;
 
   case TELEMETRY_EVT_HEALTH:
