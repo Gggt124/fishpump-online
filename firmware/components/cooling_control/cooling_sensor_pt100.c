@@ -22,12 +22,20 @@ static max31865_config_t s_config;
 static spi_host_device_t s_spi_host = SPI2_HOST;
 static bool s_bus_initialized = false;
 static bool s_device_initialized = false;
+
+/* Static FreeRTOS mutex to eliminate dynamic allocation and SMP race conditions */
+static StaticSemaphore_t s_mutex_buffer;
 static SemaphoreHandle_t s_pt100_mutex = NULL;
+static portMUX_TYPE s_mutex_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 static void ensure_mutex_created(void)
 {
     if (s_pt100_mutex == NULL) {
-        s_pt100_mutex = xSemaphoreCreateMutex();
+        taskENTER_CRITICAL(&s_mutex_spinlock);
+        if (s_pt100_mutex == NULL) {
+            s_pt100_mutex = xSemaphoreCreateMutexStatic(&s_mutex_buffer);
+        }
+        taskEXIT_CRITICAL(&s_mutex_spinlock);
     }
 }
 
@@ -80,8 +88,8 @@ esp_err_t cooling_sensor_pt100_init(spi_host_device_t host, gpio_num_t cs_pin,
         ESP_LOGI(TAG, "SPI bus initialized on host %d (MOSI=%d, MISO=%d, CLK=%d)",
                  (int)host, (int)mosi_pin, (int)miso_pin, (int)clk_pin);
     } else if (err == ESP_ERR_INVALID_STATE) {
-        /* Bus was already initialized by another component or earlier call; share it */
-        s_bus_initialized = false;
+        /* Bus was already initialized by another component or earlier call; share it.
+         * If we previously initialized the bus, preserve s_bus_initialized ownership. */
         s_spi_host = host;
         ESP_LOGI(TAG, "SPI bus on host %d already active; sharing bus", (int)host);
     } else {
@@ -134,6 +142,27 @@ esp_err_t cooling_sensor_pt100_init(spi_host_device_t host, gpio_num_t cs_pin,
         return err;
     }
 
+    /* Chip presence verification: read back configuration register to ensure device is responding */
+    max31865_config_t readback_cfg;
+    err = max31865_get_config(&s_dev, &readback_cfg);
+    if (err != ESP_OK ||
+        readback_cfg.connection != s_config.connection ||
+        readback_cfg.v_bias != s_config.v_bias ||
+        readback_cfg.filter != s_config.filter ||
+        readback_cfg.mode != s_config.mode) {
+        ESP_LOGE(TAG, "MAX31865 chip presence verification failed (readback mismatch or communication error)");
+        max31865_free_desc(&s_dev);
+        s_device_initialized = false;
+        if (s_bus_initialized) {
+            spi_bus_free(host);
+            s_bus_initialized = false;
+        }
+        if (s_pt100_mutex != NULL) {
+            xSemaphoreGive(s_pt100_mutex);
+        }
+        return (err != ESP_OK) ? err : ESP_ERR_NOT_FOUND;
+    }
+
     /* Check and clear any power-on fault status */
     uint8_t initial_fault = 0;
     if (max31865_get_fault_status(&s_dev, &initial_fault) == ESP_OK && initial_fault != 0) {
@@ -160,9 +189,6 @@ esp_err_t cooling_sensor_pt100_read(float *out_temp_c, uint8_t *out_fault_status
     if (out_temp_c == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (!s_device_initialized) {
-        return ESP_ERR_INVALID_STATE;
-    }
     if (out_fault_status != NULL) {
         *out_fault_status = 0;
     }
@@ -173,6 +199,14 @@ esp_err_t cooling_sensor_pt100_read(float *out_temp_c, uint8_t *out_fault_status
             ESP_LOGE(TAG, "Timeout acquiring MAX31865 mutex in read");
             return ESP_ERR_TIMEOUT;
         }
+    }
+
+    /* Verify device initialized state safely within mutex lock to prevent race with deinit */
+    if (!s_device_initialized) {
+        if (s_pt100_mutex != NULL) {
+            xSemaphoreGive(s_pt100_mutex);
+        }
+        return ESP_ERR_INVALID_STATE;
     }
 
     /* Run full single-shot measurement cycle (~70ms conversion wait) */
@@ -265,6 +299,15 @@ esp_err_t cooling_sensor_pt100_deinit(void)
 
 bool cooling_sensor_pt100_is_initialized(void)
 {
+    ensure_mutex_created();
+    bool init = false;
+    if (s_pt100_mutex != NULL) {
+        if (xSemaphoreTake(s_pt100_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            init = s_device_initialized;
+            xSemaphoreGive(s_pt100_mutex);
+            return init;
+        }
+    }
     return s_device_initialized;
 }
 
