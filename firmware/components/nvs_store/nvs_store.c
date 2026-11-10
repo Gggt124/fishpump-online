@@ -1455,7 +1455,7 @@ nvs_store_load_cooling_settings(cooling_settings_t *out) {
   }
 
   size_t required_bytes = point_cnt * sizeof(cooling_rule_point_t);
-  if (blob_len < required_bytes || blob_len > sizeof(loaded.points)) {
+  if (blob_len != required_bytes) {
     nvs_close(handle);
     ESP_LOGE(TAG,
              "Invalid cooling rules blob length in NVS: %zu (expected %zu)",
@@ -1647,6 +1647,9 @@ bool nvs_store_save_cooling_settings_legacy(
   }
 
   bool ok = nvs_store_save_cooling_settings(&modern);
+  if (!ok) {
+    return false;
+  }
 
   nvs_handle_t handle;
   if (nvs_open(NVS_COOL_NAMESPACE, NVS_READWRITE, &handle) == ESP_OK) {
@@ -1657,7 +1660,7 @@ bool nvs_store_save_cooling_settings_legacy(
     nvs_close(handle);
   }
 
-  return ok;
+  return true;
 }
 
 bool nvs_store_clear_cooling_settings(void) {

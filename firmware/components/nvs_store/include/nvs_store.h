@@ -196,6 +196,8 @@ bool nvs_store_save_cooling_settings_legacy(
     const nvs_store_cooling_settings_t *settings);
 
 #if defined(__cplusplus)
+} // extern "C"
+
 inline void
 nvs_store_cooling_settings_defaults(nvs_store_cooling_settings_t *out) {
   nvs_store_cooling_settings_legacy_defaults(out);
@@ -208,6 +210,8 @@ inline bool nvs_store_save_cooling_settings(
     const nvs_store_cooling_settings_t *settings) {
   return nvs_store_save_cooling_settings_legacy(settings);
 }
+
+extern "C" {
 #else
 #define nvs_store_cooling_settings_defaults(out)                               \
   _Generic((out),                                                              \
