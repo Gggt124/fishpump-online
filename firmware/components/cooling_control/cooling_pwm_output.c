@@ -86,6 +86,7 @@ esp_err_t cooling_pwm_output_init(gpio_num_t pwm_gpio)
         };
         ledc_channel_config(&deconf_ch);
 
+        ledc_timer_pause(COOLING_PWM_SPEED_MODE, COOLING_PWM_TIMER);
         ledc_timer_config_t deconf_timer = {
             .speed_mode = COOLING_PWM_SPEED_MODE,
             .timer_num = COOLING_PWM_TIMER,
@@ -325,6 +326,15 @@ esp_err_t cooling_pwm_output_step_towards(uint16_t target_mv, uint16_t max_step_
     }
 
     uint16_t next_mv = cooling_pwm_output_calc_slew_step(s_current_mv, target_mv, max_step_mv);
+
+    /* Skip redundant hardware writes if voltage is already at target step */
+    if (next_mv == s_current_mv) {
+        if (s_pwm_mutex != NULL) {
+            xSemaphoreGive(s_pwm_mutex);
+        }
+        return ESP_OK;
+    }
+
     uint32_t duty = calc_duty_from_mv(next_mv);
 
     esp_err_t err = ledc_set_duty(COOLING_PWM_SPEED_MODE, COOLING_PWM_CHANNEL, duty);
@@ -410,6 +420,7 @@ esp_err_t cooling_pwm_output_deinit(void)
     };
     ledc_channel_config(&ch_conf);
 
+    ledc_timer_pause(COOLING_PWM_SPEED_MODE, COOLING_PWM_TIMER);
     ledc_timer_config_t timer_conf = {
         .speed_mode = COOLING_PWM_SPEED_MODE,
         .timer_num = COOLING_PWM_TIMER,
