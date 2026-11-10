@@ -116,7 +116,13 @@ static void trigger_lockout_locked(void) {
 
 static void apply_pwm_output_locked(uint16_t target_mv) {
   uint16_t was_mv = s_current_output_mv;
-  cooling_pwm_output_set_millivolts(target_mv);
+  if (target_mv == 0) {
+    /* Immediate fail-safe shutdown to protect compressor and enforce safety cutoff */
+    cooling_pwm_output_set_millivolts(0);
+  } else {
+    /* Soft slew rate ramp to avoid mechanical/electrical inverter stress */
+    cooling_pwm_output_step_towards(target_mv, COOLING_PWM_DEFAULT_MAX_SLEW_RATE_MV_PER_SEC);
+  }
   s_current_output_mv = cooling_pwm_output_get_current_millivolts();
   s_current_duty_percent = cooling_pwm_output_get_duty_percent();
 
@@ -498,7 +504,9 @@ bool cooling_control_apply_config(const cooling_control_config_t *config) {
                         : s_mode;
   s_test_remaining_sec = 0;
 
-  if (s_mode == COOLING_CONTROL_MODE_FORCE_OFF) {
+  if (s_cooling_task != NULL) {
+    update_control_locked();
+  } else if (s_mode == COOLING_CONTROL_MODE_FORCE_OFF) {
     s_cooling_demand = false;
     s_blocked_reason = COOLING_CONTROL_BLOCKED_FORCE_OFF;
     apply_pwm_output_locked(0);
@@ -605,7 +613,9 @@ bool cooling_control_set_mode(cooling_control_mode_t mode) {
 
   s_mode = mode;
   s_test_remaining_sec = 0;
-  if (mode == COOLING_CONTROL_MODE_FORCE_OFF) {
+  if (s_cooling_task != NULL) {
+    update_control_locked();
+  } else if (mode == COOLING_CONTROL_MODE_FORCE_OFF) {
     s_cooling_demand = false;
     s_blocked_reason = COOLING_CONTROL_BLOCKED_FORCE_OFF;
     apply_pwm_output_locked(0);

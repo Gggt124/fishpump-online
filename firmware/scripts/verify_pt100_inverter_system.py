@@ -77,7 +77,7 @@ def cooling_validate_settings(settings):
 def cooling_evaluate_rule_curve(settings, temp_c):
     if not cooling_validate_settings(settings):
         return 0
-    if temp_c is None or math.isnan(temp_c):
+    if temp_c is None or not math.isfinite(temp_c):
         return 0
 
     points = settings["points"]
@@ -154,6 +154,8 @@ def test_rule_curve_engine():
 
     # NaN / Invalid temp -> 0 mV
     assert_test(cooling_evaluate_rule_curve(default_settings, float('nan')) == 0, "NaN temp outputs fail-safe 0 mV")
+    assert_test(cooling_evaluate_rule_curve(default_settings, float('inf')) == 0, "+Inf temp outputs fail-safe 0 mV")
+    assert_test(cooling_evaluate_rule_curve(default_settings, float('-inf')) == 0, "-Inf temp outputs fail-safe 0 mV")
 
     # Step Mode
     step_settings = dict(default_settings)
@@ -221,8 +223,8 @@ def calc_duty_from_mv(mv):
 
 
 def calc_slew_step(current_mv, target_mv, max_step_mv):
-    if current_mv == target_mv or max_step_mv == 0:
-        return target_mv if max_step_mv == 0 else current_mv
+    if max_step_mv == 0 or current_mv == target_mv:
+        return current_mv
 
     if target_mv > current_mv:
         diff = target_mv - current_mv
@@ -254,6 +256,8 @@ def test_pwm_and_slew():
     assert_test(calc_duty_from_mv(10000) == 1023, "10000 mV gives raw duty 1023 (100.0%)")
     assert_test(calc_duty_from_mv(15000) == 1023, ">10000 mV clamps to duty 1023 (100.0%)")
 
+    # Slew step with step limit = 0 (no change)
+    assert_test(calc_slew_step(2000, 5000, 0) == 2000, "Slew step with max_step_mv=0 returns current_mv")
     # Slew step up
     assert_test(calc_slew_step(2000, 5000, 1000) == 3000, "Slew step up from 2000 to 5000 with step 1000 is 3000")
     # Slew step down

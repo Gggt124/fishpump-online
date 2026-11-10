@@ -80,7 +80,7 @@ uint16_t cooling_evaluate_rule_curve(const cooling_settings_t *settings, float t
   if (!cooling_validate_settings(settings)) {
     return 0;
   }
-  if (isnan(temp_c)) {
+  if (!isfinite(temp_c)) {
     return 0;
   }
 

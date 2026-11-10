@@ -569,7 +569,6 @@ void relay_safe_init_pins(void) {
   relay_safe_channel_t channels[] = {
       {.gpio = defaults.pump_relay1_gpio, .active_low = true, .name = "pump1"},
       {.gpio = defaults.pump_relay2_gpio, .active_low = true, .name = "pump2"},
-      {.gpio = defaults.cooling_relay_gpio, .active_low = true, .name = "cooling"},
   };
   relay_safe_configure(channels, sizeof(channels) / sizeof(channels[0]));
 }
@@ -980,7 +979,8 @@ void app_main(void) {
              esp_err_to_name(wdt_ret));
   }
 
-  /* Configure relay outputs safely with active map and polarities */
+  /* Configure pump relay outputs safely with active map and polarities
+   * (cooling is inverter PWM on GPIO 8, initialized by cooling_control) */
   relay_safe_channel_t active_relay_channels[] = {
       {.gpio = active_hardware_map.pump_relay1_gpio,
        .active_low = pump_settings.relay1_active_low,
@@ -988,10 +988,6 @@ void app_main(void) {
       {.gpio = active_hardware_map.pump_relay2_gpio,
        .active_low = pump_settings.relay2_active_low,
        .name = "pump2"},
-      {.gpio = active_hardware_map.cooling_relay_gpio,
-       .active_low =
-           (cooling_settings.relay_polarity == HARDWARE_RELAY_ACTIVE_LOW),
-       .name = "cooling"},
   };
   relay_safe_configure(active_relay_channels,
                        sizeof(active_relay_channels) /
