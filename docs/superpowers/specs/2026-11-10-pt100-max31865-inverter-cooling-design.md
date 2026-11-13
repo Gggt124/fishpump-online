@@ -26,6 +26,8 @@ The FishPump system previously used a DS18B20 1-Wire temperature sensor and an o
 ## 2. Hardware Architecture & Pin Budget
 
 ### 2.1 ESP32-S3 Pin Allocation Matrix
+
+> **Note (2026-11-13):** the planned UART / RS485 pins in this table (GPIO 1/2, 17/18, 7) and the UART0 console row are superseded by `2026-11-13-pzem-ph-sensor-integration-design.md` §3.1. The new layout is UART0 4/42, UART1 40/41 and UART2 21/14, and the console moves to USB-Serial-JTAG.
 All pins are strictly assigned to avoid strapping pins, Octal Flash/PSRAM lines (GPIO 27–37), USB console, or planned peripherals:
 
 | Peripheral Role | GPIO Pin | Bus / Signal | Description |

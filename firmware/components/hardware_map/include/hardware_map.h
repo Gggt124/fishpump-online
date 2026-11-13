@@ -189,6 +189,27 @@ bool hardware_map_equal(const hardware_map_t *a, const hardware_map_t *b);
 bool hardware_map_reboot_required(const hardware_map_t *active,
                                   const hardware_map_t *pending);
 
+/* Fixed sensor UART buses. These pins are wired on the board and are never
+ * user-selectable; they stay outside the application GPIO allowlist. */
+typedef struct {
+  uint8_t uart_port;   /* 0, 1, 2 */
+  gpio_num_t tx_gpio;
+  gpio_num_t rx_gpio;
+  uint32_t baud;
+  uint8_t modbus_addr;
+  const char *id;      /* "pzem_pump1" | "pzem_pump2" | "rs485_ph" */
+  const char *label;
+} hardware_bus_pin_t;
+
+#define HARDWARE_BUS_PZEM_PUMP1 0
+#define HARDWARE_BUS_PZEM_PUMP2 1
+#define HARDWARE_BUS_RS485_PH 2
+#define HARDWARE_BUS_COUNT 3
+
+/** Returns the fixed bus table (HARDWARE_BUS_COUNT rows, indexed by the
+ *  HARDWARE_BUS_* macros). `count` may be NULL. */
+const hardware_bus_pin_t *hardware_map_fixed_bus_pins(size_t *count);
+
 #ifdef __cplusplus
 }
 #endif

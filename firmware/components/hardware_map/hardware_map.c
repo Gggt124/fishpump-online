@@ -19,13 +19,17 @@ _Static_assert(HARDWARE_ROLE_COOLING_RELAY == HARDWARE_ROLE_COOLING_PWM, "Role a
  *
  * ESP32-S3 deliberately excludes:
  * - GPIO 0, 3, 45, 46: strapping pins
- * - GPIO 4: weak pull-up during reset
- * - GPIO 9, 14: Unassigned (archived peripheral wiring)
+ * - GPIO 4, 42: fixed sensor UART0 TX/RX, PZEM-004T pump 1
+ *   (see hardware_map_fixed_bus_pins)
+ * - GPIO 40, 41: fixed sensor UART1 TX/RX, PZEM-004T pump 2
+ * - GPIO 21, 14: fixed sensor UART2 TX/RX, RS485 SEN0708 pH
+ * - GPIO 9: unassigned (archived peripheral wiring)
  * - GPIO 10, 11, 12, 13: Native SPI2 (MAX31865 PT100 RTD)
- * - GPIO 19-20: native USB D-/D+
- * - GPIO 21, 38-42, 47: USB OTG download/boot-mode signals
+ * - GPIO 19-20: native USB D-/D+ (console runs on USB-Serial-JTAG)
+ * - GPIO 38, 39: external recovery button / status LED
+ * - GPIO 47: unassigned
  * - GPIO 27-37: WROOM-1 Octal Flash/PSRAM connections
- * - GPIO 43-44: UART0 console
+ * - GPIO 43-44: ROM bootloader UART0 default pins (boot log only)
  * - GPIO 48: DevKitC-1 RGB LED
  *
  * Treating the application pool as an allowlist is intentional. A GPIO that
@@ -323,6 +327,22 @@ hardware_map_pin_descriptor(hardware_pin_t pin) {
   }
 
   return NULL;
+}
+
+static const hardware_bus_pin_t s_fixed_bus_pins[HARDWARE_BUS_COUNT] = {
+    [HARDWARE_BUS_PZEM_PUMP1] = {0, GPIO_NUM_4, GPIO_NUM_42, 9600, 0x01,
+                                 "pzem_pump1", "PZEM-004T ปั๊ม 1"},
+    [HARDWARE_BUS_PZEM_PUMP2] = {1, GPIO_NUM_40, GPIO_NUM_41, 9600, 0x01,
+                                 "pzem_pump2", "PZEM-004T ปั๊ม 2"},
+    [HARDWARE_BUS_RS485_PH] = {2, GPIO_NUM_21, GPIO_NUM_14, 4800, 0x01,
+                               "rs485_ph", "RS485 pH (SEN0708)"},
+};
+
+const hardware_bus_pin_t *hardware_map_fixed_bus_pins(size_t *count) {
+  if (count) {
+    *count = HARDWARE_BUS_COUNT;
+  }
+  return s_fixed_bus_pins;
 }
 
 bool hardware_map_pin_is_reserved(hardware_pin_t pin) {
