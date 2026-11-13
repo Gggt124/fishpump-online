@@ -23,9 +23,11 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "nvs_store.h"
+#include "power_monitor.h"
 #include "pump_control.h"
 #include "session.h"
 #include "telemetry_hub.h"
+#include "water_quality.h"
 #include "wifi_manager.h"
 #include <errno.h>
 #include <math.h>
@@ -871,6 +873,30 @@ static bool api_hardware_add_board_info(cJSON *root) {
   return true;
 }
 
+/* Fixed sensor UART pins (read-only on the Hardware page). */
+static bool api_hardware_add_fixed_bus_pins(cJSON *root) {
+  size_t count = 0;
+  const hardware_bus_pin_t *bus = hardware_map_fixed_bus_pins(&count);
+  cJSON *arr = cJSON_AddArrayToObject(root, "fixed_bus_pins");
+  if (!arr) {
+    return false;
+  }
+  for (size_t i = 0; i < count; i++) {
+    cJSON *item = cJSON_CreateObject();
+    if (!item) {
+      return false;
+    }
+    cJSON_AddStringToObject(item, "id", bus[i].id);
+    cJSON_AddStringToObject(item, "label", bus[i].label);
+    cJSON_AddNumberToObject(item, "uart", bus[i].uart_port);
+    cJSON_AddNumberToObject(item, "tx", bus[i].tx_gpio);
+    cJSON_AddNumberToObject(item, "rx", bus[i].rx_gpio);
+    cJSON_AddNumberToObject(item, "baud", bus[i].baud);
+    cJSON_AddItemToArray(arr, item);
+  }
+  return true;
+}
+
 static esp_err_t api_hardware_map_send(httpd_req_t *req) {
   hardware_map_t active = hardware_map_defaults();
   hardware_map_t pending = hardware_map_defaults();
@@ -920,6 +946,11 @@ static esp_err_t api_hardware_map_send(httpd_req_t *req) {
                           "500 Internal Server Error");
   }
   if (!api_hardware_add_board_info(root)) {
+    cJSON_Delete(root);
+    return send_api_error(req, "memory", "JSON allocation failed",
+                          "500 Internal Server Error");
+  }
+  if (!api_hardware_add_fixed_bus_pins(root)) {
     cJSON_Delete(root);
     return send_api_error(req, "memory", "JSON allocation failed",
                           "500 Internal Server Error");
@@ -2756,6 +2787,19 @@ static esp_err_t handle_get_hardware(httpd_req_t *req) {
                       "text/html; charset=utf-8");
 }
 
+/* GET /sensors - SPA shell for the Sensors page */
+static esp_err_t handle_get_sensors(httpd_req_t *req) {
+  if (!require_auth(req)) {
+    set_no_store_response_headers(req);
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "/login");
+    return httpd_resp_send(req, NULL, 0);
+  }
+  return serve_static(req, _binary_index_html_start, _binary_index_html_end,
+                      _binary_index_html_gz_start, _binary_index_html_gz_end,
+                      "text/html; charset=utf-8");
+}
+
 /* GET /style.css */
 static esp_err_t handle_style_css(httpd_req_t *req) {
   return serve_static(req, _binary_style_css_start, _binary_style_css_end,
@@ -4165,6 +4209,263 @@ static esp_err_t handle_api_pump_status(httpd_req_t *req) {
 
 /* GET /api/cooling/status - protected, return machine-friendly cooling runtime
  * status */
+/* ---------------- Sensors (PZEM power + SEN0708 pH) ---------------- */
+
+static uint32_t sensors_now_ms(void) {
+  return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+static void sensors_add_age(cJSON *obj, uint32_t last_ok_ms) {
+  if (last_ok_ms == 0) {
+    cJSON_AddNullToObject(obj, "age_ms");
+  } else {
+    cJSON_AddNumberToObject(obj, "age_ms",
+                            (double)(uint32_t)(sensors_now_ms() - last_ok_ms));
+  }
+}
+
+static void sensors_add_notice(cJSON *parent, const char *key,
+                               const char *text, bool ok) {
+  cJSON *n = cJSON_AddObjectToObject(parent, key);
+  if (n) {
+    cJSON_AddStringToObject(n, "text", text ? text : "");
+    cJSON_AddBoolToObject(n, "ok", ok);
+  }
+}
+
+/* GET /api/sensors/status - protected, full sensor state for the Sensors page */
+static esp_err_t handle_api_sensors_status(httpd_req_t *req) {
+  if (!require_auth(req)) {
+    return send_json(req, "{\"ok\":false,\"error\":\"unauthorized\"}",
+                     "401 Unauthorized");
+  }
+
+  power_monitor_status_t *pw = calloc(1, sizeof(*pw));
+  water_quality_status_t *wq = calloc(1, sizeof(*wq));
+  cJSON *root = cJSON_CreateObject();
+  if (!pw || !wq || !root) {
+    free(pw);
+    free(wq);
+    cJSON_Delete(root);
+    return send_api_error(req, "memory", "JSON allocation failed",
+                          "500 Internal Server Error");
+  }
+  bool pw_ok = power_monitor_get_status(pw);
+  bool wq_ok = water_quality_get_status(wq);
+
+  cJSON_AddBoolToObject(root, "ok", true);
+
+  cJSON *power = cJSON_AddArrayToObject(root, "power");
+  for (int ch = 0; power && ch < POWER_MONITOR_CHANNELS; ch++) {
+    const power_monitor_channel_t *c = &pw->ch[ch];
+    cJSON *o = cJSON_CreateObject();
+    if (!o) {
+      break;
+    }
+    cJSON_AddNumberToObject(o, "channel", ch);
+    cJSON_AddStringToObject(o, "name", ch == 0 ? "pump1" : "pump2");
+    cJSON_AddBoolToObject(o, "valid", pw_ok && c->valid);
+    cJSON_AddBoolToObject(o, "fault", !pw_ok || c->fault);
+    cJSON_AddNumberToObject(o, "voltage", c->voltage_v);
+    cJSON_AddNumberToObject(o, "current", c->current_a);
+    cJSON_AddNumberToObject(o, "power", c->power_w);
+    cJSON_AddNumberToObject(o, "energy_wh", c->energy_wh);
+    cJSON_AddNumberToObject(o, "frequency", c->frequency_hz);
+    cJSON_AddNumberToObject(o, "pf", c->pf);
+    sensors_add_age(o, c->last_ok_ms);
+    cJSON_AddItemToArray(power, o);
+  }
+  sensors_add_notice(root, "power_notice", pw->notice, pw->notice_ok);
+
+  cJSON *water = cJSON_AddObjectToObject(root, "water");
+  if (water) {
+    cJSON_AddBoolToObject(water, "valid", wq_ok && wq->valid);
+    cJSON_AddBoolToObject(water, "fault", !wq_ok || wq->fault);
+    cJSON_AddBoolToObject(water, "stable", wq_ok && wq->stable);
+    cJSON_AddNumberToObject(water, "ph", wq->ph);
+    cJSON_AddNumberToObject(water, "temperature_c", wq->temperature_c);
+    cJSON *off = cJSON_AddObjectToObject(water, "offsets");
+    if (off) {
+      cJSON_AddBoolToObject(off, "known", wq->offsets_known);
+      cJSON_AddNumberToObject(off, "ph", wq->ph_offset);
+      cJSON_AddNumberToObject(off, "temp", wq->temp_offset);
+    }
+    cJSON *cal = cJSON_AddObjectToObject(water, "calibration");
+    if (cal) {
+      cJSON_AddStringToObject(cal, "state",
+                              wq->cal_state ? wq->cal_state : "idle");
+      if (wq->cal_error) {
+        cJSON_AddStringToObject(cal, "error", wq->cal_error);
+      } else {
+        cJSON_AddNullToObject(cal, "error");
+      }
+    }
+    sensors_add_notice(water, "notice", wq->notice, wq->notice_ok);
+    sensors_add_age(water, wq->last_ok_ms);
+  }
+  free(pw);
+  free(wq);
+
+  char *json_str = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+  if (!json_str) {
+    return send_api_error(req, "memory", "JSON allocation failed",
+                          "500 Internal Server Error");
+  }
+  esp_err_t result = send_json(req, json_str, "200 OK");
+  free(json_str);
+  return result;
+}
+
+/* Shared guard for sensor write endpoints: auth, same origin, JSON object body.
+ * Returns NULL after sending the error response. An empty body becomes {}. */
+static cJSON *sensors_begin_post(httpd_req_t *req, esp_err_t *sent) {
+  if (!require_auth(req)) {
+    *sent = send_json(req, "{\"ok\":false,\"error\":\"unauthorized\"}",
+                      "401 Unauthorized");
+    return NULL;
+  }
+  if (!is_same_origin(req, false)) {
+    *sent = send_api_error(req, "forbidden", "Cross-origin sensor write blocked",
+                           "403 Forbidden");
+    return NULL;
+  }
+  char body[256] = {0};
+  if (req->content_len == 0) {
+    strcpy(body, "{}");
+  } else if (!read_request_body(req, body, sizeof(body))) {
+    *sent = send_api_error(req, "invalid_body", "Request body is missing or too large",
+                           "400 Bad Request");
+    return NULL;
+  }
+  cJSON *root = cJSON_Parse(body);
+  if (!root || !cJSON_IsObject(root)) {
+    cJSON_Delete(root);
+    *sent = send_api_error(req, "invalid_json", "Expected a JSON object",
+                           "400 Bad Request");
+    return NULL;
+  }
+  return root;
+}
+
+/* Reads a finite JSON number; false if missing or not a number. */
+static bool sensors_get_number(const cJSON *root, const char *key, double *out) {
+  const cJSON *item = cJSON_GetObjectItem(root, key);
+  if (!cJSON_IsNumber(item) || !isfinite(item->valuedouble)) {
+    return false;
+  }
+  *out = item->valuedouble;
+  return true;
+}
+
+static esp_err_t sensors_send_queue_result(httpd_req_t *req, esp_err_t err,
+                                           const char *field) {
+  switch (err) {
+  case ESP_OK:
+    return send_json(req, "{\"ok\":true,\"queued\":true}", "202 Accepted");
+  case ESP_ERR_INVALID_ARG:
+    return send_api_error(req, "value_out_of_range", field, "400 Bad Request");
+  case ESP_ERR_NO_MEM:
+    return send_api_error(req, "queue_full", "Sensor is busy, try again",
+                          "503 Service Unavailable");
+  default:
+    return send_api_error(req, "sensor_unavailable", "Sensor task not running",
+                          "503 Service Unavailable");
+  }
+}
+
+/* POST /api/power/reset-energy {"channel":0|1} */
+static esp_err_t handle_api_power_reset_energy(httpd_req_t *req) {
+  esp_err_t sent = ESP_OK;
+  cJSON *root = sensors_begin_post(req, &sent);
+  if (!root) {
+    return sent;
+  }
+  double ch = 0;
+  bool present = sensors_get_number(root, "channel", &ch);
+  cJSON_Delete(root);
+  if (!present) {
+    return send_api_error(req, "missing_field", "channel", "400 Bad Request");
+  }
+  if (ch != 0.0 && ch != 1.0) {
+    return send_api_error(req, "value_out_of_range", "channel", "400 Bad Request");
+  }
+  return sensors_send_queue_result(
+      req, power_monitor_request_reset_energy((uint8_t)ch), "channel");
+}
+
+/* POST /api/water/calibrate {"point":1|2,"buffer_ph":0..14} */
+static esp_err_t handle_api_water_calibrate(httpd_req_t *req) {
+  esp_err_t sent = ESP_OK;
+  cJSON *root = sensors_begin_post(req, &sent);
+  if (!root) {
+    return sent;
+  }
+  double point = 0, buffer_ph = 0;
+  bool has_point = sensors_get_number(root, "point", &point);
+  bool has_ph = sensors_get_number(root, "buffer_ph", &buffer_ph);
+  cJSON_Delete(root);
+  if (!has_point || !has_ph) {
+    return send_api_error(req, "missing_field", has_point ? "buffer_ph" : "point",
+                          "400 Bad Request");
+  }
+  if (point != 1.0 && point != 2.0) {
+    return send_api_error(req, "value_out_of_range", "point", "400 Bad Request");
+  }
+  if (buffer_ph < 0.0 || buffer_ph > 14.0) {
+    return send_api_error(req, "value_out_of_range", "buffer_ph",
+                          "400 Bad Request");
+  }
+  return sensors_send_queue_result(
+      req, water_quality_request_calibrate((uint8_t)point, (float)buffer_ph),
+      "buffer_ph");
+}
+
+/* POST /api/water/calibrate/cancel */
+static esp_err_t handle_api_water_calibrate_cancel(httpd_req_t *req) {
+  esp_err_t sent = ESP_OK;
+  cJSON *root = sensors_begin_post(req, &sent);
+  if (!root) {
+    return sent;
+  }
+  cJSON_Delete(root);
+  return sensors_send_queue_result(req, water_quality_request_cancel(), "");
+}
+
+/* POST /api/water/offset {"ph_offset":+-2} or {"temp_offset":+-10} */
+static esp_err_t handle_api_water_offset(httpd_req_t *req) {
+  esp_err_t sent = ESP_OK;
+  cJSON *root = sensors_begin_post(req, &sent);
+  if (!root) {
+    return sent;
+  }
+  bool has_ph_key = cJSON_HasObjectItem(root, "ph_offset");
+  bool has_temp_key = cJSON_HasObjectItem(root, "temp_offset");
+  double value = 0;
+  bool is_ph = has_ph_key;
+  bool has_value = (has_ph_key != has_temp_key) &&
+                   sensors_get_number(root, is_ph ? "ph_offset" : "temp_offset", &value);
+  cJSON_Delete(root);
+  if (!has_value) {
+    return send_api_error(req, "missing_field", "ph_offset|temp_offset",
+                          "400 Bad Request");
+  }
+  if (is_ph) {
+    if (fabs(value) > 2.0) {
+      return send_api_error(req, "value_out_of_range", "ph_offset",
+                            "400 Bad Request");
+    }
+    return sensors_send_queue_result(
+        req, water_quality_request_ph_offset((float)value), "ph_offset");
+  }
+  if (fabs(value) > 10.0) {
+    return send_api_error(req, "value_out_of_range", "temp_offset",
+                          "400 Bad Request");
+  }
+  return sensors_send_queue_result(
+      req, water_quality_request_temp_offset((float)value), "temp_offset");
+}
+
 static esp_err_t handle_api_cooling_status(httpd_req_t *req) {
   if (!require_auth(req)) {
     return send_json(req, "{\"ok\":false,\"error\":\"unauthorized\"}",
@@ -5079,6 +5380,29 @@ static void web_server_telemetry_cb(const telemetry_event_t *event,
         (unsigned int)event->data.cooling.mode);
     break;
 
+  case TELEMETRY_EVT_POWER:
+    evt_name = "power";
+    snprintf(json_buf, sizeof(json_buf),
+             "{\"ch\":%u,\"valid\":%s,\"fault\":%s,\"v\":%.1f,\"a\":%.3f,\"w\":%.1f,"
+             "\"wh\":%.0f,\"hz\":%.1f,\"pf\":%.2f}",
+             (unsigned int)event->data.power.channel,
+             event->data.power.valid ? "true" : "false",
+             event->data.power.fault ? "true" : "false",
+             event->data.power.voltage_v, event->data.power.current_a,
+             event->data.power.power_w, event->data.power.energy_wh,
+             event->data.power.frequency_hz, event->data.power.pf);
+    break;
+
+  case TELEMETRY_EVT_WATER:
+    evt_name = "water";
+    snprintf(json_buf, sizeof(json_buf),
+             "{\"valid\":%s,\"fault\":%s,\"stable\":%s,\"ph\":%.2f,\"temp_c\":%.1f}",
+             event->data.water.valid ? "true" : "false",
+             event->data.water.fault ? "true" : "false",
+             event->data.water.stable ? "true" : "false", event->data.water.ph,
+             event->data.water.temperature_c);
+    break;
+
   case TELEMETRY_EVT_HEALTH:
     evt_name = "health";
     snprintf(json_buf, sizeof(json_buf),
@@ -5158,6 +5482,7 @@ static web_route_diag_t s_routes[] = {
     {.uri = "/status", .method = HTTP_GET, .handler = handle_get_status},
     {.uri = "/wifi", .method = HTTP_GET, .handler = handle_get_wifi},
     {.uri = "/hardware", .method = HTTP_GET, .handler = handle_get_hardware},
+    {.uri = "/sensors", .method = HTTP_GET, .handler = handle_get_sensors},
     {.uri = "/api/ota", .method = HTTP_POST, .handler = handle_api_ota},
     {.uri = "/style.css", .method = HTTP_GET, .handler = handle_style_css},
     {.uri = "/app.js", .method = HTTP_GET, .handler = handle_app_js},
@@ -5253,6 +5578,21 @@ static web_route_diag_t s_routes[] = {
     {.uri = "/api/cooling/mode",
      .method = HTTP_POST,
      .handler = handle_api_cooling_mode_post},
+    {.uri = "/api/sensors/status",
+     .method = HTTP_GET,
+     .handler = handle_api_sensors_status},
+    {.uri = "/api/power/reset-energy",
+     .method = HTTP_POST,
+     .handler = handle_api_power_reset_energy},
+    {.uri = "/api/water/calibrate",
+     .method = HTTP_POST,
+     .handler = handle_api_water_calibrate},
+    {.uri = "/api/water/calibrate/cancel",
+     .method = HTTP_POST,
+     .handler = handle_api_water_calibrate_cancel},
+    {.uri = "/api/water/offset",
+     .method = HTTP_POST,
+     .handler = handle_api_water_offset},
 
     {.uri = "/api/pump/control",
      .method = HTTP_POST,
