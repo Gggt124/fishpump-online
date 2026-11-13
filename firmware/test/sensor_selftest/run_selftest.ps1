@@ -9,6 +9,7 @@ $Log = Join-Path $AppDir "build\qemu.log"
 idf.py -C $AppDir build | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Error "self-test build failed"; exit 2 }
 
+Remove-Item $Log -ErrorAction SilentlyContinue
 $job = Start-Job -ScriptBlock {
     param($dir, $log)
     idf.py -C $dir qemu *> $log
