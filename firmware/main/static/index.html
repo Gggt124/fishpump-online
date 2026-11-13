@@ -127,6 +127,9 @@
                 <line x1="12" y1="2" x2="12" y2="22"></line>
                 <path d="M20 16l-4-4 4-4M4 8l4 4-4 4M16 4l-4 4-4-4M8 20l4-4 4 4"></path>
             </symbol>
+            <symbol id="icon-sensors" viewBox="0 0 24 24">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+            </symbol>
             <symbol id="icon-shield" viewBox="0 0 24 24">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
             </symbol>
@@ -272,6 +275,12 @@
                         stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" class="svg-icon">
                         <use href="#icon-cooling"></use>
                     </svg></span> <span lang="th">ระบบทำความเย็น</span>
+            </a>
+            <a href="/sensors" class="nav-item" id="nav-sensors">
+                <span class="nav-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor"
+                        stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" class="svg-icon">
+                        <use href="#icon-sensors"></use>
+                    </svg></span> <span lang="th">เซนเซอร์</span>
             </a>
             <a href="/status" class="nav-item" id="nav-status">
                 <span class="nav-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor"
@@ -1014,6 +1023,117 @@
 
         </section>
 
+        <section id="view-sensors" class="view hidden" aria-hidden="true">
+            <div class="page-header">
+                <div class="header-left">
+                    <h1>เซนเซอร์</h1>
+                </div>
+                <div class="header-actions">
+                    <button class="theme-toggle mobile-theme-toggle" onclick="cycleTheme()" aria-label="สลับธีม" role="switch" aria-checked="false">
+                        <span class="theme-toggle-thumb">
+                            <svg class="theme-toggle-icon">
+                                <use href="#icon-moon"></use>
+                            </svg>
+                        </span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="runtime-eyebrow mb-md" id="sensors-sync-state">กำลังดึงข้อมูลเซนเซอร์...</div>
+
+            <!-- Power: one card per pump (PZEM-004T) -->
+            <div class="sensors-grid">
+                <section class="section-card sensor-card" id="power-card-0" data-channel="0">
+                    <div class="section-heading-row">
+                        <h3>ไฟฟ้า ปั๊ม 1 <span class="mono text-xs text-muted">PZEM-004T</span></h3>
+                        <button class="btn btn-outline btn-sm" type="button" data-reset-energy="0">รีเซ็ต kWh</button>
+                    </div>
+                    <div class="alert-banner sensor-fault-banner hidden" data-role="fault">เซนเซอร์ไม่ตอบ ตรวจสายสัญญาณ</div>
+                    <div class="sensor-values" data-role="values">
+                        <div class="sensor-metric sensor-metric-main"><span class="text-muted">กระแส</span><strong class="mono" data-field="current">--</strong><span>A</span></div>
+                        <div class="sensor-metric sensor-metric-main"><span class="text-muted">กำลังไฟ</span><strong class="mono" data-field="power">--</strong><span>W</span></div>
+                        <div class="sensor-metric"><span class="text-muted">แรงดัน</span><strong class="mono" data-field="voltage">--</strong><span>V</span></div>
+                        <div class="sensor-metric"><span class="text-muted">ความถี่</span><strong class="mono" data-field="frequency">--</strong><span>Hz</span></div>
+                        <div class="sensor-metric"><span class="text-muted">PF</span><strong class="mono" data-field="pf">--</strong><span></span></div>
+                        <div class="sensor-metric"><span class="text-muted">พลังงานสะสม</span><strong class="mono" data-field="energy">--</strong><span>kWh</span></div>
+                    </div>
+                </section>
+                <section class="section-card sensor-card" id="power-card-1" data-channel="1">
+                    <div class="section-heading-row">
+                        <h3>ไฟฟ้า ปั๊ม 2 <span class="mono text-xs text-muted">PZEM-004T</span></h3>
+                        <button class="btn btn-outline btn-sm" type="button" data-reset-energy="1">รีเซ็ต kWh</button>
+                    </div>
+                    <div class="alert-banner sensor-fault-banner hidden" data-role="fault">เซนเซอร์ไม่ตอบ ตรวจสายสัญญาณ</div>
+                    <div class="sensor-values" data-role="values">
+                        <div class="sensor-metric sensor-metric-main"><span class="text-muted">กระแส</span><strong class="mono" data-field="current">--</strong><span>A</span></div>
+                        <div class="sensor-metric sensor-metric-main"><span class="text-muted">กำลังไฟ</span><strong class="mono" data-field="power">--</strong><span>W</span></div>
+                        <div class="sensor-metric"><span class="text-muted">แรงดัน</span><strong class="mono" data-field="voltage">--</strong><span>V</span></div>
+                        <div class="sensor-metric"><span class="text-muted">ความถี่</span><strong class="mono" data-field="frequency">--</strong><span>Hz</span></div>
+                        <div class="sensor-metric"><span class="text-muted">PF</span><strong class="mono" data-field="pf">--</strong><span></span></div>
+                        <div class="sensor-metric"><span class="text-muted">พลังงานสะสม</span><strong class="mono" data-field="energy">--</strong><span>kWh</span></div>
+                    </div>
+                </section>
+            </div>
+            <p class="sensor-notice text-sm hidden" id="power-notice"></p>
+
+            <!-- Water: SEN0708 pH -->
+            <div class="sensors-grid">
+                <section class="section-card sensor-card" id="water-card">
+                    <div class="section-heading-row">
+                        <h3>คุณภาพน้ำ <span class="mono text-xs text-muted">SEN0708</span></h3>
+                        <span class="sensor-stable-badge" id="water-stable-badge">--</span>
+                    </div>
+                    <div class="alert-banner sensor-fault-banner hidden" id="water-fault">เซนเซอร์ pH ไม่ตอบ ตรวจสาย RS485</div>
+                    <div class="sensor-values" id="water-values">
+                        <div class="sensor-metric sensor-metric-main"><span class="text-muted">pH</span><strong class="mono" id="water-ph">--</strong><span></span></div>
+                        <div class="sensor-metric sensor-metric-main"><span class="text-muted">อุณหภูมิน้ำ</span><strong class="mono" id="water-temp">--</strong><span>°C</span></div>
+                    </div>
+                </section>
+
+                <section class="section-card sensor-card" id="water-cal-card">
+                    <div class="section-heading-row">
+                        <h3>คาลิเบรต pH 2 จุด</h3>
+                    </div>
+                    <p class="text-sm text-muted">จุ่มหัววัดในน้ำยาบัฟเฟอร์ รอจนขึ้นว่า "ค่านิ่ง" แล้วกดบันทึก เริ่มที่จุดที่ 1 (กรด) ก่อนเสมอ</p>
+                    <div class="sensor-form-row">
+                        <label for="cal-p1-value">จุดที่ 1 (pH 3.0–5.0)</label>
+                        <input type="number" id="cal-p1-value" class="input-field mono" step="0.01" min="3" max="5" value="4.01">
+                        <button class="btn btn-primary btn-sm" type="button" id="cal-p1-btn">บันทึกจุดที่ 1</button>
+                    </div>
+                    <div class="sensor-form-row">
+                        <label for="cal-p2-value">จุดที่ 2 (pH 8.5–10.5)</label>
+                        <input type="number" id="cal-p2-value" class="input-field mono" step="0.01" min="8.5" max="10.5" value="9.18">
+                        <button class="btn btn-primary btn-sm" type="button" id="cal-p2-btn">บันทึกจุดที่ 2</button>
+                    </div>
+                    <div class="sensor-form-row">
+                        <span class="text-sm" id="cal-status">สถานะ: --</span>
+                        <button class="btn btn-outline btn-sm" type="button" id="cal-cancel-btn">ยกเลิก</button>
+                    </div>
+                    <p class="sensor-notice text-sm hidden" id="water-notice"></p>
+                </section>
+
+                <section class="section-card sensor-card" id="water-offset-card">
+                    <div class="section-heading-row">
+                        <h3>Offset <span class="mono text-xs text-muted">ชดเชยค่า</span></h3>
+                    </div>
+                    <p class="text-sm text-muted">ค่าปัจจุบัน: pH <strong class="mono" id="offset-ph-current">--</strong>, อุณหภูมิ <strong class="mono" id="offset-temp-current">--</strong> °C</p>
+                    <div class="sensor-form-row">
+                        <label for="offset-ph-input">pH offset (±2.00)</label>
+                        <input type="number" id="offset-ph-input" class="input-field mono" step="0.01" min="-2" max="2" value="0">
+                        <button class="btn btn-primary btn-sm" type="button" id="offset-ph-btn">บันทึก</button>
+                    </div>
+                    <div class="sensor-form-row">
+                        <label for="offset-temp-input">อุณหภูมิ offset (±10.0 °C)</label>
+                        <input type="number" id="offset-temp-input" class="input-field mono" step="0.1" min="-10" max="10" value="0">
+                        <button class="btn btn-primary btn-sm" type="button" id="offset-temp-btn">บันทึก</button>
+                    </div>
+                    <div class="sensor-form-row">
+                        <button class="btn btn-outline btn-sm" type="button" id="offset-reset-btn">รีเซ็ตเป็น 0</button>
+                    </div>
+                </section>
+            </div>
+        </section>
+
         <section id="view-status" class="view hidden" aria-hidden="true">
             <div class="page-header">
                 <div class="header-left">
@@ -1628,6 +1748,17 @@
                     <div id="locked-rgb-led-row" class="hidden"><span class="text-muted">RGB LED</span> <strong class="mono" id="locked-rgb-led">--</strong></div>
                 </div>
             </section>
+            <section class="section-card hardware-install" id="fixed-bus-info">
+                <div class="section-heading-row">
+                    <div>
+                        <h3>พินเซนเซอร์ UART <span class="mono text-xs text-muted">Fixed bus</span></h3>
+                        <p>ต่อสายตายตัวในเฟิร์มแวร์ เปลี่ยนจากหน้านี้ไม่ได้</p>
+                    </div>
+                </div>
+                <div class="fixed-bus-list mt-md" id="hw-fixed-bus-pins">
+                    <p class="text-muted text-sm">กำลังโหลด...</p>
+                </div>
+            </section>
 
 
             <section class="section-card hardware-map-panel">
@@ -2022,6 +2153,13 @@
     </nav>
 
     <div id="mobile-more-menu" class="mobile-more-menu hidden">
+        <a href="/sensors" class="mobile-menu-item" id="m-nav-sensors">
+            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"
+                stroke-linecap="round" stroke-linejoin="round">
+                <use href="#icon-sensors"></use>
+            </svg>
+            <span>เซนเซอร์</span>
+        </a>
         <a href="/hardware" class="mobile-menu-item" id="m-menu-hardware">
             <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"
                 stroke-linecap="round" stroke-linejoin="round">

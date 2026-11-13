@@ -15,6 +15,7 @@ function cleanupCurrentView() {
     if (typeof pumpPollTimer !== 'undefined' && pumpPollTimer) { clearInterval(pumpPollTimer); pumpPollTimer = null; }
     if (typeof pumpTickTimer !== 'undefined' && pumpTickTimer) { clearInterval(pumpTickTimer); pumpTickTimer = null; }
     if (typeof coolingPollTimer !== 'undefined' && coolingPollTimer) { clearInterval(coolingPollTimer); coolingPollTimer = null; }
+    if (typeof sensorsPollTimer !== 'undefined' && sensorsPollTimer) { clearInterval(sensorsPollTimer); sensorsPollTimer = null; }
     if (typeof sseEventSource !== 'undefined' && sseEventSource) { try { sseEventSource.close(); } catch (e) {} sseEventSource = null; }
     if (typeof sseReconnectTimer !== 'undefined' && sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
     if (typeof handlePumpVisibilityChange !== 'undefined') document.removeEventListener('visibilitychange', handlePumpVisibilityChange);
@@ -374,6 +375,9 @@ document.addEventListener('keydown', function (e) {
         } else if (window.location.pathname === '/cooling') {
             e.preventDefault();
             syncCoolingStatus(true);
+        } else if (window.location.pathname === '/sensors') {
+            e.preventDefault();
+            syncSensorsStatus(true);
         }
     }
 });
@@ -538,6 +542,7 @@ var coolingModalCurveType = 'linear';
 var coolingModalWired = false;
 var sseEventSource = null;
 var sseReconnectTimer = null;
+var sensorsPollTimer = null;
 var COOLING_STATUS_POLL_MS = 5000; /* A8 audit: align with pump poll interval */
 var COOLING_STALE_MS = 12000;
 var statusSummaryRequestInFlight = false;
@@ -2704,6 +2709,20 @@ function initTelemetrySSE() {
                 console.error('SSE cooling parse error', err);
             }
         });
+        sseEventSource.addEventListener('power', function (e) {
+            try {
+                handlePowerSseEvent(JSON.parse(e.data));
+            } catch (err) {
+                console.error('SSE power parse error', err);
+            }
+        });
+        sseEventSource.addEventListener('water', function (e) {
+            try {
+                handleWaterSseEvent(JSON.parse(e.data));
+            } catch (err) {
+                console.error('SSE water parse error', err);
+            }
+        });
         sseEventSource.onerror = function () {
             if (sseEventSource) {
                 sseEventSource.close();
@@ -2712,7 +2731,8 @@ function initTelemetrySSE() {
             if (!sseReconnectTimer) {
                 sseReconnectTimer = setTimeout(function () {
                     sseReconnectTimer = null;
-                    if (window.location.pathname === '/cooling') {
+                    var p = window.location.pathname;
+                    if (p === '/cooling' || p === '/sensors') {
                         initTelemetrySSE();
                     }
                 }, 5000);
@@ -2721,6 +2741,250 @@ function initTelemetrySSE() {
     } catch (e) {
         console.error('SSE init error', e);
     }
+}
+
+/* ======== Sensors Page (PZEM power + SEN0708 pH) ======== */
+
+var SENSORS_POLL_MS = 5000;
+var sensorsWired = false;
+var sensorsWater = { valid: false, fault: true, stable: false };
+
+var CAL_STATE_TEXT = {
+    idle: 'ยังไม่เริ่มคาลิเบรต',
+    waiting_point2: 'บันทึกจุดที่ 1 แล้ว — ย้ายหัววัดไปน้ำยาจุดที่ 2',
+    done: 'คาลิเบรตเสร็จ — ตรวจสอบในน้ำยา pH 6.86'
+};
+var CAL_ERROR_TEXT = {
+    out_of_range: 'ค่าน้ำยาอยู่นอกช่วงของจุดนี้',
+    not_stable: 'ค่ายังไม่นิ่ง',
+    wrong_step: 'ต้องทำจุดที่ 1 ก่อน',
+    sensor_fault: 'เซนเซอร์ไม่ตอบ',
+    sensor_write: 'เซนเซอร์ไม่ยืนยันการเขียน',
+    timeout: 'หมดเวลารอจุดที่ 2 (10 นาที)'
+};
+
+function fmtNum(v, digits) {
+    return (typeof v === 'number' && isFinite(v)) ? v.toFixed(digits) : '--';
+}
+
+function setSensorNotice(id, notice) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (!notice || !notice.text) {
+        el.classList.add('hidden');
+        el.textContent = '';
+        return;
+    }
+    el.textContent = notice.text;
+    el.classList.remove('hidden');
+    el.classList.toggle('notice-ok', !!notice.ok);
+    el.classList.toggle('notice-error', !notice.ok);
+}
+
+function renderPowerChannel(ch, d) {
+    var card = document.getElementById('power-card-' + ch);
+    if (!card || !d) return;
+    var fields = {
+        current: fmtNum(d.current, 3),
+        power: fmtNum(d.power, 1),
+        voltage: fmtNum(d.voltage, 1),
+        frequency: fmtNum(d.frequency, 1),
+        pf: fmtNum(d.pf, 2),
+        energy: fmtNum(typeof d.energy_wh === 'number' ? d.energy_wh / 1000 : null, 3)
+    };
+    for (var key in fields) {
+        var el = card.querySelector('[data-field="' + key + '"]');
+        if (el && el.textContent !== fields[key]) el.textContent = fields[key];
+    }
+    var values = card.querySelector('[data-role="values"]');
+    if (values) values.classList.toggle('stale', !d.valid);
+    var banner = card.querySelector('[data-role="fault"]');
+    if (banner) banner.classList.toggle('hidden', !d.fault);
+    var resetBtn = card.querySelector('[data-reset-energy]');
+    if (resetBtn) resetBtn.disabled = !!d.fault;
+}
+
+function handlePowerSseEvent(data) {
+    if (!data || (data.ch !== 0 && data.ch !== 1)) return;
+    renderPowerChannel(data.ch, {
+        valid: !!data.valid, fault: !!data.fault,
+        voltage: data.v, current: data.a, power: data.w,
+        energy_wh: data.wh, frequency: data.hz, pf: data.pf
+    });
+}
+
+function updateCalButtons() {
+    var ready = sensorsWater.valid && sensorsWater.stable && !sensorsWater.fault;
+    ['cal-p1-btn', 'cal-p2-btn'].forEach(function (id) {
+        var b = document.getElementById(id);
+        if (b) b.disabled = !ready;
+    });
+    ['offset-ph-btn', 'offset-temp-btn', 'offset-reset-btn'].forEach(function (id) {
+        var b = document.getElementById(id);
+        if (b) b.disabled = !!sensorsWater.fault;
+    });
+}
+
+function renderWater(d) {
+    if (!d) return;
+    sensorsWater = { valid: !!d.valid, fault: !!d.fault, stable: !!d.stable };
+    setText('water-ph', fmtNum(d.ph, 2));
+    setText('water-temp', fmtNum(d.temperature_c, 1));
+    var values = document.getElementById('water-values');
+    if (values) values.classList.toggle('stale', !d.valid);
+    var fault = document.getElementById('water-fault');
+    if (fault) fault.classList.toggle('hidden', !d.fault);
+    var badge = document.getElementById('water-stable-badge');
+    if (badge) {
+        badge.textContent = d.fault ? 'ไม่มีสัญญาณ' : (d.stable ? 'ค่านิ่ง' : 'กำลังนิ่ง...');
+        badge.classList.toggle('is-stable', !!d.stable && !d.fault);
+    }
+    updateCalButtons();
+}
+
+function handleWaterSseEvent(data) {
+    if (!data) return;
+    renderWater({ valid: data.valid, fault: data.fault, stable: data.stable,
+                  ph: data.ph, temperature_c: data.temp_c });
+}
+
+function renderSensorsStatus(json) {
+    if (!json || json.ok !== true) return;
+    (json.power || []).forEach(function (p) { renderPowerChannel(p.channel, p); });
+    setSensorNotice('power-notice', json.power_notice);
+
+    var w = json.water || {};
+    renderWater(w);
+    var off = w.offsets || {};
+    setText('offset-ph-current', off.known ? fmtNum(off.ph, 2) : '--');
+    setText('offset-temp-current', off.known ? fmtNum(off.temp, 1) : '--');
+    var cal = w.calibration || {};
+    var text = 'สถานะ: ' + (CAL_STATE_TEXT[cal.state] || cal.state || '--');
+    if (cal.error) text += ' — ' + (CAL_ERROR_TEXT[cal.error] || cal.error);
+    setText('cal-status', text);
+    setSensorNotice('water-notice', w.notice);
+}
+
+function syncSensorsStatus(force) {
+    if (window.location.pathname !== '/sensors') return;
+    apiGet('/api/sensors/status', function (err, data) {
+        var eyebrow = document.getElementById('sensors-sync-state');
+        if (err) {
+            if (eyebrow) { eyebrow.textContent = 'ดึงข้อมูลเซนเซอร์ไม่สำเร็จ: ' + err.message; eyebrow.className = 'runtime-eyebrow mb-md error'; }
+            return;
+        }
+        renderSensorsStatus(data);
+        if (eyebrow) { eyebrow.textContent = 'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH'); eyebrow.className = 'runtime-eyebrow mb-md good'; }
+    });
+}
+
+/* Commands run on the sensor task after the 202; re-read once it has had time. */
+function postSensorCommand(url, body, btn) {
+    setLoading(btn, true);
+    apiPost(url, body, function (err, data) {
+        setLoading(btn, false);
+        updateCalButtons();
+        if (err || !data || data.ok !== true) {
+            var code = data && data.error;
+            var msg = code === 'queue_full' ? 'เซนเซอร์ไม่ว่าง ลองใหม่อีกครั้ง'
+                : code === 'value_out_of_range' ? 'ค่าที่กรอกอยู่นอกช่วงที่อนุญาต'
+                : 'ส่งคำสั่งไม่สำเร็จ' + (err ? ': ' + err.message : '');
+            showToast(msg, 'error');
+            return;
+        }
+        showToast('ส่งคำสั่งแล้ว', 'success');
+        setTimeout(function () { syncSensorsStatus(true); }, 800);
+        setTimeout(function () { syncSensorsStatus(true); }, 2500);
+    });
+}
+
+function readNumberInput(id) {
+    var el = document.getElementById(id);
+    var v = el ? parseFloat(el.value) : NaN;
+    return isFinite(v) ? v : null;
+}
+
+function wireSensorsActions() {
+    if (sensorsWired) return;
+    sensorsWired = true;
+
+    document.querySelectorAll('[data-reset-energy]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var ch = parseInt(btn.getAttribute('data-reset-energy'), 10);
+            showConfirmModal('รีเซ็ตพลังงานสะสม', 'รีเซ็ต kWh ของปั๊ม ' + (ch + 1) + ' เป็น 0? ย้อนกลับไม่ได้', function () {
+                postSensorCommand('/api/power/reset-energy', { channel: ch }, btn);
+            }, true);
+        });
+    });
+
+    [1, 2].forEach(function (point) {
+        var btn = document.getElementById('cal-p' + point + '-btn');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+            var v = readNumberInput('cal-p' + point + '-value');
+            if (v === null) { showToast('กรอกค่า pH ของน้ำยาบัฟเฟอร์', 'error'); return; }
+            showConfirmModal('คาลิเบรต pH', 'เขียนค่าคาลิเบรตจุดที่ ' + point + ' = ' + v.toFixed(2) + ' ลงเซนเซอร์?', function () {
+                postSensorCommand('/api/water/calibrate', { point: point, buffer_ph: v }, btn);
+            });
+        });
+    });
+
+    var cancelBtn = document.getElementById('cal-cancel-btn');
+    if (cancelBtn) cancelBtn.addEventListener('click', function () {
+        postSensorCommand('/api/water/calibrate/cancel', {}, cancelBtn);
+    });
+
+    function wireOffset(btnId, inputId, key, digits, label) {
+        var btn = document.getElementById(btnId);
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+            var v = readNumberInput(inputId);
+            if (v === null) { showToast('กรอกค่า offset', 'error'); return; }
+            var body = {}; body[key] = v;
+            showConfirmModal('ตั้งค่า offset', 'เขียน ' + label + ' offset = ' + (v >= 0 ? '+' : '') + v.toFixed(digits) + ' ลงเซนเซอร์?', function () {
+                postSensorCommand('/api/water/offset', body, btn);
+            });
+        });
+    }
+    wireOffset('offset-ph-btn', 'offset-ph-input', 'ph_offset', 2, 'pH');
+    wireOffset('offset-temp-btn', 'offset-temp-input', 'temp_offset', 1, 'อุณหภูมิ');
+
+    var resetBtn = document.getElementById('offset-reset-btn');
+    if (resetBtn) resetBtn.addEventListener('click', function () {
+        showConfirmModal('รีเซ็ต offset', 'ตั้ง pH offset และ offset อุณหภูมิ เป็น 0?', function () {
+            postSensorCommand('/api/water/offset', { ph_offset: 0 }, resetBtn);
+            setTimeout(function () {
+                postSensorCommand('/api/water/offset', { temp_offset: 0 }, resetBtn);
+            }, 300);
+        });
+    });
+}
+
+function initSensorsPage() {
+    if (window.location.pathname !== '/sensors') return;
+    wireSensorsActions();
+    updateCalButtons();
+    syncSensorsStatus(true);
+    sensorsPollTimer = setInterval(function () { syncSensorsStatus(false); }, SENSORS_POLL_MS);
+    initTelemetrySSE();
+}
+
+function renderFixedBusPins(list) {
+    var box = document.getElementById('hw-fixed-bus-pins');
+    if (!box || !list) return;
+    box.textContent = '';
+    list.forEach(function (b) {
+        var row = document.createElement('div');
+        row.className = 'fixed-bus-row';
+        var name = document.createElement('span');
+        name.textContent = b.label;
+        var pins = document.createElement('strong');
+        pins.className = 'mono';
+        pins.textContent = 'UART' + b.uart + ' · TX GPIO ' + b.tx + ' · RX GPIO ' + b.rx + ' · ' + b.baud + ' bps';
+        row.appendChild(name);
+        row.appendChild(pins);
+        box.appendChild(row);
+    });
 }
 
 function handleCoolingSseEvent(data) {
@@ -3134,6 +3398,7 @@ function applyHardwareMap(data) {
     populateHardwareSelects(data.options || {}, effective || data.active || {});
     renderHardwareWiring(data.active, data.pending_valid ? data.pending : null);
     renderLockedPins(data.board, data.locked_pins);
+    renderFixedBusPins(data.fixed_bus_pins);
     applyBoardWiringFacts(data.board);
 
     setHardwareClean();
@@ -4548,6 +4813,7 @@ function handleRoute() {
     var viewId = 'view-login';
     if (path === '/dashboard') viewId = 'view-dashboard';
     else if (path === '/cooling') viewId = 'view-cooling';
+    else if (path === '/sensors') viewId = 'view-sensors';
     else if (path === '/status') viewId = 'view-status';
     else if (path === '/wifi') viewId = 'view-wifi';
     else if (path === '/hardware') viewId = 'view-hardware';
@@ -4604,6 +4870,8 @@ function handleRoute() {
         if (typeof initDashboard === 'function') initDashboard();
     } else if (path === '/cooling') {
         if (typeof initCoolingDashboard === 'function') initCoolingDashboard();
+    } else if (path === '/sensors') {
+        if (typeof initSensorsPage === 'function') initSensorsPage();
     } else if (path === '/status') {
         if (typeof initStatus === 'function') initStatus();
     } else if (path === '/wifi') {
