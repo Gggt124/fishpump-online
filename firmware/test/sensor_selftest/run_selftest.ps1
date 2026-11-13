@@ -3,6 +3,7 @@
     Build the sensor self-test app and run it in QEMU. Exit 0 on "SELFTEST PASS".
 #>
 $ErrorActionPreference = "Stop"
+Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue  # idf.py misbehaves when started from Git Bash
 $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Log = Join-Path $AppDir "build\qemu.log"
 
@@ -12,6 +13,7 @@ if ($LASTEXITCODE -ne 0) { Write-Error "self-test build failed"; exit 2 }
 Remove-Item $Log -ErrorAction SilentlyContinue
 $job = Start-Job -ScriptBlock {
     param($dir, $log)
+    Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue
     idf.py -C $dir qemu *> $log
 } -ArgumentList $AppDir, $Log
 
