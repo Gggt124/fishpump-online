@@ -3,6 +3,14 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "sdkconfig.h"
+
+/* PZEM pump 1 owns UART0 (GPIO4/42). A console left on UART0 by a stale
+ * sdkconfig would be silently rerouted into the meter, so refuse to build. */
+#if CONFIG_ESP_CONSOLE_UART && (CONFIG_ESP_CONSOLE_UART_NUM == 0)
+#error "Console is on UART0, which PZEM pump 1 uses: delete firmware/sdkconfig and rebuild (console must be USB-Serial-JTAG)"
+#endif
+
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"

@@ -119,6 +119,22 @@ def test_sse(ws):
                     f"worst-case {name} SSE packet fits {SSE_PACKET_BUF} B ({len(packet)} B)")
 
 
+def test_console_guard():
+    print("\n--- 4. UART0 console guard ---")
+    pm = (FIRMWARE_DIR / "components" / "power_monitor" / "power_monitor.c").read_text(encoding="utf-8")
+    m = re.search(r"#if\s+CONFIG_ESP_CONSOLE_UART\b[^\n]*CONFIG_ESP_CONSOLE_UART_NUM\s*==\s*0[^\n]*\n\s*#error", pm)
+    assert_test(m is not None and '#include "sdkconfig.h"' in pm,
+                "power_monitor.c refuses to build when the console is on UART0")
+
+
+def test_ui_poll_guard(js):
+    print("\n--- 5. Sensors poll guard ---")
+    m = re.search(r"function syncSensorsStatus\(force\) \{(.*?)\n\}", js, re.S)
+    body = m.group(1) if m else ""
+    assert_test("document.hidden && !force" in body, "syncSensorsStatus skips hidden tabs")
+    assert_test("sensorsStatusRequestInFlight" in body, "syncSensorsStatus has an in-flight guard")
+
+
 def test_ui():
     print("\n--- 3. Sensors page UI ---")
     html = (MAIN_DIR / "static" / "index.html").read_text(encoding="utf-8")
@@ -144,6 +160,8 @@ def main():
     test_routes_and_guards(ws)
     test_sse(ws)
     test_ui()
+    test_console_guard()
+    test_ui_poll_guard((MAIN_DIR / "static" / "app.js").read_text(encoding="utf-8"))
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

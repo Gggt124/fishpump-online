@@ -2865,9 +2865,25 @@ function renderSensorsStatus(json) {
     setSensorNotice('water-notice', w.notice);
 }
 
+var sensorsStatusRequestInFlight = false;
+var sensorsStatusResyncPending = false;
+
 function syncSensorsStatus(force) {
     if (window.location.pathname !== '/sensors') return;
+    if (document.hidden && !force) return;
+    /* One request at a time (the device has few sockets). A forced sync that
+     * arrives mid-request runs once the current one finishes. */
+    if (sensorsStatusRequestInFlight) {
+        if (force) sensorsStatusResyncPending = true;
+        return;
+    }
+    sensorsStatusRequestInFlight = true;
     apiGet('/api/sensors/status', function (err, data) {
+        sensorsStatusRequestInFlight = false;
+        if (sensorsStatusResyncPending) {
+            sensorsStatusResyncPending = false;
+            setTimeout(function () { syncSensorsStatus(true); }, 0);
+        }
         var eyebrow = document.getElementById('sensors-sync-state');
         if (err) {
             if (eyebrow) { eyebrow.textContent = 'ดึงข้อมูลเซนเซอร์ไม่สำเร็จ: ' + err.message; eyebrow.className = 'runtime-eyebrow mb-md error'; }
