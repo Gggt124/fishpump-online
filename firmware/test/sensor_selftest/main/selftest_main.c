@@ -6,6 +6,7 @@ int g_fail;
 void app_main(void)
 {
     test_sensor_health();
+    test_sen0708();
 
     if (g_fail == 0) {
         ESP_LOGI("selftest", "SELFTEST PASS (%d checks)", g_pass);

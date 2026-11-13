@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.16)
 set(EXTRA_COMPONENT_DIRS
     ../../components/sensor_health
-    # ../../components/sen0708
+    ../../components/sen0708
     # ../../components/telemetry_hub
 )
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

@@ -16,3 +16,4 @@ extern int g_fail;
     } while (0)
 
 void test_sensor_health(void);
+void test_sen0708(void);

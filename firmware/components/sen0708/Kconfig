@@ -1,0 +1,9 @@
+menu "SEN0708 driver"
+
+    config SEN0708_LOG_RAW_FRAMES
+        bool "Log raw Modbus TX/RX frames in hex"
+        default n
+        help
+            Useful for wiring bring-up: shows every request and reply.
+
+endmenu
