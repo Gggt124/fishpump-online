@@ -54,3 +54,8 @@ compile_commands.json
 # Scratch / Temporary
 scratch/*
 !scratch/.gitkeep
+
+# Sensor self-test app (QEMU)
+firmware/test/sensor_selftest/build/
+firmware/test/sensor_selftest/sdkconfig
+firmware/test/sensor_selftest/sdkconfig.old
