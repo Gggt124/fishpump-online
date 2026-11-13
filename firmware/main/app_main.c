@@ -17,6 +17,7 @@
 #include "hardware_map.h"
 #include "mdns.h"
 #include "nvs_store.h"
+#include "power_monitor.h"
 #include "pump_control.h"
 #include "relay_safe_init.h"
 #include "session.h"
@@ -1003,6 +1004,13 @@ void app_main(void) {
   } else {
     ESP_LOGE(TAG, "Cooling runtime init failed or safe-disabled; continuing "
                   "with Wi-Fi/web setup");
+  }
+
+  /* Sensor buses (fixed UARTs). Init never touches the sensors, so a missing
+   * or broken sensor cannot stall boot; failures only mark that sensor faulted. */
+  esp_err_t power_ret = power_monitor_init();
+  if (power_ret != ESP_OK) {
+    ESP_LOGE(TAG, "Power monitor init failed: %s", esp_err_to_name(power_ret));
   }
 
   pump_control_init_context_t pump_init_context = {

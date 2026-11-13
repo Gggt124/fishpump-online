@@ -54,6 +54,7 @@ idf_component_register(
         hardware_map
         nvs_flash
         nvs_store
+        power_monitor
         pump_control
         relay_safe_init
         session
