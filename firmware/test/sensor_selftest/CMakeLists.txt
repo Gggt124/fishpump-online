@@ -6,7 +6,7 @@ set(EXTRA_COMPONENT_DIRS
     ../../components/sensor_health
     ../../components/sen0708
     ../../components/pzem004t  # compile check only (no pure logic to test)
-    # ../../components/telemetry_hub
+    ../../components/telemetry_hub
 )
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 idf_build_set_property(MINIMAL_BUILD ON)

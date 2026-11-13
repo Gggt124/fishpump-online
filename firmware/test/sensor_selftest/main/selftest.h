@@ -17,3 +17,4 @@ extern int g_fail;
 
 void test_sensor_health(void);
 void test_sen0708(void);
+void test_telemetry(void);

@@ -12,8 +12,38 @@ typedef enum {
     TELEMETRY_EVT_PUMP,
     TELEMETRY_EVT_FLOAT,
     TELEMETRY_EVT_COOLING,
-    TELEMETRY_EVT_HEALTH
+    TELEMETRY_EVT_HEALTH,
+    TELEMETRY_EVT_POWER,
+    TELEMETRY_EVT_WATER
 } telemetry_event_type_t;
+
+#define TELEMETRY_POWER_CHANNELS 2
+
+/*
+ * Sensor readings follow one validity contract (sensor integration spec 5.1a):
+ *   valid = this poll's read succeeded
+ *   fault = 3+ consecutive failures or init failed (debounced "do not trust")
+ *   numeric fields hold the last good values (0 if never read)
+ */
+typedef struct {
+    uint8_t channel; /* 0 = pump 1, 1 = pump 2 */
+    bool valid;
+    bool fault;
+    float voltage_v;
+    float current_a;
+    float power_w;
+    float energy_wh;
+    float frequency_hz;
+    float pf;
+} telemetry_power_payload_t;
+
+typedef struct {
+    bool valid;
+    bool fault;
+    bool stable;
+    float ph;
+    float temperature_c;
+} telemetry_water_payload_t;
 
 typedef struct {
     uint8_t active_pump;
@@ -54,6 +84,8 @@ typedef struct {
         telemetry_float_payload_t float_state;
         telemetry_cooling_payload_t cooling;
         telemetry_health_payload_t health;
+        telemetry_power_payload_t power;
+        telemetry_water_payload_t water;
     } data;
 } telemetry_event_t;
 
@@ -62,10 +94,14 @@ typedef struct {
     telemetry_float_payload_t float_state;
     telemetry_cooling_payload_t cooling;
     telemetry_health_payload_t health;
+    telemetry_power_payload_t power[TELEMETRY_POWER_CHANNELS];
+    telemetry_water_payload_t water;
     bool has_pump;
     bool has_float;
     bool has_cooling;
     bool has_health;
+    bool has_power[TELEMETRY_POWER_CHANNELS];
+    bool has_water;
 } telemetry_snapshot_t;
 
 /** @note Subscriber callbacks MUST be non-blocking. */

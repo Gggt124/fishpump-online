@@ -7,6 +7,7 @@ void app_main(void)
 {
     test_sensor_health();
     test_sen0708();
+    test_telemetry();
 
     if (g_fail == 0) {
         ESP_LOGI("selftest", "SELFTEST PASS (%d checks)", g_pass);

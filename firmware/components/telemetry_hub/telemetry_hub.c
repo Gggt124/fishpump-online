@@ -107,6 +107,10 @@ esp_err_t telemetry_hub_publish(const telemetry_event_t *event) {
         ESP_LOGE(TAG, "Cannot publish: telemetry_hub not initialized");
         return ESP_ERR_INVALID_STATE;
     }
+    if (event->type == TELEMETRY_EVT_POWER &&
+        event->data.power.channel >= TELEMETRY_POWER_CHANNELS) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
     subscriber_entry_t subs_copy[MAX_SUBSCRIBERS];
     size_t count = 0;
@@ -129,6 +133,14 @@ esp_err_t telemetry_hub_publish(const telemetry_event_t *event) {
         case TELEMETRY_EVT_HEALTH:
             s_latest_snapshot.health = event->data.health;
             s_latest_snapshot.has_health = true;
+            break;
+        case TELEMETRY_EVT_POWER:
+            s_latest_snapshot.power[event->data.power.channel] = event->data.power;
+            s_latest_snapshot.has_power[event->data.power.channel] = true;
+            break;
+        case TELEMETRY_EVT_WATER:
+            s_latest_snapshot.water = event->data.water;
+            s_latest_snapshot.has_water = true;
             break;
         default:
             ESP_LOGW(TAG, "Unknown telemetry event type: %d", event->type);
