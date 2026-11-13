@@ -22,6 +22,7 @@
 #include "relay_safe_init.h"
 #include "session.h"
 #include "telemetry_hub.h"
+#include "water_quality.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "led_strip.h"
@@ -1011,6 +1012,10 @@ void app_main(void) {
   esp_err_t power_ret = power_monitor_init();
   if (power_ret != ESP_OK) {
     ESP_LOGE(TAG, "Power monitor init failed: %s", esp_err_to_name(power_ret));
+  }
+  esp_err_t water_ret = water_quality_init();
+  if (water_ret != ESP_OK) {
+    ESP_LOGE(TAG, "Water quality init failed: %s", esp_err_to_name(water_ret));
   }
 
   pump_control_init_context_t pump_init_context = {
