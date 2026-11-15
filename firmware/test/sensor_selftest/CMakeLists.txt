@@ -8,6 +8,7 @@ set(EXTRA_COMPONENT_DIRS
     ../../components/pzem004t  # compile check only (no pure logic to test)
     ../../components/telemetry_hub
     ../../components/contact_debounce
+    ../../components/signal_registry
 )
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 idf_build_set_property(MINIMAL_BUILD ON)
