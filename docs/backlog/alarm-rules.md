@@ -1,6 +1,7 @@
 # Backlog: ระบบแจ้งเตือน (Alarm Rules)
 
-> สถานะ: **ยังไม่เริ่ม** — เป็นฟีเจอร์ถัดไปหลังงานเซนเซอร์ PZEM + SEN0708
+> สถานะ: **ทำแล้ว (2026-11-15) รอทดสอบบนบอร์ด** — ดู spec `docs/superpowers/specs/2026-11-15-alarm-rules-and-uplink-design.md`, plan `docs/superpowers/plans/2026-11-15-alarm-rules-and-uplink.md`, คู่มือทดสอบ `docs/bench-test-alarms.md`, ผลการทำงาน `docs/superpowers/results/2026-11-15-alarm-rules-and-uplink-results.md`
+> (ข้อความด้านล่างเป็นโน้ตตั้งต้นเดิม ใช้ชื่อ input เก่า เช่น pump1/pump2 ซึ่งถูกเปลี่ยนเป็น pump/chiller แล้ว)
 > บันทึกเมื่อ: 2026-11-15
 > ขั้นต่อไป: เปิดรอบ brainstorming → เขียน spec (`docs/superpowers/specs/`) → plan → ลงมือ
 > เอกสารนี้เป็น "โน้ตตั้งต้น" ไม่ใช่ spec ที่อนุมัติแล้ว ค่าทุกตัวในนี้ยังเปลี่ยนได้
