@@ -144,9 +144,50 @@ def test_alarm_api():
     assert_test("case TELEMETRY_EVT_ALARM:" in cb and 'evt_name = "alarm"' in cb, "SSE alarm event emitted")
 
 
+ALARM_IDS = (
+    "view-alarms", "nav-alarms", "m-nav-alarms", "alarm-banner", "alarm-badge",
+    "alarm-active-list", "alarm-rule-list", "alarm-rule-count", "alarm-history-list",
+    "alarm-add-rule", "alarm-engine-stalled", "alarm-rule-dialog", "alarm-f-name",
+    "alarm-f-signal", "alarm-f-live", "alarm-f-condition", "alarm-f-threshold",
+    "alarm-f-lo", "alarm-f-hi", "alarm-f-stale", "alarm-f-hysteresis", "alarm-f-delay",
+    "alarm-f-severity", "alarm-f-latch", "alarm-f-gate-signal", "alarm-f-gate-when",
+    "alarm-f-save",
+)
+
+
+def test_alarm_ui():
+    print("\n--- Task 9: Alarms page, banner and badge ---")
+    html = read(MAIN_DIR / "static" / "index.html")
+    js = read(MAIN_DIR / "static" / "app.js")
+    for i in ALARM_IDS:
+        assert_test(f'id="{i}"' in html, f"index.html has id={i}")
+    m = re.search(r"function handleRoute\(\) \{(.*?)\n\}\n", js, re.S)
+    route = m.group(1) if m else ""
+    assert_test(route.count("path === '/alarms'") >= 2, "handleRoute handles /alarms in both places")
+    assert_test("addEventListener('alarm'" in js, "app.js registers the alarm SSE listener")
+    assert_test("ALARM_SUMMARY_POLL_MS = 10000" in js, "summary poll is 10 s")
+    assert_test("ALARM_VALUES_POLL_MS = 2000" in js, "values poll is 2 s")
+    assert_test("fishpump_alarm_seen" in js, "unseen marker stored in localStorage")
+    for fn in ("initAlarmsPage", "syncAlarmSummary", "syncAlarmStatus"):
+        assert_test(("function " + fn) in js, f"app.js defines {fn}")
+    m = re.search(r"sseReconnectTimer\s*=\s*setTimeout\(function \(\) \{(.*?)\}, 5000\)", js, re.S)
+    assert_test(m is not None and "'/alarms'" in m.group(1), "SSE reconnect also fires on /alarms")
+    sm = re.search(r"function syncAlarmSummary\([^)]*\) \{(.*?)\n\}\n", js, re.S)
+    body = sm.group(1) if sm else ""
+    assert_test("syncAlarmStatus(" in body, "syncAlarmSummary falls back to syncAlarmStatus (no free SSE slot)")
+    assert_test("document.hidden" in body, "syncAlarmSummary skips hidden tabs")
+    cu = re.search(r"function cleanupCurrentView\(\) \{(.*?)\n\}\n", js, re.S)
+    assert_test(cu is not None and "alarmSummaryTimer" not in cu.group(1),
+                "cleanupCurrentView does not stop the summary poll")
+    gz = MAIN_DIR / "static_compressed" / "index.html.gz"
+    content = gzip.open(gz, "rb").read().decode("utf-8", "replace") if gz.exists() else ""
+    assert_test("view-alarms" in content, "static_compressed/index.html.gz contains view-alarms")
+
+
 def main():
     test_flow_and_rename()
     test_alarm_api()
+    test_alarm_ui()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

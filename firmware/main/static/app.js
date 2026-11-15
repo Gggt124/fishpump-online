@@ -16,6 +16,8 @@ function cleanupCurrentView() {
     if (typeof pumpTickTimer !== 'undefined' && pumpTickTimer) { clearInterval(pumpTickTimer); pumpTickTimer = null; }
     if (typeof coolingPollTimer !== 'undefined' && coolingPollTimer) { clearInterval(coolingPollTimer); coolingPollTimer = null; }
     if (typeof sensorsPollTimer !== 'undefined' && sensorsPollTimer) { clearInterval(sensorsPollTimer); sensorsPollTimer = null; }
+    if (typeof alarmValuesTimer !== 'undefined' && alarmValuesTimer) { clearInterval(alarmValuesTimer); alarmValuesTimer = null; }
+    if (typeof closeAlarmDialog === 'function') closeAlarmDialog();
     if (typeof sseEventSource !== 'undefined' && sseEventSource) { try { sseEventSource.close(); } catch (e) {} sseEventSource = null; }
     if (typeof sseReconnectTimer !== 'undefined' && sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
     if (typeof handlePumpVisibilityChange !== 'undefined') document.removeEventListener('visibilitychange', handlePumpVisibilityChange);
@@ -60,6 +62,7 @@ function isUnauthorizedError(err) {
 function handleUnauthorized() {
     if (s_handlingUnauthorized) return;
     s_handlingUnauthorized = true;
+    stopAlarmSummaryPolling();
     cleanupCurrentView();
     pumpStatusRequestInFlight = false;
     statusSummaryRequestInFlight = false;
@@ -2723,6 +2726,13 @@ function initTelemetrySSE() {
                 console.error('SSE water parse error', err);
             }
         });
+        sseEventSource.addEventListener('alarm', function (e) {
+            try {
+                handleAlarmSseEvent(JSON.parse(e.data));
+            } catch (err) {
+                console.error('SSE alarm parse error', err);
+            }
+        });
         sseEventSource.addEventListener('flow', function (e) {
             try {
                 handleFlowSseEvent(JSON.parse(e.data));
@@ -2739,7 +2749,7 @@ function initTelemetrySSE() {
                 sseReconnectTimer = setTimeout(function () {
                     sseReconnectTimer = null;
                     var p = window.location.pathname;
-                    if (p === '/cooling' || p === '/sensors') {
+                    if (p === '/cooling' || p === '/sensors' || p === '/alarms') {
                         initTelemetrySSE();
                     }
                 }, 5000);
@@ -2860,6 +2870,12 @@ function renderFlow(on) {
     if (!el) return;
     el.textContent = on ? 'ไหล' : 'ไม่ไหล';
     el.classList.toggle('is-stable', !!on);
+}
+
+function handleAlarmSseEvent(data) {
+    if (!data) return;
+    syncAlarmSummary(true);
+    if (window.location.pathname === '/alarms') syncAlarmStatus(true);
 }
 
 function handleFlowSseEvent(data) {
@@ -4838,6 +4854,661 @@ function doChangePassword(e) {
     });
 }
 
+/* ======== Alarms ======== */
+
+var ALARM_SUMMARY_POLL_MS = 10000;
+var ALARM_VALUES_POLL_MS = 2000;
+var ALARM_SEEN_KEY = 'fishpump_alarm_seen';
+var ALARM_HISTORY_LEN = 32;
+
+var alarmSummaryTimer = null;
+var alarmSummaryInFlight = false;
+var alarmStatusInFlight = false;
+var alarmStatusResync = false;
+var alarmLastSummary = null;
+var alarmStatus = null;
+var alarmSignals = null;
+var alarmSignalMap = {};
+var alarmRules = [];
+var alarmRulesMax = 24;
+var alarmValuesTimer = null;
+var alarmValuesInFlight = false;
+var alarmEditing = null;
+var alarmSaving = false;
+var alarmWired = false;
+
+var ALARM_GROUP_TEXT = {
+    pump_power: 'ไฟฟ้าปั๊มน้ำ',
+    chiller_power: 'ไฟฟ้า Chiller',
+    water: 'คุณภาพน้ำ',
+    cooling: 'ระบบทำความเย็น',
+    pump: 'ปั๊ม / รีเลย์ / น้ำไหล',
+    float: 'ลูกลอย',
+    system: 'ระบบ'
+};
+var ALARM_COND_TEXT = {
+    above: 'มากกว่า',
+    below: 'น้อยกว่า',
+    outside: 'นอกช่วง',
+    inside: 'อยู่ในช่วง',
+    is_true: 'เป็นจริง (เปิด)',
+    is_false: 'เป็นเท็จ (ปิด)',
+    stale: 'ไม่มีข้อมูลใหม่'
+};
+var ALARM_SEV_TEXT = { info: 'ข้อมูล', warning: 'เตือน', critical: 'วิกฤต' };
+var ALARM_TYPE_TEXT = { raised: 'เกิด', cleared: 'หาย', acked: 'รับทราบ' };
+var ALARM_FIELD_INPUT = {
+    name: 'alarm-f-name', signal: 'alarm-f-signal', condition: 'alarm-f-condition',
+    threshold: 'alarm-f-threshold', lo: 'alarm-f-lo', hi: 'alarm-f-hi',
+    stale_sec: 'alarm-f-stale', hysteresis: 'alarm-f-hysteresis', delay_sec: 'alarm-f-delay',
+    severity: 'alarm-f-severity', gate: 'alarm-f-gate-signal'
+};
+
+function alarmReadSeen() {
+    try {
+        var raw = window.localStorage.getItem(ALARM_SEEN_KEY);
+        var v = raw ? JSON.parse(raw) : null;
+        if (v && typeof v.boot_id === 'number' && typeof v.seq === 'number') return v;
+    } catch (e) { }
+    return null;
+}
+
+function alarmWriteSeen(bootId, seq) {
+    try {
+        window.localStorage.setItem(ALARM_SEEN_KEY, JSON.stringify({ boot_id: bootId, seq: seq }));
+    } catch (e) { }
+}
+
+function alarmEl(id) { return document.getElementById(id); }
+
+function alarmClear(el) {
+    while (el && el.firstChild) el.removeChild(el.firstChild);
+}
+
+function alarmMake(tag, cls, text) {
+    var el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (text != null) el.textContent = text;
+    return el;
+}
+
+function alarmUnseenCount(sum) {
+    var seen = alarmReadSeen();
+    var n = (seen && seen.boot_id === sum.boot_id) ? sum.last_seq - seen.seq : sum.last_seq;
+    if (n < 0) n = sum.last_seq;
+    return Math.min(n, ALARM_HISTORY_LEN);
+}
+
+function renderAlarmSummary(sum) {
+    var s = sum.summary || {};
+    var active = s.active || 0;
+    var onPage = window.location.pathname === '/alarms';
+    if (onPage) alarmWriteSeen(sum.boot_id, sum.last_seq);
+
+    var banner = alarmEl('alarm-banner');
+    if (banner) {
+        var show = active > 0 && !onPage;
+        banner.classList.toggle('hidden', !show);
+        banner.classList.toggle('is-critical', (s.critical || 0) > 0);
+        if (show) {
+            var text = 'มีการแจ้งเตือน ' + active + ' รายการ';
+            if (s.critical > 0) text += ' (วิกฤต ' + s.critical + ')';
+            setText('alarm-banner-text', text);
+        }
+    }
+
+    var count = active + (onPage ? 0 : alarmUnseenCount(sum));
+    ['alarm-badge', 'm-alarm-badge'].forEach(function (id) {
+        var b = alarmEl(id);
+        if (!b) return;
+        b.textContent = count > 99 ? '99+' : String(count);
+        b.classList.toggle('hidden', count === 0);
+    });
+}
+
+function alarmStatusIsStale(sum) {
+    if (!alarmStatus) return true;
+    if (alarmStatus.boot_id !== sum.boot_id || alarmStatus.last_seq !== sum.last_seq) return true;
+    return JSON.stringify(alarmStatus.summary) !== JSON.stringify(sum.summary);
+}
+
+function syncAlarmSummary(force) {
+    if (!isAuthenticated()) return;
+    if (document.hidden && !force) return;
+    if (alarmSummaryInFlight) return;
+    alarmSummaryInFlight = true;
+    apiGet('/api/alarms/summary', function (err, data) {
+        alarmSummaryInFlight = false;
+        if (err || !data || data.ok !== true) return;
+        alarmLastSummary = data;
+        renderAlarmSummary(data);
+        /* No SSE slot may be free: the poll alone keeps the Alarms page current. */
+        if (window.location.pathname === '/alarms' && alarmStatusIsStale(data)) {
+            syncAlarmStatus(true);
+        }
+    });
+}
+
+function startAlarmSummaryPolling() {
+    if (alarmSummaryTimer) return;
+    syncAlarmSummary(true);
+    alarmSummaryTimer = setInterval(function () { syncAlarmSummary(false); }, ALARM_SUMMARY_POLL_MS);
+}
+
+function stopAlarmSummaryPolling() {
+    if (alarmSummaryTimer) { clearInterval(alarmSummaryTimer); alarmSummaryTimer = null; }
+}
+
+function alarmSignal(key) { return alarmSignalMap[key] || null; }
+
+function alarmFormatValue(key, v) {
+    var sig = alarmSignal(key);
+    if (v == null || typeof v === 'undefined') return '--';
+    if (sig && sig.kind === 'bool') return v ? 'เปิด' : 'ปิด';
+    if (typeof v !== 'number' || !isFinite(v)) return '--';
+    var out = v.toFixed(sig ? sig.decimals : 2);
+    if (sig && sig.unit) out += ' ' + sig.unit;
+    return out;
+}
+
+function alarmAgo(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000));
+    if (s < 60) return s + ' วินาทีที่แล้ว';
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + ' นาทีที่แล้ว';
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + ' ชั่วโมงที่แล้ว';
+    return Math.floor(h / 24) + ' วันที่แล้ว';
+}
+
+function alarmClock(status, uptimeMs) {
+    var d = new Date(Date.now() - (status.uptime_ms - uptimeMs));
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    var t = pad(d.getHours()) + ':' + pad(d.getMinutes());
+    if (d.toDateString() !== new Date().toDateString()) {
+        t = pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + ' ' + t;
+    }
+    return t;
+}
+
+function alarmSevChip(sev) {
+    return alarmMake('span', 'alarm-sev sev-' + sev, ALARM_SEV_TEXT[sev] || sev);
+}
+
+/* One-line Thai summary of a rule, e.g. "pH นอกช่วง 6.5–8.5 นาน 60 วิ". */
+function alarmDescribeRule(r) {
+    var sig = alarmSignal(r.signal);
+    var label = sig ? sig.label : r.signal;
+    var unit = sig && sig.unit ? ' ' + sig.unit : '';
+    var text;
+    switch (r.condition) {
+        case 'above': text = label + ' > ' + r.threshold + unit; break;
+        case 'below': text = label + ' < ' + r.threshold + unit; break;
+        case 'outside': text = label + ' นอกช่วง ' + r.lo + '–' + r.hi + unit; break;
+        case 'inside': text = label + ' อยู่ในช่วง ' + r.lo + '–' + r.hi + unit; break;
+        case 'is_true': text = label + ' = เปิด'; break;
+        case 'is_false': text = label + ' = ปิด'; break;
+        default: text = label + ' ไม่มีข้อมูลใหม่เกิน ' + r.stale_sec + ' วิ'; break;
+    }
+    if (r.delay_sec > 0) text += ' นาน ' + r.delay_sec + ' วิ';
+    if (r.gate) {
+        var g = alarmSignal(r.gate.signal);
+        text += ' · เฉพาะตอน ' + (g ? g.label : r.gate.signal) + (r.gate.when ? ' เปิด' : ' ปิด');
+    }
+    if (r.latch) text += ' · ค้างจนรับทราบ';
+    return text;
+}
+
+function renderAlarmStatus(st) {
+    var stalled = alarmEl('alarm-engine-stalled');
+    if (stalled) stalled.classList.toggle('hidden', !st.engine_stalled);
+
+    var list = alarmEl('alarm-active-list');
+    alarmClear(list);
+    var anyUnacked = false;
+    (st.active || []).forEach(function (a) {
+        var row = alarmMake('div', 'alarm-row sev-' + a.severity);
+        row.appendChild(alarmSevChip(a.severity));
+        var main = alarmMake('div', 'alarm-main');
+        main.appendChild(alarmMake('div', 'alarm-name', a.name));
+        var sub = alarmFormatValue(a.signal, a.value) + ' · ' + alarmAgo(st.uptime_ms - a.since_ms);
+        if (a.state === 'latched') sub += ' · ผ่านไปแล้ว รอรับทราบ';
+        else if (a.acked) sub += ' · รับทราบแล้ว';
+        main.appendChild(alarmMake('div', 'alarm-sub', sub));
+        row.appendChild(main);
+        if (a.state === 'latched' || !a.acked) {
+            anyUnacked = true;
+            var btn = alarmMake('button', 'btn btn-outline btn-sm', 'รับทราบ');
+            btn.type = 'button';
+            btn.addEventListener('click', function () { alarmAck({ id: a.rule_id }, btn); });
+            row.appendChild(btn);
+        }
+        list.appendChild(row);
+    });
+    if (!(st.active || []).length) {
+        list.appendChild(alarmMake('p', 'text-sm text-muted', 'ไม่มีการแจ้งเตือน'));
+    }
+    var ackAll = alarmEl('alarm-ack-all');
+    if (ackAll) ackAll.classList.toggle('hidden', !anyUnacked);
+
+    var hist = alarmEl('alarm-history-list');
+    alarmClear(hist);
+    (st.history || []).forEach(function (h) {
+        var row = alarmMake('div', 'alarm-row');
+        row.appendChild(alarmMake('span', 'mono text-sm', alarmClock(st, h.uptime_ms)));
+        row.appendChild(alarmMake('span', 'alarm-sev', ALARM_TYPE_TEXT[h.type] || h.type));
+        var main = alarmMake('div', 'alarm-main');
+        main.appendChild(alarmMake('div', 'alarm-name', h.name));
+        main.appendChild(alarmMake('div', 'alarm-sub', alarmFormatValue(h.signal, h.value)));
+        row.appendChild(main);
+        hist.appendChild(row);
+    });
+    if (!(st.history || []).length) {
+        hist.appendChild(alarmMake('p', 'text-sm text-muted', 'ยังไม่มีประวัติ'));
+    }
+}
+
+function syncAlarmStatus(force) {
+    if (window.location.pathname !== '/alarms') return;
+    if (alarmStatusInFlight) {
+        if (force) alarmStatusResync = true;
+        return;
+    }
+    alarmStatusInFlight = true;
+    apiGet('/api/alarms/status', function (err, data) {
+        alarmStatusInFlight = false;
+        if (alarmStatusResync) {
+            alarmStatusResync = false;
+            setTimeout(function () { syncAlarmStatus(true); }, 0);
+        }
+        if (window.location.pathname !== '/alarms') return;
+        var eyebrow = alarmEl('alarms-sync-state');
+        if (err || !data || data.ok !== true) {
+            if (eyebrow) { eyebrow.textContent = 'ดึงข้อมูลไม่สำเร็จ: ' + (err ? err.message : 'ข้อมูลไม่ถูกต้อง'); eyebrow.className = 'runtime-eyebrow mb-md error'; }
+            return;
+        }
+        alarmStatus = data;
+        renderAlarmStatus(data);
+        renderAlarmSummary(data);
+        if (eyebrow) { eyebrow.textContent = 'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH'); eyebrow.className = 'runtime-eyebrow mb-md good'; }
+    });
+}
+
+function alarmAck(body, btn) {
+    if (btn) setLoading(btn, true);
+    apiPost('/api/alarms/ack', body, function (err, data) {
+        if (btn) setLoading(btn, false);
+        if (err || !data || data.ok !== true) {
+            showToast('รับทราบไม่สำเร็จ' + (err ? ': ' + err.message : ''), 'error');
+        }
+        syncAlarmSummary(true);
+        syncAlarmStatus(true);
+    });
+}
+
+/* ---- Rules list ---- */
+
+function alarmLoadRules() {
+    apiGet('/api/alarms/rules', function (err, data) {
+        if (err || !data || data.ok !== true) {
+            alarmClear(alarmEl('alarm-rule-list'));
+            alarmEl('alarm-rule-list').appendChild(alarmMake('p', 'text-sm text-muted', 'โหลดกฎไม่สำเร็จ'));
+            return;
+        }
+        alarmRules = data.rules || [];
+        alarmRulesMax = data.max || 24;
+        renderAlarmRules(data.storage);
+    });
+}
+
+function renderAlarmRules(storage) {
+    setText('alarm-rule-count', alarmRules.length + '/' + alarmRulesMax);
+    var add = alarmEl('alarm-add-rule');
+    if (add) add.disabled = alarmRules.length >= alarmRulesMax;
+    var note = alarmEl('alarm-storage-note');
+    if (note) {
+        var msg = storage === 'invalid' ? 'ข้อมูลกฎที่บันทึกไว้ใช้ไม่ได้ ระบบใช้กฎตั้งต้นแทน' : '';
+        note.textContent = msg;
+        note.classList.toggle('hidden', !msg);
+    }
+    var list = alarmEl('alarm-rule-list');
+    alarmClear(list);
+    alarmRules.forEach(function (r) {
+        var row = alarmMake('div', 'alarm-row' + (r.enabled ? '' : ' is-off'));
+        var toggle = document.createElement('input');
+        toggle.type = 'checkbox';
+        toggle.checked = !!r.enabled;
+        toggle.setAttribute('aria-label', 'เปิดใช้งาน ' + r.name);
+        toggle.addEventListener('change', function () {
+            var copy = JSON.parse(JSON.stringify(r));
+            copy.enabled = toggle.checked;
+            toggle.disabled = true;
+            alarmSaveRule(copy, function (ok) {
+                toggle.disabled = false;
+                if (!ok) toggle.checked = !!r.enabled;
+            });
+        });
+        row.appendChild(toggle);
+        row.appendChild(alarmSevChip(r.severity));
+        var main = alarmMake('div', 'alarm-main');
+        main.appendChild(alarmMake('div', 'alarm-name', r.name));
+        main.appendChild(alarmMake('div', 'alarm-sub', alarmDescribeRule(r)));
+        row.appendChild(main);
+        var actions = alarmMake('div', 'alarm-actions');
+        var edit = alarmMake('button', 'btn btn-outline btn-sm', 'แก้');
+        edit.type = 'button';
+        edit.addEventListener('click', function () { openAlarmDialog(r); });
+        var del = alarmMake('button', 'btn btn-outline btn-sm', 'ลบ');
+        del.type = 'button';
+        del.addEventListener('click', function () {
+            showConfirmModal('ลบกฎแจ้งเตือน', 'ลบกฎ "' + r.name + '" ใช่หรือไม่?', function () {
+                apiPost('/api/alarms/rules/delete', { id: r.id }, function (err, data) {
+                    if (err || !data || data.ok !== true) {
+                        showToast('ลบไม่สำเร็จ' + (err ? ': ' + err.message : ''), 'error');
+                    }
+                    alarmLoadRules();
+                    syncAlarmSummary(true);
+                    syncAlarmStatus(true);
+                });
+            }, true);
+        });
+        actions.appendChild(edit);
+        actions.appendChild(del);
+        row.appendChild(actions);
+        list.appendChild(row);
+    });
+    if (!alarmRules.length) {
+        list.appendChild(alarmMake('p', 'text-sm text-muted', 'ยังไม่มีกฎ กด "เพิ่มกฎ" เพื่อเริ่ม'));
+    }
+}
+
+/* POSTs one whole rule (create without id, replace with id). cb(ok, data). */
+function alarmSaveRule(rule, cb) {
+    apiPost('/api/alarms/rules', rule, function (err, data) {
+        var ok = !err && data && data.ok === true;
+        if (!ok && !alarmEl('alarm-rule-dialog').open) {
+            showToast('บันทึกไม่สำเร็จ' + (err ? ': ' + err.message : (data && data.message ? ': ' + data.message : '')), 'error');
+        }
+        alarmLoadRules();
+        syncAlarmSummary(true);
+        syncAlarmStatus(true);
+        if (cb) cb(ok, data, err);
+    });
+}
+
+/* ---- Rule dialog ---- */
+
+function alarmFillSelect(sel, items, selected) {
+    alarmClear(sel);
+    items.forEach(function (it) {
+        var o = document.createElement('option');
+        o.value = it.value;
+        o.textContent = it.text;
+        sel.appendChild(o);
+    });
+    if (selected != null) sel.value = selected;
+}
+
+function alarmFillSignalSelects() {
+    var sig = alarmEl('alarm-f-signal');
+    var gate = alarmEl('alarm-f-gate-signal');
+    alarmClear(sig);
+    alarmClear(gate);
+    var none = document.createElement('option');
+    none.value = '';
+    none.textContent = '(ทุกเวลา)';
+    gate.appendChild(none);
+    var groups = {};
+    var order = [];
+    (alarmSignals || []).forEach(function (s) {
+        if (!groups[s.group]) { groups[s.group] = []; order.push(s.group); }
+        groups[s.group].push(s);
+    });
+    order.forEach(function (g) {
+        var og = document.createElement('optgroup');
+        og.label = ALARM_GROUP_TEXT[g] || g;
+        var og2 = document.createElement('optgroup');
+        og2.label = og.label;
+        groups[g].forEach(function (s) {
+            var o = document.createElement('option');
+            o.value = s.key;
+            o.textContent = s.label;
+            og.appendChild(o);
+            if (s.kind === 'bool') {
+                var o2 = document.createElement('option');
+                o2.value = s.key;
+                o2.textContent = s.label;
+                og2.appendChild(o2);
+            }
+        });
+        sig.appendChild(og);
+        if (og2.children.length) gate.appendChild(og2);
+    });
+}
+
+/* Conditions valid for the selected signal (kind and period). */
+function alarmUpdateConditions(selectedCond) {
+    var s = alarmSignal(alarmEl('alarm-f-signal').value);
+    var conds = [];
+    if (s) {
+        if (s.kind === 'bool') conds = ['is_true', 'is_false'];
+        else conds = ['above', 'below', 'outside', 'inside'];
+        if (s.period_sec > 0) conds.push('stale');
+    }
+    var sel = alarmEl('alarm-f-condition');
+    var prev = selectedCond || sel.value;
+    alarmFillSelect(sel, conds.map(function (c) { return { value: c, text: ALARM_COND_TEXT[c] }; }));
+    if (conds.indexOf(prev) >= 0) sel.value = prev;
+    alarmUpdateFields();
+}
+
+function alarmUpdateFields() {
+    var s = alarmSignal(alarmEl('alarm-f-signal').value);
+    var cond = alarmEl('alarm-f-condition').value;
+    var dlg = alarmEl('alarm-rule-dialog');
+    var unit = s && s.unit ? '(' + s.unit + ')' : '';
+    var show = {
+        threshold: cond === 'above' || cond === 'below',
+        range: cond === 'outside' || cond === 'inside',
+        stale: cond === 'stale',
+        hysteresis: cond === 'above' || cond === 'below' || cond === 'outside' || cond === 'inside'
+    };
+    Array.prototype.forEach.call(dlg.querySelectorAll('[data-for]'), function (el) {
+        el.classList.toggle('hidden', !show[el.getAttribute('data-for')]);
+    });
+    Array.prototype.forEach.call(dlg.querySelectorAll('[data-unit]'), function (el) { el.textContent = unit; });
+    var stale = alarmEl('alarm-f-stale');
+    if (s && cond === 'stale') stale.min = String(Math.max(5, 3 * s.period_sec));
+    alarmUpdateGateWhen();
+}
+
+function alarmUpdateGateWhen() {
+    alarmEl('alarm-f-gate-when').disabled = !alarmEl('alarm-f-gate-signal').value;
+}
+
+function alarmShowError(field, message) {
+    var id = ALARM_FIELD_INPUT[field];
+    var input = id ? alarmEl(id) : null;
+    if (input) { input.classList.add('field-error'); try { input.focus(); } catch (e) { } }
+    var box = alarmEl('alarm-f-error');
+    var names = { name: 'ชื่อกฎ', signal: 'ค่าที่ตรวจ', condition: 'เงื่อนไข', threshold: 'ค่าที่กำหนด', lo: 'ค่าต่ำสุด', hi: 'ค่าสูงสุด',
+        stale_sec: 'เวลาไม่มีข้อมูลใหม่', hysteresis: 'ช่วงกันสั่น', delay_sec: 'เวลาที่ต้องเกิน', severity: 'ระดับ', gate: 'เงื่อนไขเฉพาะตอน' };
+    box.textContent = message || ('ค่าในช่อง "' + (names[field] || field) + '" ไม่ถูกต้อง');
+    box.classList.remove('hidden');
+}
+
+function alarmClearErrors() {
+    var dlg = alarmEl('alarm-rule-dialog');
+    Array.prototype.forEach.call(dlg.querySelectorAll('.field-error'), function (el) { el.classList.remove('field-error'); });
+    alarmEl('alarm-f-error').classList.add('hidden');
+}
+
+function alarmNumber(id, field) {
+    var el = alarmEl(id);
+    var v = el.value.trim();
+    var n = v === '' ? NaN : Number(v);
+    if (!isFinite(n)) { alarmShowError(field); return null; }
+    return n;
+}
+
+/* Builds the rule JSON from the form; shows the field error and returns null on bad input. */
+function alarmCollectRule() {
+    alarmClearErrors();
+    var name = alarmEl('alarm-f-name').value.trim();
+    if (!name) { alarmShowError('name', 'กรุณาใส่ชื่อกฎ'); return null; }
+    var rule = {
+        name: name,
+        enabled: alarmEditing ? !!alarmEditing.enabled : true,
+        signal: alarmEl('alarm-f-signal').value,
+        condition: alarmEl('alarm-f-condition').value,
+        severity: alarmEl('alarm-f-severity').value,
+        latch: alarmEl('alarm-f-latch').checked
+    };
+    if (alarmEditing) rule.id = alarmEditing.id;
+    if (!rule.signal) { alarmShowError('signal'); return null; }
+    if (!rule.condition) { alarmShowError('condition'); return null; }
+    var n;
+    if (rule.condition === 'above' || rule.condition === 'below') {
+        if ((n = alarmNumber('alarm-f-threshold', 'threshold')) === null) return null;
+        rule.threshold = n;
+    } else if (rule.condition === 'outside' || rule.condition === 'inside') {
+        if ((n = alarmNumber('alarm-f-lo', 'lo')) === null) return null;
+        rule.lo = n;
+        if ((n = alarmNumber('alarm-f-hi', 'hi')) === null) return null;
+        rule.hi = n;
+        if (rule.lo >= rule.hi) { alarmShowError('hi', 'ค่าสูงสุดต้องมากกว่าค่าต่ำสุด'); return null; }
+    } else if (rule.condition === 'stale') {
+        if ((n = alarmNumber('alarm-f-stale', 'stale_sec')) === null) return null;
+        rule.stale_sec = n;
+    }
+    if (['above', 'below', 'outside', 'inside'].indexOf(rule.condition) >= 0) {
+        if ((n = alarmNumber('alarm-f-hysteresis', 'hysteresis')) === null) return null;
+        rule.hysteresis = n;
+    }
+    if ((n = alarmNumber('alarm-f-delay', 'delay_sec')) === null) return null;
+    rule.delay_sec = n;
+    var gateSig = alarmEl('alarm-f-gate-signal').value;
+    if (gateSig) rule.gate = { signal: gateSig, when: alarmEl('alarm-f-gate-when').value === 'true' };
+    return rule;
+}
+
+function alarmPollValues() {
+    if (alarmValuesInFlight || !alarmEl('alarm-rule-dialog').open) return;
+    alarmValuesInFlight = true;
+    apiGet('/api/alarms/values', function (err, data) {
+        alarmValuesInFlight = false;
+        if (err || !data || data.ok !== true || !alarmEl('alarm-rule-dialog').open) return;
+        var key = alarmEl('alarm-f-signal').value;
+        var v = data.values ? data.values[key] : null;
+        var text = v ? alarmFormatValue(key, v.v) : '--';
+        if (v && v.v != null && !v.trusted) text += ' (ยังไม่น่าเชื่อถือ)';
+        setText('alarm-f-live', text);
+    });
+}
+
+function openAlarmDialog(rule) {
+    if (!alarmSignals) {
+        showToast('ยังโหลดรายการสัญญาณไม่เสร็จ ลองใหม่อีกครั้ง', 'error');
+        return;
+    }
+    alarmEditing = rule || null;
+    alarmClearErrors();
+    setText('alarm-dialog-title', rule ? 'แก้ไขกฎแจ้งเตือน' : 'เพิ่มกฎแจ้งเตือน');
+    alarmEl('alarm-f-name').value = rule ? rule.name : '';
+    var firstSignal = alarmSignals.length ? alarmSignals[0].key : '';
+    alarmEl('alarm-f-signal').value = rule ? rule.signal : firstSignal;
+    alarmUpdateConditions(rule ? rule.condition : null);
+    alarmEl('alarm-f-threshold').value = rule && rule.threshold != null ? rule.threshold : '';
+    alarmEl('alarm-f-lo').value = rule && rule.lo != null ? rule.lo : '';
+    alarmEl('alarm-f-hi').value = rule && rule.hi != null ? rule.hi : '';
+    alarmEl('alarm-f-stale').value = rule && rule.stale_sec != null ? rule.stale_sec : '30';
+    alarmEl('alarm-f-hysteresis').value = rule && rule.hysteresis != null ? rule.hysteresis : '0';
+    alarmEl('alarm-f-delay').value = rule && rule.delay_sec != null ? rule.delay_sec : '0';
+    alarmEl('alarm-f-severity').value = rule ? rule.severity : 'warning';
+    alarmEl('alarm-f-latch').checked = !!(rule && rule.latch);
+    alarmEl('alarm-f-gate-signal').value = rule && rule.gate ? rule.gate.signal : '';
+    alarmEl('alarm-f-gate-when').value = rule && rule.gate && !rule.gate.when ? 'false' : 'true';
+    alarmUpdateGateWhen();
+    setText('alarm-f-live', '--');
+    setLoading('alarm-f-save', false);
+    alarmSaving = false;
+    var dlg = alarmEl('alarm-rule-dialog');
+    if (!dlg.open) dlg.showModal();
+    alarmPollValues();
+    if (alarmValuesTimer) clearInterval(alarmValuesTimer);
+    alarmValuesTimer = setInterval(alarmPollValues, ALARM_VALUES_POLL_MS);
+}
+
+function closeAlarmDialog() {
+    if (alarmValuesTimer) { clearInterval(alarmValuesTimer); alarmValuesTimer = null; }
+    var dlg = alarmEl('alarm-rule-dialog');
+    if (dlg && dlg.open) dlg.close();
+}
+
+function alarmSubmitDialog() {
+    if (alarmSaving) return;
+    var rule = alarmCollectRule();
+    if (!rule) return;
+    alarmSaving = true;
+    setLoading('alarm-f-save', true);
+    alarmSaveRule(rule, function (ok, data, err) {
+        alarmSaving = false;
+        setLoading('alarm-f-save', false);
+        if (ok) {
+            closeAlarmDialog();
+            showToast('บันทึกกฎแล้ว', 'success');
+            return;
+        }
+        if (err) { alarmShowError('', 'บันทึกไม่สำเร็จ: ' + err.message); return; }
+        var code = data && data.error;
+        var msg = data && data.message;
+        if (code === 'rules_full') alarmShowError('', 'มีกฎครบ ' + alarmRulesMax + ' ข้อแล้ว ลบกฎเก่าก่อน');
+        else if (code === 'not_found') alarmShowError('', 'ไม่พบกฎนี้ (อาจถูกลบไปแล้ว)');
+        else if (code === 'storage_failed') alarmShowError('', 'บันทึกลงหน่วยความจำไม่สำเร็จ');
+        else if (ALARM_FIELD_INPUT[msg]) alarmShowError(msg);
+        else alarmShowError('', 'บันทึกไม่สำเร็จ' + (msg ? ': ' + msg : ''));
+    });
+}
+
+function alarmWire() {
+    if (alarmWired) return;
+    alarmWired = true;
+    alarmEl('alarm-add-rule').addEventListener('click', function () { openAlarmDialog(null); });
+    alarmEl('alarm-ack-all').addEventListener('click', function () {
+        showConfirmModal('รับทราบทั้งหมด', 'รับทราบการแจ้งเตือนทั้งหมดที่กำลังเกิดอยู่?', function () {
+            alarmAck({ all: true }, null);
+        }, false);
+    });
+    alarmEl('alarm-f-signal').addEventListener('change', function () { alarmUpdateConditions(null); setText('alarm-f-live', '--'); alarmPollValues(); });
+    alarmEl('alarm-f-condition').addEventListener('change', alarmUpdateFields);
+    alarmEl('alarm-f-gate-signal').addEventListener('change', alarmUpdateGateWhen);
+    alarmEl('alarm-f-save').addEventListener('click', alarmSubmitDialog);
+    alarmEl('alarm-f-cancel').addEventListener('click', closeAlarmDialog);
+    alarmEl('alarm-rule-dialog').addEventListener('close', function () {
+        if (alarmValuesTimer) { clearInterval(alarmValuesTimer); alarmValuesTimer = null; }
+    });
+}
+
+function initAlarmsPage() {
+    if (window.location.pathname !== '/alarms') return;
+    alarmWire();
+    alarmStatus = null;
+    syncAlarmStatus(true);
+    alarmLoadRules();
+    if (!alarmSignals) {
+        apiGet('/api/alarms/signals', function (err, data) {
+            if (err || !data || data.ok !== true) return;
+            alarmSignals = data.signals || [];
+            alarmSignalMap = {};
+            alarmSignals.forEach(function (s) { alarmSignalMap[s.key] = s; });
+            alarmFillSignalSelects();
+            alarmLoadRules();
+            if (alarmStatus) renderAlarmStatus(alarmStatus);
+        });
+    }
+    initTelemetrySSE();
+}
+
 /* ======== SPA Routing ======== */
 
 function navigateTo(path) {
@@ -4869,6 +5540,7 @@ function handleRoute() {
     if (path === '/dashboard') viewId = 'view-dashboard';
     else if (path === '/cooling') viewId = 'view-cooling';
     else if (path === '/sensors') viewId = 'view-sensors';
+    else if (path === '/alarms') viewId = 'view-alarms';
     else if (path === '/status') viewId = 'view-status';
     else if (path === '/wifi') viewId = 'view-wifi';
     else if (path === '/hardware') viewId = 'view-hardware';
@@ -4919,6 +5591,14 @@ function handleRoute() {
 
     cleanupCurrentView();
 
+    /* The alarm summary poll runs on every logged-in view and is not stopped by cleanupCurrentView(). */
+    if (path === '/login' || !isAuthenticated()) {
+        stopAlarmSummaryPolling();
+    } else {
+        startAlarmSummaryPolling();
+        if (alarmLastSummary) renderAlarmSummary(alarmLastSummary);
+    }
+
     if (path === '/login') {
         if (typeof initLogin === 'function') initLogin();
     } else if (path === '/dashboard') {
@@ -4927,6 +5607,8 @@ function handleRoute() {
         if (typeof initCoolingDashboard === 'function') initCoolingDashboard();
     } else if (path === '/sensors') {
         if (typeof initSensorsPage === 'function') initSensorsPage();
+    } else if (path === '/alarms') {
+        if (typeof initAlarmsPage === 'function') initAlarmsPage();
     } else if (path === '/status') {
         if (typeof initStatus === 'function') initStatus();
     } else if (path === '/wifi') {

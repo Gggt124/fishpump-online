@@ -282,6 +282,13 @@
                         <use href="#icon-sensors"></use>
                     </svg></span> <span lang="th">เซนเซอร์</span>
             </a>
+            <a href="/alarms" class="nav-item" id="nav-alarms">
+                <span class="nav-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor"
+                        stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" class="svg-icon">
+                        <use href="#icon-alert-triangle"></use>
+                    </svg></span> <span lang="th">แจ้งเตือน</span>
+                <span class="alarm-badge hidden" id="alarm-badge">0</span>
+            </a>
             <a href="/status" class="nav-item" id="nav-status">
                 <span class="nav-icon"><svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor"
                         stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" class="svg-icon">
@@ -328,6 +335,11 @@
 
     <!-- Main Content -->
     <main id="app-content" class="main-content" aria-label="Application content">
+        <a href="/alarms" id="alarm-banner" class="alarm-banner hidden" role="alert">
+            <svg class="label-icon"><use href="#icon-alert-triangle"></use></svg>
+            <span id="alarm-banner-text"></span>
+            <span class="alarm-banner-link">ดูรายละเอียด</span>
+        </a>
         <div id="staging-banner" class="alert-banner hidden">
             <span><svg class="label-icon"><use href="#icon-alert-triangle"></use></svg> <strong>กำลังทดสอบการตั้งค่าใหม่:</strong> ระบบจะกู้คืนการตั้งค่าเดิมโดยอัตโนมัติใน 3 นาที
                 หากคุณไม่ยืนยันว่าการทำงานปกติ</span>
@@ -1143,6 +1155,133 @@
                     </div>
                 </section>
             </div>
+        </section>
+
+        <section id="view-alarms" class="view hidden" aria-hidden="true">
+            <div class="page-header">
+                <div class="header-left">
+                    <h1>แจ้งเตือน</h1>
+                </div>
+                <div class="header-actions">
+                    <button class="theme-toggle mobile-theme-toggle" onclick="cycleTheme()" aria-label="สลับธีม" role="switch" aria-checked="false">
+                        <span class="theme-toggle-thumb">
+                            <svg class="theme-toggle-icon">
+                                <use href="#icon-moon"></use>
+                            </svg>
+                        </span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="runtime-eyebrow mb-md" id="alarms-sync-state">กำลังดึงข้อมูลการแจ้งเตือน...</div>
+            <div class="alert-banner alarm-stalled-banner hidden" id="alarm-engine-stalled">ระบบตรวจจับการแจ้งเตือนหยุดทำงาน การแจ้งเตือนอาจไม่เป็นปัจจุบัน</div>
+
+            <section class="section-card" id="alarm-active-card">
+                <div class="section-heading-row">
+                    <h3>กำลังแจ้งเตือน</h3>
+                    <button class="btn btn-outline btn-sm hidden" type="button" id="alarm-ack-all">รับทราบทั้งหมด</button>
+                </div>
+                <div class="alarm-list" id="alarm-active-list" aria-live="polite">
+                    <p class="text-sm text-muted">ไม่มีการแจ้งเตือน</p>
+                </div>
+            </section>
+
+            <section class="section-card" id="alarm-rules-card">
+                <div class="section-heading-row">
+                    <h3>กฎแจ้งเตือน (<span id="alarm-rule-count">--</span>)</h3>
+                    <button class="btn btn-primary btn-sm" type="button" id="alarm-add-rule">+ เพิ่มกฎ</button>
+                </div>
+                <p class="sensor-notice notice-error text-sm hidden" id="alarm-storage-note"></p>
+                <div class="alarm-list" id="alarm-rule-list">
+                    <p class="text-sm text-muted">กำลังโหลด...</p>
+                </div>
+            </section>
+
+            <section class="section-card" id="alarm-history-card">
+                <div class="section-heading-row">
+                    <h3>ประวัติล่าสุด <span class="text-xs text-muted">(หายเมื่อรีบูต)</span></h3>
+                </div>
+                <div class="alarm-list" id="alarm-history-list">
+                    <p class="text-sm text-muted">ยังไม่มีประวัติ</p>
+                </div>
+            </section>
+
+            <dialog id="alarm-rule-dialog" class="modal-dialog">
+                <div class="modal-card modal-card-wide alarm-dialog-card">
+                    <h3 class="modal-title" id="alarm-dialog-title">กฎแจ้งเตือน</h3>
+
+                    <div class="form-group">
+                        <label for="alarm-f-name">ชื่อกฎ</label>
+                        <input type="text" id="alarm-f-name" class="input-field" maxlength="96" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="alarm-f-signal">ค่าที่ตรวจ</label>
+                        <select id="alarm-f-signal" class="input-field"></select>
+                        <div class="alarm-live text-sm text-muted">ค่าตอนนี้: <strong class="mono" id="alarm-f-live">--</strong></div>
+                    </div>
+                    <div class="form-group">
+                        <label for="alarm-f-condition">เงื่อนไข</label>
+                        <select id="alarm-f-condition" class="input-field"></select>
+                    </div>
+                    <div class="alarm-field-row" data-for="threshold">
+                        <div class="form-group">
+                            <label for="alarm-f-threshold">ค่าที่กำหนด <span data-unit></span></label>
+                            <input type="number" id="alarm-f-threshold" class="input-field mono" step="any">
+                        </div>
+                    </div>
+                    <div class="alarm-field-row" data-for="range">
+                        <div class="form-group">
+                            <label for="alarm-f-lo">ต่ำสุด <span data-unit></span></label>
+                            <input type="number" id="alarm-f-lo" class="input-field mono" step="any">
+                        </div>
+                        <div class="form-group">
+                            <label for="alarm-f-hi">สูงสุด <span data-unit></span></label>
+                            <input type="number" id="alarm-f-hi" class="input-field mono" step="any">
+                        </div>
+                    </div>
+                    <div class="alarm-field-row" data-for="stale">
+                        <div class="form-group">
+                            <label for="alarm-f-stale">ไม่มีข้อมูลใหม่นานเกิน (วินาที)</label>
+                            <input type="number" id="alarm-f-stale" class="input-field mono" step="1" min="5" max="3600">
+                        </div>
+                    </div>
+                    <div class="alarm-field-row">
+                        <div class="form-group" data-for="hysteresis">
+                            <label for="alarm-f-hysteresis">ช่วงกันสั่น <span data-unit></span></label>
+                            <input type="number" id="alarm-f-hysteresis" class="input-field mono" step="any" min="0" value="0">
+                        </div>
+                        <div class="form-group">
+                            <label for="alarm-f-delay">ต้องเกินนาน (วินาที)</label>
+                            <input type="number" id="alarm-f-delay" class="input-field mono" step="1" min="0" max="3600" value="0">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="alarm-f-severity">ระดับ</label>
+                        <select id="alarm-f-severity" class="input-field">
+                            <option value="info">ข้อมูล</option>
+                            <option value="warning" selected>เตือน</option>
+                            <option value="critical">วิกฤต</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="alarm-f-gate-signal">เฉพาะตอน</label>
+                        <div class="alarm-field-row">
+                            <select id="alarm-f-gate-signal" class="input-field"></select>
+                            <select id="alarm-f-gate-when" class="input-field">
+                                <option value="true">เปิด</option>
+                                <option value="false">ปิด</option>
+                            </select>
+                        </div>
+                    </div>
+                    <label class="alarm-check"><input type="checkbox" id="alarm-f-latch"> ค้างจนกดรับทราบ</label>
+
+                    <p class="sensor-notice notice-error text-sm hidden" id="alarm-f-error" role="alert"></p>
+                    <div class="modal-actions">
+                        <button class="btn btn-outline" type="button" id="alarm-f-cancel">ยกเลิก</button>
+                        <button class="btn btn-primary" type="button" id="alarm-f-save">บันทึก</button>
+                    </div>
+                </div>
+            </dialog>
         </section>
 
         <section id="view-status" class="view hidden" aria-hidden="true">
@@ -2174,6 +2313,14 @@
                 <use href="#icon-sensors"></use>
             </svg>
             <span>เซนเซอร์</span>
+        </a>
+        <a href="/alarms" class="mobile-menu-item" id="m-nav-alarms">
+            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"
+                stroke-linecap="round" stroke-linejoin="round">
+                <use href="#icon-alert-triangle"></use>
+            </svg>
+            <span>แจ้งเตือน</span>
+            <span class="alarm-badge hidden" id="m-alarm-badge">0</span>
         </a>
         <a href="/hardware" class="mobile-menu-item" id="m-menu-hardware">
             <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none"
