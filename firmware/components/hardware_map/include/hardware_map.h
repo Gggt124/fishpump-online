@@ -210,6 +210,19 @@ typedef struct {
  *  HARDWARE_BUS_* macros). `count` may be NULL. */
 const hardware_bus_pin_t *hardware_map_fixed_bus_pins(size_t *count);
 
+/* Fixed single-pin inputs (not user-selectable, outside the GPIO allowlist). */
+#define HARDWARE_FLOW_SWITCH_GPIO GPIO_NUM_9
+
+typedef struct {
+  gpio_num_t gpio;
+  const char *id;
+  const char *label;
+  const char *wiring;
+} hardware_fixed_input_t;
+
+/** Fixed input table. `count` may be NULL. */
+const hardware_fixed_input_t *hardware_map_fixed_inputs(size_t *count);
+
 #ifdef __cplusplus
 }
 #endif

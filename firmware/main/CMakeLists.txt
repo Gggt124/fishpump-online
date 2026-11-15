@@ -51,6 +51,7 @@ idf_component_register(
         app_config
         cooling_control
         dns_server
+        flow_switch
         hardware_map
         nvs_flash
         nvs_store

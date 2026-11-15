@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "selftest_main.c" "test_sensor_health.c" "test_sen0708.c" "test_telemetry.c"
+    SRCS "selftest_main.c" "test_sensor_health.c" "test_sen0708.c" "test_telemetry.c" "test_contact_debounce.c"
     INCLUDE_DIRS "."
-    REQUIRES sensor_health sen0708 pzem004t telemetry_hub log
+    REQUIRES sensor_health sen0708 pzem004t telemetry_hub contact_debounce log
 )

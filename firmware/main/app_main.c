@@ -23,6 +23,7 @@
 #include "session.h"
 #include "telemetry_hub.h"
 #include "water_quality.h"
+#include "flow_switch.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "led_strip.h"
@@ -769,6 +770,7 @@ void app_main(void) {
   esp_log_level_set("web_server", ESP_LOG_INFO);
   esp_log_level_set("wifi_mgr", ESP_LOG_INFO);
   esp_log_level_set("telemetry_hub", ESP_LOG_INFO);
+  esp_log_level_set("flow_switch", ESP_LOG_INFO);
   esp_log_level_set("dns_server",
                     ESP_LOG_WARN); /* DNS very chatty — WARN only */
   esp_log_level_set("session",
@@ -1016,6 +1018,10 @@ void app_main(void) {
   esp_err_t water_ret = water_quality_init();
   if (water_ret != ESP_OK) {
     ESP_LOGE(TAG, "Water quality init failed: %s", esp_err_to_name(water_ret));
+  }
+  esp_err_t flow_ret = flow_switch_init();
+  if (flow_ret != ESP_OK) {
+    ESP_LOGE(TAG, "Flow switch init failed: %s", esp_err_to_name(flow_ret));
   }
 
   pump_control_init_context_t pump_init_context = {

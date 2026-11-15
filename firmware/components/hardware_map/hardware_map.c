@@ -23,7 +23,7 @@ _Static_assert(HARDWARE_ROLE_COOLING_RELAY == HARDWARE_ROLE_COOLING_PWM, "Role a
  *   (see hardware_map_fixed_bus_pins)
  * - GPIO 40, 41: fixed sensor UART1 TX/RX, PZEM-004T pump 2
  * - GPIO 21, 14: fixed sensor UART2 TX/RX, RS485 SEN0708 pH
- * - GPIO 9: unassigned (archived peripheral wiring)
+ * - GPIO 9: fixed flow-switch input (see hardware_map_fixed_inputs)
  * - GPIO 10, 11, 12, 13: Native SPI2 (MAX31865 PT100 RTD)
  * - GPIO 19-20: native USB D-/D+ (console runs on USB-Serial-JTAG)
  * - GPIO 38, 39: external recovery button / status LED
@@ -343,6 +343,18 @@ const hardware_bus_pin_t *hardware_map_fixed_bus_pins(size_t *count) {
     *count = HARDWARE_BUS_COUNT;
   }
   return s_fixed_bus_pins;
+}
+
+static const hardware_fixed_input_t s_fixed_inputs[] = {
+    {HARDWARE_FLOW_SWITCH_GPIO, "flow_switch", "Flow switch (น้ำไหล)",
+     "GPIO9 → สวิตช์ (NO) → GND"},
+};
+
+const hardware_fixed_input_t *hardware_map_fixed_inputs(size_t *count) {
+  if (count) {
+    *count = ARRAY_SIZE(s_fixed_inputs);
+  }
+  return s_fixed_inputs;
 }
 
 bool hardware_map_pin_is_reserved(hardware_pin_t pin) {
