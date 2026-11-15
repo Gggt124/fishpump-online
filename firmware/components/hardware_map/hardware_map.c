@@ -19,9 +19,9 @@ _Static_assert(HARDWARE_ROLE_COOLING_RELAY == HARDWARE_ROLE_COOLING_PWM, "Role a
  *
  * ESP32-S3 deliberately excludes:
  * - GPIO 0, 3, 45, 46: strapping pins
- * - GPIO 4, 42: fixed sensor UART0 TX/RX, PZEM-004T pump 1
+ * - GPIO 4, 42: fixed sensor UART0 TX/RX, PZEM-004T on the water pump
  *   (see hardware_map_fixed_bus_pins)
- * - GPIO 40, 41: fixed sensor UART1 TX/RX, PZEM-004T pump 2
+ * - GPIO 40, 41: fixed sensor UART1 TX/RX, PZEM-004T on the chiller
  * - GPIO 21, 14: fixed sensor UART2 TX/RX, RS485 SEN0708 pH
  * - GPIO 9: fixed flow-switch input (see hardware_map_fixed_inputs)
  * - GPIO 10, 11, 12, 13: Native SPI2 (MAX31865 PT100 RTD)
@@ -330,10 +330,10 @@ hardware_map_pin_descriptor(hardware_pin_t pin) {
 }
 
 static const hardware_bus_pin_t s_fixed_bus_pins[HARDWARE_BUS_COUNT] = {
-    [HARDWARE_BUS_PZEM_PUMP1] = {0, GPIO_NUM_4, GPIO_NUM_42, 9600, 0x01,
-                                 "pzem_pump1", "PZEM-004T ปั๊ม 1"},
-    [HARDWARE_BUS_PZEM_PUMP2] = {1, GPIO_NUM_40, GPIO_NUM_41, 9600, 0x01,
-                                 "pzem_pump2", "PZEM-004T ปั๊ม 2"},
+    [HARDWARE_BUS_PZEM_PUMP] = {0, GPIO_NUM_4, GPIO_NUM_42, 9600, 0x01,
+                                "pzem_pump", "PZEM-004T ปั๊มน้ำ"},
+    [HARDWARE_BUS_PZEM_CHILLER] = {1, GPIO_NUM_40, GPIO_NUM_41, 9600, 0x01,
+                                   "pzem_chiller", "PZEM-004T Chiller"},
     [HARDWARE_BUS_RS485_PH] = {2, GPIO_NUM_21, GPIO_NUM_14, 4800, 0x01,
                                "rs485_ph", "RS485 pH (SEN0708)"},
 };

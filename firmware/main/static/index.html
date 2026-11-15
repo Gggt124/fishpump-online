@@ -1041,11 +1041,11 @@
 
             <div class="runtime-eyebrow mb-md" id="sensors-sync-state">กำลังดึงข้อมูลเซนเซอร์...</div>
 
-            <!-- Power: one card per pump (PZEM-004T) -->
+            <!-- Power: water pump (ch 0) and chiller (ch 1), one PZEM-004T each -->
             <div class="sensors-grid">
                 <section class="section-card sensor-card" id="power-card-0" data-channel="0">
                     <div class="section-heading-row">
-                        <h3>ไฟฟ้า ปั๊ม 1 <span class="mono text-xs text-muted">PZEM-004T</span></h3>
+                        <h3>ไฟฟ้า ปั๊มน้ำ <span class="mono text-xs text-muted">PZEM-004T</span></h3>
                         <button class="btn btn-outline btn-sm" type="button" data-reset-energy="0">รีเซ็ต kWh</button>
                     </div>
                     <div class="alert-banner sensor-fault-banner hidden" data-role="fault">เซนเซอร์ไม่ตอบ ตรวจสายสัญญาณ</div>
@@ -1060,7 +1060,7 @@
                 </section>
                 <section class="section-card sensor-card" id="power-card-1" data-channel="1">
                     <div class="section-heading-row">
-                        <h3>ไฟฟ้า ปั๊ม 2 <span class="mono text-xs text-muted">PZEM-004T</span></h3>
+                        <h3>ไฟฟ้า Chiller <span class="mono text-xs text-muted">PZEM-004T</span></h3>
                         <button class="btn btn-outline btn-sm" type="button" data-reset-energy="1">รีเซ็ต kWh</button>
                     </div>
                     <div class="alert-banner sensor-fault-banner hidden" data-role="fault">เซนเซอร์ไม่ตอบ ตรวจสายสัญญาณ</div>
@@ -1075,6 +1075,17 @@
                 </section>
             </div>
             <p class="sensor-notice text-sm hidden" id="power-notice"></p>
+
+            <!-- Flow switch (paddle contact, no fault state) -->
+            <div class="sensors-grid">
+                <section class="section-card sensor-card" id="flow-card">
+                    <div class="section-heading-row">
+                        <h3>การไหลของน้ำ <span class="mono text-xs text-muted">Flow switch</span></h3>
+                        <span class="sensor-stable-badge" id="flow-state">--</span>
+                    </div>
+                    <p class="text-sm text-muted">สวิตช์ใบพัดในท่อ ปิดวงจรเมื่อน้ำไหล (ไม่มีสถานะเสีย ถ้าไม่ได้ต่อสายจะแสดงว่าไม่ไหล)</p>
+                </section>
+            </div>
 
             <!-- Water: SEN0708 pH -->
             <div class="sensors-grid">
@@ -1756,6 +1767,10 @@
                     </div>
                 </div>
                 <div class="fixed-bus-list mt-md" id="hw-fixed-bus-pins">
+                    <p class="text-muted text-sm">กำลังโหลด...</p>
+                </div>
+                <h3 class="mt-md">อินพุตตายตัว <span class="mono text-xs text-muted">Fixed input</span></h3>
+                <div class="fixed-bus-list mt-md" id="hw-fixed-inputs">
                     <p class="text-muted text-sm">กำลังโหลด...</p>
                 </div>
             </section>

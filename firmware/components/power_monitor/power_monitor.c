@@ -34,7 +34,7 @@ _Static_assert(POWER_MONITOR_CHANNELS == TELEMETRY_POWER_CHANNELS,
                "power channel count mismatch");
 
 static const uint8_t s_bus_index[POWER_MONITOR_CHANNELS] = {
-    HARDWARE_BUS_PZEM_PUMP1, HARDWARE_BUS_PZEM_PUMP2};
+    HARDWARE_BUS_PZEM_PUMP, HARDWARE_BUS_PZEM_CHILLER};
 
 static pzem004t_handle_t s_handles[POWER_MONITOR_CHANNELS];
 static sensor_health_t s_health[POWER_MONITOR_CHANNELS];

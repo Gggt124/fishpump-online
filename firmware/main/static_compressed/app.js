@@ -2723,6 +2723,13 @@ function initTelemetrySSE() {
                 console.error('SSE water parse error', err);
             }
         });
+        sseEventSource.addEventListener('flow', function (e) {
+            try {
+                handleFlowSseEvent(JSON.parse(e.data));
+            } catch (err) {
+                console.error('SSE flow parse error', err);
+            }
+        });
         sseEventSource.onerror = function () {
             if (sseEventSource) {
                 sseEventSource.close();
@@ -2848,8 +2855,21 @@ function handleWaterSseEvent(data) {
                   ph: data.ph, temperature_c: data.temp_c });
 }
 
+function renderFlow(on) {
+    var el = document.getElementById('flow-state');
+    if (!el) return;
+    el.textContent = on ? 'ไหล' : 'ไม่ไหล';
+    el.classList.toggle('is-stable', !!on);
+}
+
+function handleFlowSseEvent(data) {
+    if (!data) return;
+    renderFlow(!!data.on);
+}
+
 function renderSensorsStatus(json) {
     if (!json || json.ok !== true) return;
+    if (json.flow) renderFlow(!!json.flow.on);
     (json.power || []).forEach(function (p) { renderPowerChannel(p.channel, p); });
     setSensorNotice('power-notice', json.power_notice);
 
@@ -2997,6 +3017,24 @@ function renderFixedBusPins(list) {
         var pins = document.createElement('strong');
         pins.className = 'mono';
         pins.textContent = 'UART' + b.uart + ' · TX GPIO ' + b.tx + ' · RX GPIO ' + b.rx + ' · ' + b.baud + ' bps';
+        row.appendChild(name);
+        row.appendChild(pins);
+        box.appendChild(row);
+    });
+}
+
+function renderFixedInputs(list) {
+    var box = document.getElementById('hw-fixed-inputs');
+    if (!box || !list) return;
+    box.textContent = '';
+    list.forEach(function (b) {
+        var row = document.createElement('div');
+        row.className = 'fixed-bus-row';
+        var name = document.createElement('span');
+        name.textContent = b.label;
+        var pins = document.createElement('strong');
+        pins.className = 'mono';
+        pins.textContent = b.wiring;
         row.appendChild(name);
         row.appendChild(pins);
         box.appendChild(row);
@@ -3415,6 +3453,7 @@ function applyHardwareMap(data) {
     renderHardwareWiring(data.active, data.pending_valid ? data.pending : null);
     renderLockedPins(data.board, data.locked_pins);
     renderFixedBusPins(data.fixed_bus_pins);
+    renderFixedInputs(data.fixed_inputs);
     applyBoardWiringFacts(data.board);
 
     setHardwareClean();

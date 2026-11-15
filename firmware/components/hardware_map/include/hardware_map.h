@@ -197,12 +197,12 @@ typedef struct {
   gpio_num_t rx_gpio;
   uint32_t baud;
   uint8_t modbus_addr;
-  const char *id;      /* "pzem_pump1" | "pzem_pump2" | "rs485_ph" */
+  const char *id;      /* "pzem_pump" | "pzem_chiller" | "rs485_ph" */
   const char *label;
 } hardware_bus_pin_t;
 
-#define HARDWARE_BUS_PZEM_PUMP1 0
-#define HARDWARE_BUS_PZEM_PUMP2 1
+#define HARDWARE_BUS_PZEM_PUMP 0    /* UART0: meter on the water pump (relay 1) */
+#define HARDWARE_BUS_PZEM_CHILLER 1 /* UART1: meter on the chiller */
 #define HARDWARE_BUS_RS485_PH 2
 #define HARDWARE_BUS_COUNT 3
 

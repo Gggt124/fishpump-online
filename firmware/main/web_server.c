@@ -28,6 +28,7 @@
 #include "session.h"
 #include "telemetry_hub.h"
 #include "water_quality.h"
+#include "flow_switch.h"
 #include "wifi_manager.h"
 #include <errno.h>
 #include <math.h>
@@ -873,7 +874,7 @@ static bool api_hardware_add_board_info(cJSON *root) {
   return true;
 }
 
-/* Fixed sensor UART pins (read-only on the Hardware page). */
+/* Fixed sensor UART pins and fixed inputs (read-only on the Hardware page). */
 static bool api_hardware_add_fixed_bus_pins(cJSON *root) {
   size_t count = 0;
   const hardware_bus_pin_t *bus = hardware_map_fixed_bus_pins(&count);
@@ -893,6 +894,24 @@ static bool api_hardware_add_fixed_bus_pins(cJSON *root) {
     cJSON_AddNumberToObject(item, "rx", bus[i].rx_gpio);
     cJSON_AddNumberToObject(item, "baud", bus[i].baud);
     cJSON_AddItemToArray(arr, item);
+  }
+
+  size_t in_count = 0;
+  const hardware_fixed_input_t *in = hardware_map_fixed_inputs(&in_count);
+  cJSON *inputs = cJSON_AddArrayToObject(root, "fixed_inputs");
+  if (!inputs) {
+    return false;
+  }
+  for (size_t i = 0; i < in_count; i++) {
+    cJSON *item = cJSON_CreateObject();
+    if (!item) {
+      return false;
+    }
+    cJSON_AddStringToObject(item, "id", in[i].id);
+    cJSON_AddStringToObject(item, "label", in[i].label);
+    cJSON_AddNumberToObject(item, "gpio", in[i].gpio);
+    cJSON_AddStringToObject(item, "wiring", in[i].wiring);
+    cJSON_AddItemToArray(inputs, item);
   }
   return true;
 }
@@ -4207,8 +4226,6 @@ static esp_err_t handle_api_pump_status(httpd_req_t *req) {
   return result;
 }
 
-/* GET /api/cooling/status - protected, return machine-friendly cooling runtime
- * status */
 /* ---------------- Sensors (PZEM power + SEN0708 pH) ---------------- */
 
 static uint32_t sensors_now_ms(void) {
@@ -4263,7 +4280,7 @@ static esp_err_t handle_api_sensors_status(httpd_req_t *req) {
       break;
     }
     cJSON_AddNumberToObject(o, "channel", ch);
-    cJSON_AddStringToObject(o, "name", ch == 0 ? "pump1" : "pump2");
+    cJSON_AddStringToObject(o, "name", ch == 0 ? "pump" : "chiller");
     cJSON_AddBoolToObject(o, "valid", pw_ok && c->valid);
     cJSON_AddBoolToObject(o, "fault", !pw_ok || c->fault);
     cJSON_AddNumberToObject(o, "voltage", c->voltage_v);
@@ -4305,6 +4322,23 @@ static esp_err_t handle_api_sensors_status(httpd_req_t *req) {
   }
   free(pw);
   free(wq);
+
+  /* Flow switch: no fault state (a bare contact cannot report one). */
+  cJSON *flow = cJSON_AddObjectToObject(root, "flow");
+  if (flow) {
+    flow_switch_status_t fs;
+    telemetry_snapshot_t snap;
+    bool fs_ok = flow_switch_get_status(&fs);
+    bool snap_ok = telemetry_hub_get_latest(&snap) == ESP_OK && snap.has_flow;
+    cJSON_AddBoolToObject(flow, "on", fs_ok ? fs.flow_on : (snap_ok && snap.flow.flow_on));
+    if (snap_ok && snap.flow_updated_ms != 0) {
+      cJSON_AddNumberToObject(
+          flow, "age_ms",
+          (double)(uint32_t)(sensors_now_ms() - snap.flow_updated_ms));
+    } else {
+      cJSON_AddNullToObject(flow, "age_ms");
+    }
+  }
 
   char *json_str = cJSON_PrintUnformatted(root);
   cJSON_Delete(root);
@@ -5401,6 +5435,12 @@ static void web_server_telemetry_cb(const telemetry_event_t *event,
              event->data.water.fault ? "true" : "false",
              event->data.water.stable ? "true" : "false", event->data.water.ph,
              event->data.water.temperature_c);
+    break;
+
+  case TELEMETRY_EVT_FLOW:
+    evt_name = "flow";
+    snprintf(json_buf, sizeof(json_buf), "{\"on\":%s}",
+             event->data.flow.flow_on ? "true" : "false");
     break;
 
   case TELEMETRY_EVT_HEALTH:
