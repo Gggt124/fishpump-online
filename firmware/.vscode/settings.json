@@ -7,6 +7,5 @@
     "*.h": "c",
     "*.c": "c"
   },
-  "idf.currentSetup": "C:\\esp\\v6.0.1\\esp-idf",
-  "idf.port": "COM8"
+  "idf.currentSetup": "C:\\esp\\v6.0.1\\esp-idf"
 }
