@@ -14,6 +14,7 @@ void app_main(void)
     test_alarm_eval();
     test_alarm_eval_wrap();
     test_alarm_store();
+    test_uplink_format();
 
     if (g_fail == 0) {
         ESP_LOGI("selftest", "SELFTEST PASS (%d checks)", g_pass);

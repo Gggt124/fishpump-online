@@ -290,8 +290,9 @@ void test_alarm_eval(void)
     CHECK(n_raised == 2 && n_cleared == 2);
 
     /* counts */
-    alarm_rule_set_t set;
-    alarm_runtime_t rts[ALARM_MAX_RULES];
+    /* static: the self-test main task has a small stack (a rule set is ~3 KB) */
+    static alarm_rule_set_t set;
+    static alarm_runtime_t rts[ALARM_MAX_RULES];
     alarm_counts_t c;
     memset(&set, 0, sizeof(set));
     memset(rts, 0, sizeof(rts));
