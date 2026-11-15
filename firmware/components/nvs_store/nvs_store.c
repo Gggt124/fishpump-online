@@ -3,6 +3,7 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #undef nvs_store_cooling_settings_defaults
@@ -29,6 +30,9 @@ static const char *TAG = "nvs_store";
 
 #define NVS_SESSION_NAMESPACE "session"
 #define NVS_KEY_JWT_SECRET "jwt_secret"
+
+#define NVS_ALARM_NAMESPACE "alarm_cfg"
+#define NVS_ALARM_KEY_RULES "rules_blob"
 
 #define NVS_PUMP_NAMESPACE "pump_cfg"
 #define NVS_PUMP_KEY_T1_ON "t1_on"
@@ -1835,9 +1839,103 @@ uint8_t nvs_store_commit_staging(void) {
   return type;
 }
 
+nvs_store_alarm_rules_load_status_t
+nvs_store_load_alarm_rules(alarm_rule_set_t *out) {
+  if (!out) {
+    return NVS_STORE_ALARM_RULES_DEFAULTS_ERROR;
+  }
+  alarm_presets_fill(out);
+
+  nvs_handle_t handle;
+  esp_err_t open_ret = nvs_open(NVS_ALARM_NAMESPACE, NVS_READONLY, &handle);
+  if (open_ret == ESP_ERR_NVS_NOT_FOUND) {
+    return NVS_STORE_ALARM_RULES_DEFAULTS_MISSING;
+  }
+  if (open_ret != ESP_OK) {
+    ESP_LOGE(TAG, "Open %s failed: %s", NVS_ALARM_NAMESPACE,
+             esp_err_to_name(open_ret));
+    return NVS_STORE_ALARM_RULES_DEFAULTS_ERROR;
+  }
+
+  size_t len = 0;
+  esp_err_t err = nvs_get_blob(handle, NVS_ALARM_KEY_RULES, NULL, &len);
+  if (err == ESP_ERR_NVS_NOT_FOUND) {
+    nvs_close(handle);
+    return NVS_STORE_ALARM_RULES_DEFAULTS_MISSING;
+  }
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Alarm rules size read failed: %s", esp_err_to_name(err));
+    nvs_close(handle);
+    return NVS_STORE_ALARM_RULES_DEFAULTS_ERROR;
+  }
+  if (len == 0 || len > ALARM_BLOB_MAX_BYTES) {
+    ESP_LOGW(TAG, "Alarm rules blob has unusable size %u; using presets",
+             (unsigned)len);
+    nvs_close(handle);
+    return NVS_STORE_ALARM_RULES_DEFAULTS_INVALID;
+  }
+
+  uint8_t *buf = malloc(len);
+  if (!buf) {
+    nvs_close(handle);
+    return NVS_STORE_ALARM_RULES_DEFAULTS_ERROR;
+  }
+  err = nvs_get_blob(handle, NVS_ALARM_KEY_RULES, buf, &len);
+  nvs_close(handle);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Alarm rules read failed: %s", esp_err_to_name(err));
+    free(buf);
+    return NVS_STORE_ALARM_RULES_DEFAULTS_ERROR;
+  }
+
+  uint8_t dropped = 0;
+  bool ok = alarm_blob_decode(buf, len, out, &dropped); /* out untouched on false */
+  free(buf);
+  if (!ok) {
+    ESP_LOGW(TAG, "Alarm rules blob unusable; using presets");
+    return NVS_STORE_ALARM_RULES_DEFAULTS_INVALID;
+  }
+  if (dropped > 0) {
+    ESP_LOGW(TAG, "Dropped %u invalid alarm rule(s); kept %u", dropped,
+             out->count);
+  }
+  return NVS_STORE_ALARM_RULES_LOADED;
+}
+
+bool nvs_store_save_alarm_rules(const alarm_rule_set_t *set) {
+  if (!set) {
+    return false;
+  }
+  uint8_t *buf = malloc(ALARM_BLOB_MAX_BYTES);
+  if (!buf) {
+    return false;
+  }
+  size_t len = alarm_blob_encode(set, buf, ALARM_BLOB_MAX_BYTES);
+  if (len == 0) {
+    free(buf);
+    return false;
+  }
+
+  nvs_handle_t handle;
+  if (nvs_open(NVS_ALARM_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) {
+    free(buf);
+    return false;
+  }
+  bool ok = (nvs_set_blob(handle, NVS_ALARM_KEY_RULES, buf, len) == ESP_OK);
+  if (ok) {
+    ok = (nvs_commit(handle) == ESP_OK);
+  }
+  if (!ok) {
+    ESP_LOGE(TAG, "Failed to save alarm rules blob to NVS");
+  }
+  nvs_close(handle);
+  free(buf);
+  return ok;
+}
+
 bool nvs_store_factory_reset(void) {
   /* Wipes ALL namespaces: wifi_cfg, wifi_prof, session, pump_cfg,
-   * hw_cfg, cool_cfg. OTA/app partitions are NOT affected.
+   * hw_cfg, cool_cfg, alarm_cfg. OTA/app partitions are NOT affected.
    * Caller must call esp_restart() after this returns true. */
   ESP_LOGW(TAG, "Factory reset: erasing entire NVS partition...");
   esp_err_t ret = nvs_flash_erase();

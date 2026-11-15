@@ -87,6 +87,48 @@ cJSON *alarm_rule_to_json(const alarm_rule_t *rule); /* caller deletes; NULL on 
 const char *alarm_cond_name(uint8_t cond);           /* "above" ... "stale" */
 const char *alarm_severity_name(uint8_t sev);        /* "info", "warning", "critical" */
 
+/* ---- History ring (also the uplink's store-and-forward buffer) ---- */
+
+#define ALARM_HISTORY_LEN 32
+typedef struct {
+    uint32_t seq;
+    uint8_t type;
+    uint8_t reason;
+    uint16_t rule_id;
+    uint8_t signal_id;
+    uint8_t severity;
+    float value;
+    uint32_t uptime_ms;
+    char name[ALARM_NAME_BYTES];
+} alarm_event_t;
+
+typedef struct {
+    alarm_event_t items[ALARM_HISTORY_LEN];
+    uint8_t head;
+    uint8_t count;
+    uint32_t last_seq;
+} alarm_ring_t;
+
+void alarm_ring_init(alarm_ring_t *ring);
+/* Assigns and returns seq = ++last_seq. */
+uint32_t alarm_ring_push(alarm_ring_t *ring, const alarm_event_t *evt);
+/* Copies events with seq > after_seq, oldest first, up to max. *oldest_seq = lowest seq still held (0 if empty). */
+size_t alarm_ring_since(const alarm_ring_t *ring, uint32_t after_seq, alarm_event_t *out, size_t max,
+                        uint32_t *oldest_seq);
+
+/* ---- Presets and storage blob ---- */
+
+/* 13 rules, ids 1..13, all enabled=false, next_id=14. */
+void alarm_presets_fill(alarm_rule_set_t *out);
+
+#define ALARM_BLOB_VERSION 1
+#define ALARM_BLOB_MAX_BYTES (4 + ALARM_MAX_RULES * sizeof(alarm_rule_t))
+/* Layout: [version u8][count u8][next_id u16 LE][count x alarm_rule_t]. 0 if it does not fit. */
+size_t alarm_blob_encode(const alarm_rule_set_t *set, uint8_t *buf, size_t size);
+/* false = blob unusable (wrong version, bad length, count > max). A rule that fails
+ * alarm_rule_validate() is dropped and counted in *dropped; the rest are kept. */
+bool alarm_blob_decode(const uint8_t *buf, size_t len, alarm_rule_set_t *out, uint8_t *dropped);
+
 /* ---- Evaluation (pure state machine, one tick per rule) ---- */
 
 typedef enum {

@@ -10,7 +10,8 @@ typedef enum {
   LED_STATE_STAGING_PENDING,
   LED_STATE_BTN_HOLD_SHORT,
   LED_STATE_RECOVERY_AP,
-  LED_STATE_FACTORY_RESET
+  LED_STATE_FACTORY_RESET,
+  LED_STATE_ALARM
 } app_led_state_t;
 
 app_led_state_t app_get_led_state(void);

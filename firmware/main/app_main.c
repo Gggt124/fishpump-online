@@ -24,6 +24,7 @@
 #include "telemetry_hub.h"
 #include "water_quality.h"
 #include "flow_switch.h"
+#include "alarm_engine.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "led_strip.h"
@@ -102,6 +103,8 @@ const char *app_led_state_name(app_led_state_t state) {
     return "recovery_ap";
   case LED_STATE_FACTORY_RESET:
     return "factory_reset";
+  case LED_STATE_ALARM:
+    return "alarm";
   default:
     return "unknown";
   }
@@ -546,11 +549,16 @@ static void update_status_leds(app_led_state_t state, int blink_phase,
     g = 0;
     b = 0; // Red
     break;
+  case LED_STATE_ALARM:
+    r = STATUS_RGB_BRIGHTNESS_DEFAULT;
+    g = 0;
+    b = 0; // Red, blinking (critical alarm not acknowledged)
+    break;
   }
 
   // Apply blink phase to RGB LED if state calls for blinking
   if (state == LED_STATE_RECOVERY_AP || state == LED_STATE_FACTORY_RESET ||
-      state == LED_STATE_STAGING_PENDING) {
+      state == LED_STATE_STAGING_PENDING || state == LED_STATE_ALARM) {
     if (blink_phase == 0) {
       r = 0;
       g = 0;
@@ -734,7 +742,22 @@ static void hardware_ui_task(void *pvParameters) {
         }
         update_status_leds(s_led_state, blink, blink);
       } else {
-        if (wifi_manager_is_ap_active()) {
+        /* Critical unacknowledged alarm: blink at 1 Hz. The engine summary is
+         * re-read at most once per second, like the staging type above. */
+        static bool cached_critical_unacked = false;
+        static uint32_t last_alarm_check_ms = 0;
+        if (now_ms - last_alarm_check_ms >= 1000) {
+          alarm_engine_summary_t alarm_summary;
+          cached_critical_unacked =
+              alarm_engine_get_summary(&alarm_summary) &&
+              alarm_summary.counts.critical_unacked > 0;
+          last_alarm_check_ms = now_ms;
+        }
+        if (cached_critical_unacked) {
+          s_led_state = LED_STATE_ALARM;
+          int blink = ((release_ticks / 10) % 2) == 0;
+          update_status_leds(s_led_state, blink, blink);
+        } else if (wifi_manager_is_ap_active()) {
           s_led_state = LED_STATE_ON;
           update_status_leds(s_led_state, 1, 1);
         } else {
@@ -771,6 +794,7 @@ void app_main(void) {
   esp_log_level_set("wifi_mgr", ESP_LOG_INFO);
   esp_log_level_set("telemetry_hub", ESP_LOG_INFO);
   esp_log_level_set("flow_switch", ESP_LOG_INFO);
+  esp_log_level_set("alarm_engine", ESP_LOG_INFO);
   esp_log_level_set("dns_server",
                     ESP_LOG_WARN); /* DNS very chatty — WARN only */
   esp_log_level_set("session",
@@ -1065,6 +1089,12 @@ void app_main(void) {
     ESP_LOGI(TAG, "Pump control initialized successfully");
   } else {
     ESP_LOGE(TAG, "Pump control init failed; continuing with Wi-Fi/web setup");
+  }
+
+  /* Alarm engine: evaluates user rules every second, never commands outputs. */
+  esp_err_t alarm_ret = alarm_engine_init();
+  if (alarm_ret != ESP_OK) {
+    ESP_LOGE(TAG, "Alarm engine init failed: %s", esp_err_to_name(alarm_ret));
   }
 
 

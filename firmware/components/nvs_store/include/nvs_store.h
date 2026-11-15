@@ -1,5 +1,6 @@
 #pragma once
 
+#include "alarm_rules.h"
 #include "app_config.h"
 #include "cooling_rule_engine.h"
 #include "hardware_map.h"
@@ -231,6 +232,22 @@ extern "C" {
       cooling_settings_t *: (nvs_store_save_cooling_settings),                 \
       const cooling_settings_t *: (nvs_store_save_cooling_settings))(settings)
 #endif
+/**
+ * Alarm rules: one versioned blob. Namespace "alarm_cfg", key "rules_blob".
+ * Written only when the user creates, edits or deletes a rule.
+ */
+typedef enum {
+  NVS_STORE_ALARM_RULES_LOADED = 0,
+  NVS_STORE_ALARM_RULES_DEFAULTS_MISSING,
+  NVS_STORE_ALARM_RULES_DEFAULTS_INVALID,
+  NVS_STORE_ALARM_RULES_DEFAULTS_ERROR
+} nvs_store_alarm_rules_load_status_t;
+
+/** On any status other than LOADED, *out holds the preset rules. */
+nvs_store_alarm_rules_load_status_t
+nvs_store_load_alarm_rules(alarm_rule_set_t *out);
+bool nvs_store_save_alarm_rules(const alarm_rule_set_t *set);
+
 bool nvs_store_get_staging_type(uint8_t *type);
 bool nvs_store_stage_wifi(const char *ssid, const char *pass);
 bool nvs_store_stage_creds(const char *user, const char *pass);
@@ -238,7 +255,7 @@ bool nvs_store_rollback_staging(void);
 uint8_t nvs_store_commit_staging(void);
 /**
  * Factory reset: erase the entire NVS partition and re-initialize it.
- * All namespaces (wifi_cfg, pump_cfg, hw_cfg, cool_cfg, session,
+ * All namespaces (wifi_cfg, pump_cfg, hw_cfg, cool_cfg, alarm_cfg, session,
  * wifi_prof) are wiped. The caller MUST call esp_restart() after this returns
  * true, as in-RAM state (timers, Wi-Fi, hardware config) is now stale.
  *

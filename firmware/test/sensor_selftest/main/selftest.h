@@ -23,3 +23,4 @@ void test_signal_registry(void);
 void test_alarm_rules(void);
 void test_alarm_eval(void);
 void test_alarm_eval_wrap(void);
+void test_alarm_store(void);

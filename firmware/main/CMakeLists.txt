@@ -48,6 +48,7 @@ idf_component_register(
         "static/jetbrains_mono_400_latin.woff2"
     REQUIRES
         app_update
+        alarm_engine
         app_config
         cooling_control
         dns_server
