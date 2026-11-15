@@ -184,10 +184,33 @@ def test_alarm_ui():
     assert_test("view-alarms" in content, "static_compressed/index.html.gz contains view-alarms")
 
 
+def test_uplink():
+    print("\n--- Task 11: uplink preview ---")
+    ws = read(MAIN_DIR / "web_server.c")
+    html = read(MAIN_DIR / "static" / "index.html")
+    js = read(MAIN_DIR / "static" / "app.js")
+    routes = routes_block(ws)
+    assert_test(route_entry(routes, "/api/uplink/preview", "HTTP_GET", "handle_api_uplink_preview"),
+                "GET /api/uplink/preview -> handle_api_uplink_preview")
+    assert_test("require_auth(" in function_body(ws, "handle_api_uplink_preview"),
+                "handle_api_uplink_preview requires auth")
+    for el in ("uplink-preview-card", "uplink-preview-json", "uplink-preview-refresh", "uplink-preview-summary"):
+        assert_test(f'id="{el}"' in html, f"index.html has id={el}")
+    status_view = html[html.find('id="view-status"'):html.find('id="view-wifi"')]
+    assert_test('id="uplink-preview-card"' in status_view, "preview card sits at the end of view-status")
+    assert_test("function initUplinkPreview" in js, "app.js defines initUplinkPreview")
+    uh = read(COMP_DIR / "uplink" / "include" / "uplink.h")
+    assert_test(re.search(r"#define\s+UPLINK_INTERVAL_SEC\s+30\b", uh) is not None, "uplink.h defines UPLINK_INTERVAL_SEC 30")
+    uc = read(COMP_DIR / "uplink" / "uplink.c")
+    assert_test(bool(uc) and "telemetry_hub_subscribe" not in uc, "uplink.c polls (no telemetry_hub_subscribe)")
+    assert_test("MALLOC_CAP_SPIRAM" in uc, "uplink.c keeps its buffers in PSRAM")
+
+
 def main():
     test_flow_and_rename()
     test_alarm_api()
     test_alarm_ui()
+    test_uplink()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

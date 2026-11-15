@@ -5794,3 +5794,11 @@ select:hover:not(:disabled) {
 .alarm-live {
     margin-top: var(--space-1);
 }
+
+.uplink-preview-json {
+    max-height: 24rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    margin-top: var(--space-3);
+}

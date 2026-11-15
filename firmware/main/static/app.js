@@ -3652,8 +3652,42 @@ function saveHardwareMap() {
 
 /* ======== Status Page ======== */
 
+var uplinkPreviewWired = false;
+var uplinkPreviewInFlight = false;
+
+function loadUplinkPreview() {
+    if (uplinkPreviewInFlight) return;
+    uplinkPreviewInFlight = true;
+    var btn = document.getElementById('uplink-preview-refresh');
+    if (btn) setLoading(btn, true);
+    apiGet('/api/uplink/preview', function (err, data) {
+        uplinkPreviewInFlight = false;
+        if (btn) setLoading(btn, false);
+        if (err || !data || data.ok !== true) {
+            setText('uplink-preview-summary', 'โหลดตัวอย่างไม่สำเร็จ' + (err ? ': ' + err.message : ''));
+            return;
+        }
+        var sink = data.sink === 'set' ? 'มีตัวส่งข้อมูล' : 'ยังไม่ได้ต่อตัวส่งข้อมูล (ยังไม่ส่งออก)';
+        setText('uplink-preview-summary', sink + ' · รอส่ง ' + data.pending_events + ' เหตุการณ์ · สูญหาย ' + data.dropped + ' · ส่งทุก ' + data.interval_sec + ' วิ');
+        var pre = document.getElementById('uplink-preview-json');
+        if (pre) pre.textContent = JSON.stringify(data, null, 2);
+    });
+}
+
+/* The preview loads only when the card is opened or refreshed (it builds ~20 KB of JSON on the board). */
+function initUplinkPreview() {
+    if (uplinkPreviewWired) return;
+    var card = document.getElementById('uplink-preview-card');
+    var btn = document.getElementById('uplink-preview-refresh');
+    if (!card || !btn) return;
+    uplinkPreviewWired = true;
+    card.addEventListener('toggle', function () { if (card.open) loadUplinkPreview(); });
+    btn.addEventListener('click', loadUplinkPreview);
+}
+
 function initStatus() {
     if (window.location.pathname !== '/status') return;
+    initUplinkPreview();
     refreshFullStatus();
     statusInterval = setInterval(refreshFullStatus, 30000);
 }

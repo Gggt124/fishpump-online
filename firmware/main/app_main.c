@@ -25,6 +25,7 @@
 #include "water_quality.h"
 #include "flow_switch.h"
 #include "alarm_engine.h"
+#include "uplink.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "led_strip.h"
@@ -795,6 +796,7 @@ void app_main(void) {
   esp_log_level_set("telemetry_hub", ESP_LOG_INFO);
   esp_log_level_set("flow_switch", ESP_LOG_INFO);
   esp_log_level_set("alarm_engine", ESP_LOG_INFO);
+  esp_log_level_set("uplink", ESP_LOG_INFO);
   esp_log_level_set("dns_server",
                     ESP_LOG_WARN); /* DNS very chatty — WARN only */
   esp_log_level_set("session",
@@ -1095,6 +1097,11 @@ void app_main(void) {
   esp_err_t alarm_ret = alarm_engine_init();
   if (alarm_ret != ESP_OK) {
     ESP_LOGE(TAG, "Alarm engine init failed: %s", esp_err_to_name(alarm_ret));
+  }
+  /* Uplink layer: formats ThingsBoard payloads; sends nothing until a transport is plugged in. */
+  esp_err_t uplink_ret = uplink_init();
+  if (uplink_ret != ESP_OK) {
+    ESP_LOGE(TAG, "Uplink init failed: %s", esp_err_to_name(uplink_ret));
   }
 
 

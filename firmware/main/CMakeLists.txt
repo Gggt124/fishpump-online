@@ -63,6 +63,7 @@ idf_component_register(
         relay_safe_init
         session
         telemetry_hub
+        uplink
         water_quality
         wifi_manager
         esp_http_server

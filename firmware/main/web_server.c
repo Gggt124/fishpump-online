@@ -32,6 +32,7 @@
 #include "alarm_engine.h"
 #include "alarm_rules.h"
 #include "signal_registry.h"
+#include "uplink.h"
 #include "wifi_manager.h"
 #include <errno.h>
 #include <math.h>
@@ -5696,6 +5697,21 @@ static esp_err_t handle_api_alarms_ack(httpd_req_t *req) {
   return send_json(req, out, "200 OK");
 }
 
+/* GET /api/uplink/preview - what the uplink would send to ThingsBoard */
+static esp_err_t handle_api_uplink_preview(httpd_req_t *req) {
+  if (!require_auth(req)) {
+    return alarms_unauthorized(req);
+  }
+  char *json = uplink_preview_json();
+  if (!json) {
+    return send_api_error(req, "memory", "Uplink preview unavailable",
+                          "503 Service Unavailable");
+  }
+  esp_err_t result = send_json(req, json, "200 OK");
+  free(json);
+  return result;
+}
+
 /* GET /api/alarms/summary - small enough to poll every 10 s */
 static esp_err_t handle_api_alarms_summary(httpd_req_t *req) {
   if (!require_auth(req)) {
@@ -6089,6 +6105,9 @@ static web_route_diag_t s_routes[] = {
     {.uri = "/api/alarms/ack",
      .method = HTTP_POST,
      .handler = handle_api_alarms_ack},
+    {.uri = "/api/uplink/preview",
+     .method = HTTP_GET,
+     .handler = handle_api_uplink_preview},
     {.uri = "/api/power/reset-energy",
      .method = HTTP_POST,
      .handler = handle_api_power_reset_energy},
