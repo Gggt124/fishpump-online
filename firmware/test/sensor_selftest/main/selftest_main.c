@@ -10,6 +10,7 @@ void app_main(void)
     test_telemetry();
     test_contact_debounce();
     test_signal_registry();
+    test_alarm_rules();
 
     if (g_fail == 0) {
         ESP_LOGI("selftest", "SELFTEST PASS (%d checks)", g_pass);

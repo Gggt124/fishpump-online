@@ -9,6 +9,8 @@ set(EXTRA_COMPONENT_DIRS
     ../../components/telemetry_hub
     ../../components/contact_debounce
     ../../components/signal_registry
+    ../../components/alarm_rules
+    ../../managed_components/espressif__cjson
 )
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 idf_build_set_property(MINIMAL_BUILD ON)
