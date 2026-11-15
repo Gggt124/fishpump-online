@@ -1,5 +1,5 @@
 idf_component_register(
     SRCS "telemetry_hub.c"
     INCLUDE_DIRS "include"
-    REQUIRES freertos esp_common log
+    REQUIRES freertos esp_common esp_timer log
 )

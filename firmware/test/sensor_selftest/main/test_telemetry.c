@@ -39,6 +39,22 @@ void test_telemetry(void)
     telemetry_hub_get_latest(&snap);
     CHECK(snap.has_water && snap.water.ph == 7.1f && snap.water.valid);
 
-    CHECK(s_events_seen == 2); /* the rejected publish is not delivered */
+    telemetry_event_t f = {.type = TELEMETRY_EVT_FLOW};
+    f.data.flow.flow_on = true;
+    telemetry_hub_publish(&f);
+    telemetry_hub_get_latest(&snap);
+    CHECK(snap.has_flow && snap.flow.flow_on && snap.flow_updated_ms != 0);
+    CHECK(snap.power_updated_ms[1] != 0 && snap.power_updated_ms[0] == 0); /* ch1 published earlier, ch0 never */
+    CHECK(snap.water_updated_ms != 0 && snap.pump_updated_ms == 0);
+
+    telemetry_event_t a = {.type = TELEMETRY_EVT_ALARM};
+    a.data.alarm.seq = 7;
+    a.data.alarm.rule_id = 3;
+    a.data.alarm.type = TELEMETRY_ALARM_RAISED;
+    telemetry_hub_publish(&a);
+    telemetry_hub_get_latest(&snap);
+    CHECK(snap.has_alarm && snap.alarm.seq == 7 && snap.alarm.rule_id == 3 && snap.alarm_updated_ms != 0);
+
+    CHECK(s_events_seen == 4); /* the rejected publish is not delivered */
     telemetry_hub_unsubscribe(count_cb);
 }

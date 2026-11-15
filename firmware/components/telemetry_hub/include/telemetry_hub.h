@@ -14,7 +14,9 @@ typedef enum {
     TELEMETRY_EVT_COOLING,
     TELEMETRY_EVT_HEALTH,
     TELEMETRY_EVT_POWER,
-    TELEMETRY_EVT_WATER
+    TELEMETRY_EVT_WATER,
+    TELEMETRY_EVT_FLOW,
+    TELEMETRY_EVT_ALARM
 } telemetry_event_type_t;
 
 #define TELEMETRY_POWER_CHANNELS 2
@@ -78,6 +80,28 @@ typedef struct {
 } telemetry_health_payload_t;
 
 typedef struct {
+    bool flow_on;
+} telemetry_flow_payload_t;
+
+typedef enum {
+    TELEMETRY_ALARM_RAISED = 0,
+    TELEMETRY_ALARM_CLEARED,
+    TELEMETRY_ALARM_ACKED
+} telemetry_alarm_type_t;
+
+typedef struct {
+    uint32_t seq;
+    uint16_t rule_id;
+    uint8_t type; /* telemetry_alarm_type_t */
+    uint8_t severity;
+    uint8_t signal_id;
+    float value;
+    uint8_t active_count;
+    uint8_t critical_count;
+    uint8_t unacked_count;
+} telemetry_alarm_payload_t;
+
+typedef struct {
     telemetry_event_type_t type;
     union {
         telemetry_pump_payload_t pump;
@@ -86,6 +110,8 @@ typedef struct {
         telemetry_health_payload_t health;
         telemetry_power_payload_t power;
         telemetry_water_payload_t water;
+        telemetry_flow_payload_t flow;
+        telemetry_alarm_payload_t alarm;
     } data;
 } telemetry_event_t;
 
@@ -96,12 +122,25 @@ typedef struct {
     telemetry_health_payload_t health;
     telemetry_power_payload_t power[TELEMETRY_POWER_CHANNELS];
     telemetry_water_payload_t water;
+    telemetry_flow_payload_t flow;
+    telemetry_alarm_payload_t alarm;
     bool has_pump;
     bool has_float;
     bool has_cooling;
     bool has_health;
     bool has_power[TELEMETRY_POWER_CHANNELS];
     bool has_water;
+    bool has_flow;
+    bool has_alarm;
+    /* Uptime ms of the last publish of each group; 0 = never published. */
+    uint32_t pump_updated_ms;
+    uint32_t float_updated_ms;
+    uint32_t cooling_updated_ms;
+    uint32_t health_updated_ms;
+    uint32_t power_updated_ms[TELEMETRY_POWER_CHANNELS];
+    uint32_t water_updated_ms;
+    uint32_t flow_updated_ms;
+    uint32_t alarm_updated_ms;
 } telemetry_snapshot_t;
 
 /** @note Subscriber callbacks MUST be non-blocking. */

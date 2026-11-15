@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -115,32 +116,53 @@ esp_err_t telemetry_hub_publish(const telemetry_event_t *event) {
     subscriber_entry_t subs_copy[MAX_SUBSCRIBERS];
     size_t count = 0;
 
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    if (now_ms == 0) {
+        now_ms = 1; /* 0 means "never published" */
+    }
+
     xSemaphoreTake(s_mutex, portMAX_DELAY);
 
     switch (event->type) {
         case TELEMETRY_EVT_PUMP:
             s_latest_snapshot.pump = event->data.pump;
             s_latest_snapshot.has_pump = true;
+            s_latest_snapshot.pump_updated_ms = now_ms;
             break;
         case TELEMETRY_EVT_FLOAT:
             s_latest_snapshot.float_state = event->data.float_state;
             s_latest_snapshot.has_float = true;
+            s_latest_snapshot.float_updated_ms = now_ms;
             break;
         case TELEMETRY_EVT_COOLING:
             s_latest_snapshot.cooling = event->data.cooling;
             s_latest_snapshot.has_cooling = true;
+            s_latest_snapshot.cooling_updated_ms = now_ms;
             break;
         case TELEMETRY_EVT_HEALTH:
             s_latest_snapshot.health = event->data.health;
             s_latest_snapshot.has_health = true;
+            s_latest_snapshot.health_updated_ms = now_ms;
             break;
         case TELEMETRY_EVT_POWER:
             s_latest_snapshot.power[event->data.power.channel] = event->data.power;
             s_latest_snapshot.has_power[event->data.power.channel] = true;
+            s_latest_snapshot.power_updated_ms[event->data.power.channel] = now_ms;
             break;
         case TELEMETRY_EVT_WATER:
             s_latest_snapshot.water = event->data.water;
             s_latest_snapshot.has_water = true;
+            s_latest_snapshot.water_updated_ms = now_ms;
+            break;
+        case TELEMETRY_EVT_FLOW:
+            s_latest_snapshot.flow = event->data.flow;
+            s_latest_snapshot.has_flow = true;
+            s_latest_snapshot.flow_updated_ms = now_ms;
+            break;
+        case TELEMETRY_EVT_ALARM:
+            s_latest_snapshot.alarm = event->data.alarm;
+            s_latest_snapshot.has_alarm = true;
+            s_latest_snapshot.alarm_updated_ms = now_ms;
             break;
         default:
             ESP_LOGW(TAG, "Unknown telemetry event type: %d", event->type);
