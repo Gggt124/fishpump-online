@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "alarm_validate.c" "alarm_json.c"
+    SRCS "alarm_validate.c" "alarm_json.c" "alarm_eval.c"
     INCLUDE_DIRS "include"
     REQUIRES signal_registry telemetry_hub cjson
 )

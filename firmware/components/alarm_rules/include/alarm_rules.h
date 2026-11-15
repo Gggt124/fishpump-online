@@ -87,6 +87,52 @@ cJSON *alarm_rule_to_json(const alarm_rule_t *rule); /* caller deletes; NULL on 
 const char *alarm_cond_name(uint8_t cond);           /* "above" ... "stale" */
 const char *alarm_severity_name(uint8_t sev);        /* "info", "warning", "critical" */
 
+/* ---- Evaluation (pure state machine, one tick per rule) ---- */
+
+typedef enum {
+    ALARM_STATE_NORMAL = 0,
+    ALARM_STATE_PENDING,
+    ALARM_STATE_ACTIVE,
+    ALARM_STATE_LATCHED
+} alarm_state_t;
+
+typedef struct {
+    uint8_t state;
+    bool acked;
+    uint32_t pending_since_ms;
+    uint32_t active_since_ms;
+    float last_value;
+} alarm_runtime_t;
+
+typedef enum { ALARM_EVT_RAISED = 0, ALARM_EVT_CLEARED, ALARM_EVT_ACKED } alarm_event_type_t; /* == telemetry_alarm_type_t */
+typedef enum {
+    ALARM_REASON_NONE = 0,
+    ALARM_REASON_CONDITION,
+    ALARM_REASON_ACKED,
+    ALARM_REASON_RULE_CHANGED
+} alarm_reason_t;
+
+typedef struct {
+    uint8_t type;
+    uint8_t reason;
+    float value;
+} alarm_transition_t;
+
+/* One tick for one rule. Returns true and fills *out when an event is produced
+ * (at most one per call). A disabled rule, or one whose signal id is unknown, is
+ * treated as not violating. All time math is unsigned subtraction (wrap-safe). */
+bool alarm_rule_step(const alarm_rule_t *rule, alarm_runtime_t *rt, const telemetry_snapshot_t *snap,
+                     uint32_t now_ms, alarm_transition_t *out);
+/* Acknowledge. Returns false when the rule is NORMAL/PENDING or already acked. */
+bool alarm_rule_ack(alarm_runtime_t *rt, alarm_transition_t *out);
+/* Rule edited or deleted: state -> NORMAL; emits cleared/rule_changed if it was ACTIVE or LATCHED. */
+bool alarm_rule_reset(alarm_runtime_t *rt, alarm_transition_t *out);
+
+typedef struct {
+    uint8_t active, critical, unacked, critical_unacked, max_severity;
+} alarm_counts_t;
+void alarm_counts(const alarm_rule_set_t *set, const alarm_runtime_t rt[ALARM_MAX_RULES], alarm_counts_t *out);
+
 #ifdef __cplusplus
 }
 #endif

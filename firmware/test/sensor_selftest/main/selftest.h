@@ -21,3 +21,5 @@ void test_telemetry(void);
 void test_contact_debounce(void);
 void test_signal_registry(void);
 void test_alarm_rules(void);
+void test_alarm_eval(void);
+void test_alarm_eval_wrap(void);

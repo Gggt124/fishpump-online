@@ -11,6 +11,8 @@ void app_main(void)
     test_contact_debounce();
     test_signal_registry();
     test_alarm_rules();
+    test_alarm_eval();
+    test_alarm_eval_wrap();
 
     if (g_fail == 0) {
         ESP_LOGI("selftest", "SELFTEST PASS (%d checks)", g_pass);
