@@ -81,10 +81,14 @@ def test_routes_and_guards(ws):
         entry = re.search(r'\.uri\s*=\s*"' + re.escape(uri) + r'"[^}]*?' + re.escape(handler), routes, re.S)
         assert_test(entry is not None, f"route {uri} -> {handler} registered")
     # Write handlers share one guard helper; it must hold both checks.
-    guard = re.search(r"static\s+cJSON\s*\*\s*sensors_begin_post\s*\([^)]*\)\s*\{(.*?)\n\}", ws, re.S)
+    # sensors_begin_post is a thin wrapper over the shared api_begin_json_post guard.
+    guard = re.search(r"static\s+cJSON\s*\*\s*api_begin_json_post\s*\([^)]*\)\s*\{(.*?)\n\}", ws, re.S)
     guard_body = guard.group(1) if guard else ""
-    assert_test("require_auth(req)" in guard_body, "sensors_begin_post requires auth")
-    assert_test("is_same_origin(req, false)" in guard_body, "sensors_begin_post checks same origin")
+    wrapper = re.search(r"static\s+cJSON\s*\*\s*sensors_begin_post\s*\([^)]*\)\s*\{(.*?)\n\}", ws, re.S)
+    wrapper_body = wrapper.group(1) if wrapper else ""
+    assert_test("api_begin_json_post(req" in wrapper_body, "sensors_begin_post uses the shared guard")
+    assert_test("require_auth(req)" in guard_body, "api_begin_json_post requires auth")
+    assert_test("is_same_origin(req, false)" in guard_body, "api_begin_json_post checks same origin")
     for uri, handler in POST_HANDLERS.items():
         body = function_body(ws, handler)
         assert_test(bool(body), f"{handler} defined")

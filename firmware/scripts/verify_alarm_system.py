@@ -84,8 +84,69 @@ def test_flow_and_rename():
     assert_test("addEventListener('flow'" in js, "app.js registers the flow SSE listener")
 
 
+SSE_ALARM_FMT = ('{"seq":%lu,"type":"%s","rule_id":%u,"sev":%u,"active":%u,'
+                 '"critical":%u,"unacked":%u}')
+SSE_JSON_BUF = 256
+
+ALARM_GET_ROUTES = {
+    "/alarms": "handle_get_alarms",
+    "/api/alarms/signals": "handle_api_alarms_signals",
+    "/api/alarms/values": "handle_api_alarms_values",
+    "/api/alarms/rules": "handle_api_alarms_rules_get",
+    "/api/alarms/status": "handle_api_alarms_status",
+    "/api/alarms/summary": "handle_api_alarms_summary",
+}
+ALARM_POST_ROUTES = {
+    "/api/alarms/rules": "handle_api_alarms_rules_post",
+    "/api/alarms/rules/delete": "handle_api_alarms_rules_delete",
+    "/api/alarms/ack": "handle_api_alarms_ack",
+}
+
+
+def route_entry(routes, uri, method, handler):
+    pat = (r'\.uri\s*=\s*"' + re.escape(uri) + r'"\s*,\s*\.method\s*=\s*' + method +
+           r'\s*,\s*\.handler\s*=\s*' + re.escape(handler) + r'\b')
+    return re.search(pat, routes) is not None
+
+
+def test_alarm_api():
+    print("\n--- Task 8: alarm REST API and SSE ---")
+    ws = read(MAIN_DIR / "web_server.c")
+    routes = routes_block(ws)
+    for uri, handler in ALARM_GET_ROUTES.items():
+        assert_test(route_entry(routes, uri, "HTTP_GET", handler), f"GET {uri} -> {handler}")
+    for uri, handler in ALARM_POST_ROUTES.items():
+        assert_test(route_entry(routes, uri, "HTTP_POST", handler), f"POST {uri} -> {handler}")
+    assert_test("/api/alarms/status" in routes and "/api/events" in routes, "routes table intact")
+
+    # GET handlers check auth themselves; POST handlers go through the shared guard,
+    # which holds auth + same-origin (so every alarm endpoint is login-protected).
+    for handler in ALARM_GET_ROUTES.values():
+        if handler == "handle_get_alarms":
+            continue  # the SPA shell redirects to /login (checked via require_auth too)
+        body = function_body(ws, handler)
+        assert_test("require_auth(" in body, f"{handler} requires auth")
+    assert_test("require_auth(" in function_body(ws, "handle_get_alarms"), "handle_get_alarms requires auth")
+    for handler in ALARM_POST_ROUTES.values():
+        body = function_body(ws, handler)
+        assert_test("api_begin_json_post(" in body, f"{handler} uses api_begin_json_post")
+    guard = function_body(ws, "api_begin_json_post")
+    assert_test("require_auth(" in guard, "api_begin_json_post requires auth")
+    assert_test("is_same_origin(" in guard, "api_begin_json_post checks same origin")
+
+    flat = re.sub(r'"\s*\n\s*"', "", ws)
+    c_fmt = SSE_ALARM_FMT.replace('"', '\\"')
+    assert_test(c_fmt in flat, "SSE alarm format in web_server.c matches the contract")
+    worst = ('{"seq":4294967295,"type":"cleared","rule_id":65535,"sev":3,"active":255,'
+             '"critical":255,"unacked":255}')
+    assert_test(len(worst.encode()) < SSE_JSON_BUF, f"worst-case SSE alarm JSON fits {SSE_JSON_BUF} B ({len(worst)} B)")
+    cb = function_body(ws, "web_server_telemetry_cb")
+    assert_test("case TELEMETRY_EVT_ALARM:" in cb and 'evt_name = "alarm"' in cb, "SSE alarm event emitted")
+
+
 def main():
     test_flow_and_rename()
+    test_alarm_api()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

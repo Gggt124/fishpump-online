@@ -29,6 +29,9 @@
 #include "telemetry_hub.h"
 #include "water_quality.h"
 #include "flow_switch.h"
+#include "alarm_engine.h"
+#include "alarm_rules.h"
+#include "signal_registry.h"
 #include "wifi_manager.h"
 #include <errno.h>
 #include <math.h>
@@ -4351,23 +4354,25 @@ static esp_err_t handle_api_sensors_status(httpd_req_t *req) {
   return result;
 }
 
-/* Shared guard for sensor write endpoints: auth, same origin, JSON object body.
- * Returns NULL after sending the error response. An empty body becomes {}. */
-static cJSON *sensors_begin_post(httpd_req_t *req, esp_err_t *sent) {
+/* Shared guard for JSON write endpoints: auth, same origin, JSON object body
+ * read into the caller's buffer. Returns NULL after sending the error
+ * response. An empty body becomes {}. The parsed tree owns its own memory. */
+static cJSON *api_begin_json_post(httpd_req_t *req, char *body,
+                                  size_t body_size, esp_err_t *sent) {
   if (!require_auth(req)) {
     *sent = send_json(req, "{\"ok\":false,\"error\":\"unauthorized\"}",
                       "401 Unauthorized");
     return NULL;
   }
   if (!is_same_origin(req, false)) {
-    *sent = send_api_error(req, "forbidden", "Cross-origin sensor write blocked",
+    *sent = send_api_error(req, "forbidden", "Cross-origin write blocked",
                            "403 Forbidden");
     return NULL;
   }
-  char body[256] = {0};
+  body[0] = '\0';
   if (req->content_len == 0) {
     strcpy(body, "{}");
-  } else if (!read_request_body(req, body, sizeof(body))) {
+  } else if (!read_request_body(req, body, body_size)) {
     *sent = send_api_error(req, "invalid_body", "Request body is missing or too large",
                            "400 Bad Request");
     return NULL;
@@ -4380,6 +4385,12 @@ static cJSON *sensors_begin_post(httpd_req_t *req, esp_err_t *sent) {
     return NULL;
   }
   return root;
+}
+
+/* Sensor write endpoints: 256-byte bodies are plenty. */
+static cJSON *sensors_begin_post(httpd_req_t *req, esp_err_t *sent) {
+  char body[256];
+  return api_begin_json_post(req, body, sizeof(body), sent);
 }
 
 /* Reads a finite JSON number; false if missing or not a number. */
@@ -5365,6 +5376,424 @@ static void sse_broadcast_work(void *arg) {
   free(item);
 }
 
+/* ---------------- Alarms (rules, status, acknowledge) ---------------- */
+
+#define ALARM_POST_BODY_BYTES 768
+
+static esp_err_t alarms_send_tree(httpd_req_t *req, cJSON *root) {
+  if (!root) {
+    return send_api_error(req, "memory", "JSON allocation failed",
+                          "500 Internal Server Error");
+  }
+  char *json_str = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+  if (!json_str) {
+    return send_api_error(req, "memory", "JSON allocation failed",
+                          "500 Internal Server Error");
+  }
+  esp_err_t result = send_json(req, json_str, "200 OK");
+  free(json_str);
+  return result;
+}
+
+static esp_err_t alarms_unauthorized(httpd_req_t *req) {
+  return send_json(req, "{\"ok\":false,\"error\":\"unauthorized\"}",
+                   "401 Unauthorized");
+}
+
+/* A finite number never leaves as NaN/Infinity (not valid JSON). */
+static void alarms_add_value(cJSON *obj, const char *key, double v) {
+  if (isfinite(v)) {
+    cJSON_AddNumberToObject(obj, key, v);
+  } else {
+    cJSON_AddNullToObject(obj, key);
+  }
+}
+
+static const char *alarms_type_name(uint8_t type) {
+  switch (type) {
+  case ALARM_EVT_RAISED:
+    return "raised";
+  case ALARM_EVT_CLEARED:
+    return "cleared";
+  default:
+    return "acked";
+  }
+}
+
+static const char *alarms_storage_name(nvs_store_alarm_rules_load_status_t st) {
+  switch (st) {
+  case NVS_STORE_ALARM_RULES_LOADED:
+    return "saved";
+  case NVS_STORE_ALARM_RULES_DEFAULTS_MISSING:
+    return "defaults";
+  default:
+    return "invalid";
+  }
+}
+
+static bool alarms_engine_stalled(const alarm_engine_summary_t *sm, bool ok) {
+  return !ok || !sm->running ||
+         (uint32_t)(sensors_now_ms() - sm->last_tick_ms) > ALARM_ENGINE_STALL_MS;
+}
+
+static void alarms_add_counts(cJSON *parent, const alarm_counts_t *c) {
+  cJSON *o = cJSON_AddObjectToObject(parent, "summary");
+  if (!o) {
+    return;
+  }
+  cJSON_AddNumberToObject(o, "active", c->active);
+  cJSON_AddNumberToObject(o, "critical", c->critical);
+  cJSON_AddNumberToObject(o, "unacked", c->unacked);
+  cJSON_AddNumberToObject(o, "critical_unacked", c->critical_unacked);
+  cJSON_AddNumberToObject(o, "max_severity", c->max_severity);
+}
+
+/* GET /alarms - SPA shell for the Alarms page */
+static esp_err_t handle_get_alarms(httpd_req_t *req) {
+  if (!require_auth(req)) {
+    set_no_store_response_headers(req);
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "/login");
+    return httpd_resp_send(req, NULL, 0);
+  }
+  return serve_static(req, _binary_index_html_start, _binary_index_html_end,
+                      _binary_index_html_gz_start, _binary_index_html_gz_end,
+                      "text/html; charset=utf-8");
+}
+
+/* GET /api/alarms/signals - the signal registry */
+static esp_err_t handle_api_alarms_signals(httpd_req_t *req) {
+  if (!require_auth(req)) {
+    return alarms_unauthorized(req);
+  }
+  cJSON *root = cJSON_CreateObject();
+  cJSON *arr = root ? cJSON_AddArrayToObject(root, "signals") : NULL;
+  if (!arr) {
+    cJSON_Delete(root);
+    return alarms_send_tree(req, NULL);
+  }
+  cJSON_AddBoolToObject(root, "ok", true);
+  size_t n = 0;
+  const signal_def_t *all = signal_registry_all(&n);
+  for (size_t i = 0; i < n; i++) {
+    cJSON *o = cJSON_CreateObject();
+    if (!o) {
+      break;
+    }
+    cJSON_AddStringToObject(o, "key", all[i].key);
+    cJSON_AddStringToObject(o, "label", all[i].label_th);
+    cJSON_AddStringToObject(o, "unit", all[i].unit);
+    cJSON_AddStringToObject(
+        o, "kind", all[i].kind == SIGNAL_KIND_BOOL ? "bool" : "number");
+    cJSON_AddStringToObject(o, "group", all[i].group);
+    cJSON_AddNumberToObject(o, "period_sec", all[i].period_sec);
+    cJSON_AddNumberToObject(o, "decimals", all[i].decimals);
+    cJSON_AddItemToArray(arr, o);
+  }
+  return alarms_send_tree(req, root);
+}
+
+/* GET /api/alarms/values - current reading of every signal */
+static esp_err_t handle_api_alarms_values(httpd_req_t *req) {
+  if (!require_auth(req)) {
+    return alarms_unauthorized(req);
+  }
+  telemetry_snapshot_t *snap = calloc(1, sizeof(*snap));
+  cJSON *root = cJSON_CreateObject();
+  cJSON *vals = root ? cJSON_AddObjectToObject(root, "values") : NULL;
+  if (!snap || !vals || telemetry_hub_get_latest(snap) != ESP_OK) {
+    free(snap);
+    cJSON_Delete(root);
+    return alarms_send_tree(req, NULL);
+  }
+  cJSON_AddBoolToObject(root, "ok", true);
+  uint32_t now = sensors_now_ms();
+  size_t n = 0;
+  const signal_def_t *all = signal_registry_all(&n);
+  for (size_t i = 0; i < n; i++) {
+    signal_value_t sv;
+    signal_registry_read(&all[i], snap, now, &sv);
+    cJSON *o = cJSON_AddObjectToObject(vals, all[i].key);
+    if (!o) {
+      break;
+    }
+    if (!sv.present || (all[i].kind == SIGNAL_KIND_NUMBER && !isfinite(sv.value))) {
+      cJSON_AddNullToObject(o, "v");
+    } else if (all[i].kind == SIGNAL_KIND_BOOL) {
+      cJSON_AddBoolToObject(o, "v", sv.value != 0.0);
+    } else {
+      cJSON_AddNumberToObject(o, "v", sv.value);
+    }
+    cJSON_AddBoolToObject(o, "trusted", sv.trusted);
+  }
+  free(snap);
+  return alarms_send_tree(req, root);
+}
+
+/* GET /api/alarms/rules */
+static esp_err_t handle_api_alarms_rules_get(httpd_req_t *req) {
+  if (!require_auth(req)) {
+    return alarms_unauthorized(req);
+  }
+  alarm_rule_set_t *set = calloc(1, sizeof(*set));
+  nvs_store_alarm_rules_load_status_t storage = NVS_STORE_ALARM_RULES_DEFAULTS_ERROR;
+  if (!set || !alarm_engine_get_rules(set, &storage)) {
+    free(set);
+    return send_api_error(req, "unavailable", "Alarm engine not running",
+                          "503 Service Unavailable");
+  }
+  cJSON *root = cJSON_CreateObject();
+  cJSON *arr = root ? cJSON_AddArrayToObject(root, "rules") : NULL;
+  if (!arr) {
+    free(set);
+    cJSON_Delete(root);
+    return alarms_send_tree(req, NULL);
+  }
+  cJSON_AddBoolToObject(root, "ok", true);
+  for (uint8_t i = 0; i < set->count; i++) {
+    cJSON *r = alarm_rule_to_json(&set->rules[i]);
+    if (r) {
+      cJSON_AddItemToArray(arr, r);
+    }
+  }
+  cJSON_AddNumberToObject(root, "max", ALARM_MAX_RULES);
+  cJSON_AddStringToObject(root, "storage", alarms_storage_name(storage));
+  free(set);
+  return alarms_send_tree(req, root);
+}
+
+/* Maps a rule-JSON parse error to the 400 contract: the message is the field. */
+static esp_err_t alarms_send_json_error(httpd_req_t *req, alarm_json_err_t err,
+                                        const char *field) {
+  const char *code = err == ALARM_JSON_MISSING_FIELD  ? "missing_field"
+                     : err == ALARM_JSON_INVALID_TYPE ? "invalid_type"
+                                                      : "value_out_of_range";
+  return send_api_error(req, code, field, "400 Bad Request");
+}
+
+/* POST /api/alarms/rules - no "id" = create, with "id" = replace */
+static esp_err_t handle_api_alarms_rules_post(httpd_req_t *req) {
+  esp_err_t sent = ESP_OK;
+  char body[ALARM_POST_BODY_BYTES];
+  cJSON *root = api_begin_json_post(req, body, sizeof(body), &sent);
+  if (!root) {
+    return sent;
+  }
+  alarm_rule_t rule;
+  bool has_id = false;
+  const char *field = "";
+  alarm_json_err_t jerr = alarm_rule_from_json(root, &rule, &has_id, &field);
+  cJSON_Delete(root);
+  if (jerr != ALARM_JSON_OK) {
+    return alarms_send_json_error(req, jerr, field);
+  }
+
+  alarm_rule_t stored;
+  esp_err_t err = alarm_engine_upsert_rule(&rule, has_id, &stored, &field);
+  switch (err) {
+  case ESP_OK:
+    break;
+  case ESP_ERR_INVALID_ARG:
+    return send_api_error(req, "value_out_of_range", field, "400 Bad Request");
+  case ESP_ERR_NOT_FOUND:
+    return send_api_error(req, "not_found", "id", "404 Not Found");
+  case ESP_ERR_NO_MEM:
+    return send_api_error(req, "rules_full", "rules", "409 Conflict");
+  case ESP_ERR_INVALID_STATE:
+    return send_api_error(req, "unavailable", "Alarm engine not running",
+                          "503 Service Unavailable");
+  default:
+    return send_api_error(req, "storage_failed", "Could not save rules",
+                          "500 Internal Server Error");
+  }
+
+  cJSON *out = cJSON_CreateObject();
+  cJSON *rj = alarm_rule_to_json(&stored);
+  if (!out || !rj) {
+    cJSON_Delete(out);
+    cJSON_Delete(rj);
+    return alarms_send_tree(req, NULL);
+  }
+  cJSON_AddBoolToObject(out, "ok", true);
+  cJSON_AddItemToObject(out, "rule", rj);
+  return alarms_send_tree(req, out);
+}
+
+/* Reads {"id":n} style fields; sends the 400 and returns false on a bad value. */
+static bool alarms_read_id(httpd_req_t *req, const cJSON *root, uint16_t *id,
+                           esp_err_t *sent) {
+  const cJSON *it = cJSON_GetObjectItem(root, "id");
+  if (!it) {
+    *sent = send_api_error(req, "missing_field", "id", "400 Bad Request");
+    return false;
+  }
+  if (!cJSON_IsNumber(it)) {
+    *sent = send_api_error(req, "invalid_type", "id", "400 Bad Request");
+    return false;
+  }
+  double d = it->valuedouble;
+  if (!isfinite(d) || d < 1.0 || d > 65535.0 || d != floor(d)) {
+    *sent = send_api_error(req, "value_out_of_range", "id", "400 Bad Request");
+    return false;
+  }
+  *id = (uint16_t)d;
+  return true;
+}
+
+/* POST /api/alarms/rules/delete {"id":n} */
+static esp_err_t handle_api_alarms_rules_delete(httpd_req_t *req) {
+  esp_err_t sent = ESP_OK;
+  char body[ALARM_POST_BODY_BYTES];
+  cJSON *root = api_begin_json_post(req, body, sizeof(body), &sent);
+  if (!root) {
+    return sent;
+  }
+  uint16_t id = 0;
+  bool ok = alarms_read_id(req, root, &id, &sent);
+  cJSON_Delete(root);
+  if (!ok) {
+    return sent;
+  }
+  esp_err_t err = alarm_engine_delete_rule(id);
+  if (err == ESP_ERR_NOT_FOUND) {
+    return send_api_error(req, "not_found", "id", "404 Not Found");
+  }
+  if (err != ESP_OK) {
+    return send_api_error(req, "storage_failed", "Could not save rules",
+                          "500 Internal Server Error");
+  }
+  return send_json(req, "{\"ok\":true}", "200 OK");
+}
+
+/* POST /api/alarms/ack {"id":n} or {"all":true} */
+static esp_err_t handle_api_alarms_ack(httpd_req_t *req) {
+  esp_err_t sent = ESP_OK;
+  char body[ALARM_POST_BODY_BYTES];
+  cJSON *root = api_begin_json_post(req, body, sizeof(body), &sent);
+  if (!root) {
+    return sent;
+  }
+  size_t acked = 0;
+  const cJSON *all = cJSON_GetObjectItem(root, "all");
+  if (cJSON_IsTrue(all)) {
+    cJSON_Delete(root);
+    acked = alarm_engine_ack_all();
+  } else {
+    uint16_t id = 0;
+    bool ok = alarms_read_id(req, root, &id, &sent);
+    cJSON_Delete(root);
+    if (!ok) {
+      return sent;
+    }
+    if (alarm_engine_ack(id) != ESP_OK) {
+      return send_api_error(req, "not_found", "id", "404 Not Found");
+    }
+    acked = 1;
+  }
+  char out[48];
+  snprintf(out, sizeof(out), "{\"ok\":true,\"acked\":%u}", (unsigned)acked);
+  return send_json(req, out, "200 OK");
+}
+
+/* GET /api/alarms/summary - small enough to poll every 10 s */
+static esp_err_t handle_api_alarms_summary(httpd_req_t *req) {
+  if (!require_auth(req)) {
+    return alarms_unauthorized(req);
+  }
+  alarm_engine_summary_t sm = {0};
+  bool ok = alarm_engine_get_summary(&sm);
+  cJSON *root = cJSON_CreateObject();
+  if (!root) {
+    return alarms_send_tree(req, NULL);
+  }
+  cJSON_AddBoolToObject(root, "ok", true);
+  cJSON_AddNumberToObject(root, "boot_id", sm.boot_id);
+  cJSON_AddNumberToObject(root, "last_seq", sm.last_seq);
+  cJSON_AddBoolToObject(root, "engine_stalled", alarms_engine_stalled(&sm, ok));
+  alarms_add_counts(root, &sm.counts);
+  return alarms_send_tree(req, root);
+}
+
+/* GET /api/alarms/status - summary, active alarms and recent history */
+static esp_err_t handle_api_alarms_status(httpd_req_t *req) {
+  if (!require_auth(req)) {
+    return alarms_unauthorized(req);
+  }
+  alarm_engine_summary_t sm = {0};
+  bool ok = alarm_engine_get_summary(&sm);
+  alarm_active_t *active = calloc(ALARM_MAX_RULES, sizeof(*active));
+  alarm_event_t *events = calloc(ALARM_HISTORY_LEN, sizeof(*events));
+  cJSON *root = cJSON_CreateObject();
+  if (!active || !events || !root) {
+    free(active);
+    free(events);
+    cJSON_Delete(root);
+    return alarms_send_tree(req, NULL);
+  }
+  size_t n_active = ok ? alarm_engine_get_active(active, ALARM_MAX_RULES) : 0;
+  uint32_t oldest = 0;
+  size_t n_events =
+      ok ? alarm_engine_get_events_since(0, events, ALARM_HISTORY_LEN, &oldest) : 0;
+
+  cJSON_AddBoolToObject(root, "ok", true);
+  cJSON_AddNumberToObject(root, "boot_id", sm.boot_id);
+  cJSON_AddNumberToObject(root, "last_seq", sm.last_seq);
+  cJSON_AddNumberToObject(root, "uptime_ms", sensors_now_ms());
+  cJSON_AddBoolToObject(root, "engine_stalled", alarms_engine_stalled(&sm, ok));
+  alarms_add_counts(root, &sm.counts);
+
+  cJSON *arr = cJSON_AddArrayToObject(root, "active");
+  for (size_t i = 0; arr && i < n_active; i++) {
+    const signal_def_t *sig = signal_registry_by_id(active[i].signal_id);
+    cJSON *o = cJSON_CreateObject();
+    if (!o) {
+      break;
+    }
+    cJSON_AddNumberToObject(o, "rule_id", active[i].rule_id);
+    cJSON_AddStringToObject(o, "name", active[i].name);
+    cJSON_AddStringToObject(o, "signal", sig ? sig->key : "");
+    cJSON_AddStringToObject(o, "severity", alarm_severity_name(active[i].severity));
+    cJSON_AddStringToObject(
+        o, "state", active[i].state == ALARM_STATE_LATCHED ? "latched" : "active");
+    cJSON_AddBoolToObject(o, "acked", active[i].acked);
+    alarms_add_value(o, "value", active[i].value);
+    cJSON_AddNumberToObject(o, "since_ms", active[i].since_ms);
+    cJSON_AddItemToArray(arr, o);
+  }
+
+  /* Newest first, for display. */
+  arr = cJSON_AddArrayToObject(root, "history");
+  for (size_t i = n_events; arr && i > 0; i--) {
+    const alarm_event_t *e = &events[i - 1];
+    const signal_def_t *sig = signal_registry_by_id(e->signal_id);
+    cJSON *o = cJSON_CreateObject();
+    if (!o) {
+      break;
+    }
+    cJSON_AddNumberToObject(o, "seq", e->seq);
+    cJSON_AddStringToObject(o, "type", alarms_type_name(e->type));
+    cJSON_AddNumberToObject(o, "rule_id", e->rule_id);
+    cJSON_AddStringToObject(o, "name", e->name);
+    cJSON_AddStringToObject(o, "signal", sig ? sig->key : "");
+    cJSON_AddStringToObject(o, "severity", alarm_severity_name(e->severity));
+    alarms_add_value(o, "value", e->value);
+    cJSON_AddNumberToObject(o, "uptime_ms", e->uptime_ms);
+    if (e->reason == ALARM_REASON_NONE) {
+      cJSON_AddNullToObject(o, "reason");
+    } else {
+      cJSON_AddStringToObject(o, "reason",
+                              e->reason == ALARM_REASON_CONDITION  ? "condition"
+                              : e->reason == ALARM_REASON_ACKED    ? "acked"
+                                                                   : "rule_changed");
+    }
+    cJSON_AddItemToArray(arr, o);
+  }
+  free(active);
+  free(events);
+  return alarms_send_tree(req, root);
+}
+
 static void web_server_telemetry_cb(const telemetry_event_t *event,
                                     void *user_ctx) {
   (void)user_ctx;
@@ -5435,6 +5864,20 @@ static void web_server_telemetry_cb(const telemetry_event_t *event,
              event->data.water.fault ? "true" : "false",
              event->data.water.stable ? "true" : "false", event->data.water.ph,
              event->data.water.temperature_c);
+    break;
+
+  case TELEMETRY_EVT_ALARM:
+    evt_name = "alarm";
+    snprintf(json_buf, sizeof(json_buf),
+             "{\"seq\":%lu,\"type\":\"%s\",\"rule_id\":%u,\"sev\":%u,"
+             "\"active\":%u,\"critical\":%u,\"unacked\":%u}",
+             (unsigned long)event->data.alarm.seq,
+             alarms_type_name(event->data.alarm.type),
+             (unsigned int)event->data.alarm.rule_id,
+             (unsigned int)event->data.alarm.severity,
+             (unsigned int)event->data.alarm.active_count,
+             (unsigned int)event->data.alarm.critical_count,
+             (unsigned int)event->data.alarm.unacked_count);
     break;
 
   case TELEMETRY_EVT_FLOW:
@@ -5621,6 +6064,31 @@ static web_route_diag_t s_routes[] = {
     {.uri = "/api/sensors/status",
      .method = HTTP_GET,
      .handler = handle_api_sensors_status},
+    {.uri = "/alarms", .method = HTTP_GET, .handler = handle_get_alarms},
+    {.uri = "/api/alarms/signals",
+     .method = HTTP_GET,
+     .handler = handle_api_alarms_signals},
+    {.uri = "/api/alarms/values",
+     .method = HTTP_GET,
+     .handler = handle_api_alarms_values},
+    {.uri = "/api/alarms/rules",
+     .method = HTTP_GET,
+     .handler = handle_api_alarms_rules_get},
+    {.uri = "/api/alarms/rules",
+     .method = HTTP_POST,
+     .handler = handle_api_alarms_rules_post},
+    {.uri = "/api/alarms/rules/delete",
+     .method = HTTP_POST,
+     .handler = handle_api_alarms_rules_delete},
+    {.uri = "/api/alarms/status",
+     .method = HTTP_GET,
+     .handler = handle_api_alarms_status},
+    {.uri = "/api/alarms/summary",
+     .method = HTTP_GET,
+     .handler = handle_api_alarms_summary},
+    {.uri = "/api/alarms/ack",
+     .method = HTTP_POST,
+     .handler = handle_api_alarms_ack},
     {.uri = "/api/power/reset-energy",
      .method = HTTP_POST,
      .handler = handle_api_power_reset_energy},

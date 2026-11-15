@@ -49,6 +49,8 @@ idf_component_register(
     REQUIRES
         app_update
         alarm_engine
+        alarm_rules
+        signal_registry
         app_config
         cooling_control
         dns_server
