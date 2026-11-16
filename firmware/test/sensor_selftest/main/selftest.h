@@ -25,3 +25,4 @@ void test_alarm_eval(void);
 void test_alarm_eval_wrap(void);
 void test_alarm_store(void);
 void test_uplink_format(void);
+void test_dry_run_config(void);

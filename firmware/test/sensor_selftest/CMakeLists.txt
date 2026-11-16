@@ -10,6 +10,7 @@ set(EXTRA_COMPONENT_DIRS
     ../../components/contact_debounce
     ../../components/signal_registry
     ../../components/alarm_rules
+    ../../components/dry_run_logic
     ../../components/uplink_format
     ../../managed_components/espressif__cjson
 )
