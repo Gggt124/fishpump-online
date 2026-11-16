@@ -868,9 +868,14 @@ function dryRunBeginMeasurePolling() {
 
 function dryRunResumeMeasure() {
     apiGet('/api/protection/measure', function (err, data) {
-        if (err || !data || !data.ok || data.state !== 'running') return;
+        if (err || !data || !data.ok) {
+            dryRunMeasureRunning = false;
+            dryRunSetMeasureText('', false, false);
+            dryRunUpdateButtons();
+            return;
+        }
         dryRunRenderMeasure(data);
-        dryRunBeginMeasurePolling();
+        if (data.state === 'running') dryRunBeginMeasurePolling();
     });
 }
 

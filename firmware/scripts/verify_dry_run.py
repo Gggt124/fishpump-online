@@ -212,6 +212,11 @@ def test_ui():
         assert_test(body != "", f"app.js defines {fn}")
         assert_test(body != "" and "innerHTML" not in body and "setHtml(" not in body,
                     f"{fn} does not use innerHTML/setHtml")
+    resume = js_function_body(js, "dryRunResumeMeasure")
+    assert_test("dryRunRenderMeasure(" in resume and "!== 'running'" not in resume,
+                "dryRunResumeMeasure re-renders every ok measure state, not only running")
+    assert_test("dryRunSetMeasureText('', false, false)" in resume and "dryRunMeasureRunning = false" in resume,
+                "dryRunResumeMeasure clears stale measure UI when the GET fails")
     assert_test("dryRunStopPolling" in js_function_body(js, "cleanupCurrentView"),
                 "cleanupCurrentView stops dry-run polling")
 
