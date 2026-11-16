@@ -29,9 +29,12 @@ typedef struct {
 } system_alarm_t;
 
 /* One mutex guards everything in here. Hub publishes happen after it is released.
- * Acknowledge callbacks of system alarms are also called after it is released. */
+ * Acknowledge callbacks of system alarms are also called after it is released.
+ * write_lock serialises rule writers (upsert/delete) so they can save to NVS without holding lock.
+ * Order: write_lock first, then lock; never the reverse. Only upsert/delete take write_lock. */
 static struct {
     SemaphoreHandle_t lock;
+    SemaphoreHandle_t write_lock;
     alarm_rule_set_t set;
     alarm_runtime_t rt[ALARM_MAX_RULES];
     alarm_ring_t ring;
@@ -192,6 +195,12 @@ esp_err_t alarm_engine_init(void)
     if (s.lock == NULL) {
         return ESP_ERR_NO_MEM;
     }
+    s.write_lock = xSemaphoreCreateMutex();
+    if (s.write_lock == NULL) {
+        vSemaphoreDelete(s.lock);
+        s.lock = NULL;
+        return ESP_ERR_NO_MEM;
+    }
     alarm_ring_init(&s.ring);
     s.storage = nvs_store_load_alarm_rules(&s.set);
     memset(s.rt, 0, sizeof(s.rt));
@@ -206,6 +215,10 @@ esp_err_t alarm_engine_init(void)
 
     if (xTaskCreatePinnedToCore(engine_task, "alarm_eng", ENGINE_TASK_STACK, NULL, ENGINE_TASK_PRIORITY, NULL,
                                 ENGINE_TASK_CORE) != pdPASS) {
+        vSemaphoreDelete(s.write_lock);
+        vSemaphoreDelete(s.lock);
+        s.write_lock = NULL;
+        s.lock = NULL;
         return ESP_ERR_NO_MEM;
     }
     s.initialized = true;
@@ -267,11 +280,18 @@ esp_err_t alarm_engine_upsert_rule(const alarm_rule_t *rule, bool has_id, alarm_
     }
 
     esp_err_t err = ESP_OK;
+    xSemaphoreTake(s.write_lock, portMAX_DELAY); /* the only writers of s.set: the copy cannot go stale */
     xSemaphoreTake(s.lock, portMAX_DELAY);
     *next = s.set;
+    xSemaphoreGive(s.lock);
     int idx = -1;
     if (has_id) {
-        idx = find_rule(r.id);
+        for (int i = 0; i < next->count; i++) {
+            if (next->rules[i].id == r.id) {
+                idx = i;
+                break;
+            }
+        }
         if (idx < 0) {
             err = ESP_ERR_NOT_FOUND;
         }
@@ -284,11 +304,12 @@ esp_err_t alarm_engine_upsert_rule(const alarm_rule_t *rule, bool has_id, alarm_
 
     if (err == ESP_OK) {
         next->rules[idx] = r;
-        if (!nvs_store_save_alarm_rules(next)) {
+        if (!nvs_store_save_alarm_rules(next)) { /* no engine lock held: a flash write takes tens of ms */
             err = ESP_FAIL; /* RAM state untouched: nothing to roll back */
         }
     }
     if (err == ESP_OK) {
+        xSemaphoreTake(s.lock, portMAX_DELAY);
         /* The edited rule starts over; close it under its old name first. */
         alarm_transition_t tr;
         if (alarm_rule_reset(&s.rt[idx], &tr)) {
@@ -301,8 +322,9 @@ esp_err_t alarm_engine_upsert_rule(const alarm_rule_t *rule, bool has_id, alarm_
         if (stored != NULL) {
             *stored = r;
         }
+        xSemaphoreGive(s.lock);
     }
-    xSemaphoreGive(s.lock);
+    xSemaphoreGive(s.write_lock);
 
     publish_pending(pending);
     free(pending);
@@ -324,20 +346,25 @@ esp_err_t alarm_engine_delete_rule(uint16_t id)
     }
 
     esp_err_t err = ESP_OK;
+    xSemaphoreTake(s.write_lock, portMAX_DELAY); /* the only writers of s.set: the copy cannot go stale */
     xSemaphoreTake(s.lock, portMAX_DELAY);
     int idx = find_rule(id);
+    if (idx >= 0) {
+        *next = s.set;
+    }
+    xSemaphoreGive(s.lock);
     if (idx < 0) {
         err = ESP_ERR_NOT_FOUND;
     } else {
-        *next = s.set;
         memmove(&next->rules[idx], &next->rules[idx + 1], (size_t)(next->count - idx - 1) * sizeof(alarm_rule_t));
         next->count--;
         memset(&next->rules[next->count], 0, sizeof(alarm_rule_t));
-        if (!nvs_store_save_alarm_rules(next)) {
+        if (!nvs_store_save_alarm_rules(next)) { /* no engine lock held */
             err = ESP_FAIL;
         }
     }
     if (err == ESP_OK) {
+        xSemaphoreTake(s.lock, portMAX_DELAY);
         alarm_transition_t tr;
         if (alarm_rule_reset(&s.rt[idx], &tr)) {
             record_event(pending, &s.set.rules[idx], &tr, now_ms()); /* name still present */
@@ -349,8 +376,9 @@ esp_err_t alarm_engine_delete_rule(uint16_t id)
         s.storage = NVS_STORE_ALARM_RULES_LOADED;
         s.rules_revision++;
         refresh_counts(pending);
+        xSemaphoreGive(s.lock);
     }
-    xSemaphoreGive(s.lock);
+    xSemaphoreGive(s.write_lock);
 
     publish_pending(pending);
     free(pending);

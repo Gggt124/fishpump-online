@@ -71,6 +71,33 @@ def test_engine():
     assert_test("ALARM_SYSTEM_ID_BASE" in eng, "alarm_engine.c guards next_id with ALARM_SYSTEM_ID_BASE")
 
 
+def save_while_locked(body):
+    """True if nvs_store_save_alarm_rules( sits between a Take(s.lock and the next Give(s.lock)."""
+    held = False
+    for m in re.finditer(r"xSemaphoreTake\(s\.lock|xSemaphoreGive\(s\.lock\)|nvs_store_save_alarm_rules\(", body):
+        t = m.group(0)
+        if t.startswith("xSemaphoreTake"):
+            held = True
+        elif t.startswith("xSemaphoreGive"):
+            held = False
+        elif held:
+            return True
+    return False
+
+
+def test_engine_lock():
+    print("\n--- Task 8: no NVS write under the engine lock ---")
+    eng = read(COMP_DIR / "alarm_engine" / "alarm_engine.c")
+    for fn in ("alarm_engine_upsert_rule", "alarm_engine_delete_rule"):
+        body = function_body(eng, fn, r"esp_err_t\s+")
+        assert_test(body != "" and "nvs_store_save_alarm_rules(" in body, f"{fn} saves rules to NVS")
+        assert_test(body != "" and not save_while_locked(body), f"{fn} saves outside s.lock")
+        assert_test(re.search(r"xSemaphoreTake\(s\.write_lock[\s\S]*xSemaphoreTake\(s\.lock", body) is not None,
+                    f"{fn} takes write_lock before s.lock")
+    init = function_body(eng, "alarm_engine_init", r"esp_err_t\s+")
+    assert_test("xSemaphoreCreateMutex" in init and "write_lock" in init, "alarm_engine_init creates write_lock")
+
+
 def test_pump_control():
     print("\n--- Task 4: pump_control guard, test mode and signal ---")
     hdr = read(COMP_DIR / "pump_control" / "include" / "pump_control.h")
@@ -223,6 +250,7 @@ def test_ui():
 
 def main():
     test_engine()
+    test_engine_lock()
     test_pump_control()
     test_guard()
     test_api()
