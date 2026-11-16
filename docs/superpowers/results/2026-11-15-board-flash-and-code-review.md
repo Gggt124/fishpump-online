@@ -68,3 +68,21 @@
 - ข้อ 1, 2, 7 ควรตัดสินก่อนเริ่มโปรเจกต์ ThingsBoard/MQTT
 - ข้อ 4 แก้ได้แต่ไม่เร่ง เพราะการแก้กฎเกิดไม่บ่อย
 - ยังไม่ได้ merge หรือ push อะไร
+
+## 5. ผลการแก้ (2026-11-16)
+
+แก้ข้อ 5, 6, 8 ตามแผน `docs/superpowers/plans/2026-11-16-review-low-risk-fixes.md` หนึ่งข้อต่อหนึ่ง commit
+
+- ข้อ 5 (กฎครบ แยกจากหน่วยความจำไม่พอ): commit 4312723 engine คืน `ESP_ERR_INVALID_SIZE` เมื่อกฎครบ web ตอบ 409 `rules_full` ส่วน `ESP_ERR_NO_MEM` ตอบ 503 `out_of_memory` และ UI แสดงข้อความหน่วยความจำไม่พอ
+- ข้อ 6 (ack ล้มเหลวต้องแจ้งผู้ใช้): commit 0db8788 `alarm_engine_ack_all` คืน `esp_err_t` และส่งจำนวนผ่านพอยน์เตอร์ ทั้ง ack และ ack_all แปลง not_found / out_of_memory (503) / unavailable (503) / internal_error (500) ผ่านฟังก์ชันเดียว
+- ข้อ 8 (ชื่อช่อง PZEM): commit 3419029 log และข้อความแจ้งใช้ "water pump / chiller" และ "ปั๊มน้ำ / Chiller" แทนเลขปั๊ม
+
+ผลเกต (ครบทั้งสี่เกตก่อนทุก commit, ผลสุดท้ายหลัง commit ที่ 3):
+- `verify_alarm_system.py`: PASSED 99, FAILED 0 (เดิม 87 ก่อนเริ่ม)
+- `verify_sensor_integration.py`: PASSED 45, FAILED 0, exit 0
+- QEMU selftest: `SELFTEST PASS (913 checks)`
+- `idf.py build`: สำเร็จ ไม่มี warning
+
+ข้อ 3 ยังไม่แก้ในแผนนี้: สเปกบรรทัด 241 กำหนดว่าการพลาดครั้งเดียว (`valid=false` ไม่มี `fault`) ไม่เปลี่ยนสถานะ และเทสต์ "miss: timer keeps running" ล็อกพฤติกรรมนี้ไว้ การแก้ต้องเลือกว่าช่วงที่หายนานแค่ไหนจึงเริ่ม PENDING ใหม่ ซึ่งแต่ละสัญญาณอาจต่างกัน จึงย้ายไปรวมกับข้อ 1, 2, 4, 7, 9 ที่รอตัดสินใจ
+
+บอร์ดยังไม่ได้แฟลชใหม่ ยังไม่ได้ทดสอบบนบอร์ด
