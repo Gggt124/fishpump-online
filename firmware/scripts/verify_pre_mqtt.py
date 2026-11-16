@@ -83,9 +83,42 @@ def test_task2():
     assert_test("ALARM_BLOB_READ_MAX_BYTES" in nvs, "nvs_store.c loads with ALARM_BLOB_READ_MAX_BYTES")
 
 
+def test_task3():
+    print("\n--- Task 3: uplink send lock and clock hold ---")
+    up = read(COMP_DIR / "uplink" / "uplink.c")
+    fmt = read(COMP_DIR / "uplink_format" / "include" / "uplink_format.h")
+    setter = function_body(up, "uplink_set_sink", r"esp_err_t\s+")
+    assert_test("xSemaphoreTake(s.send_lock" in setter, "uplink_set_sink takes send_lock")
+    assert_test(setter.find("s.send_lock") < setter.find("xSemaphoreTake(s.lock"),
+                "uplink_set_sink takes send_lock before lock (lock order)")
+    # every function that touches s.sink. must take send_lock; sink_ready's callers must too
+    bad = []
+    for m in re.finditer(r"^(?:static\s+)?[\w\s\*]+?\b(\w+)\s*\([^;{]*\)\s*\{", up, re.M):
+        name = m.group(1)
+        if name in ("if", "for", "while", "switch"):
+            continue
+        body = function_body(up, name, r"(?:static\s+)?[\w\s\*]+?")
+        if "s.sink." not in body and "sink_ready()" not in body:
+            continue
+        if name == "sink_ready":
+            continue
+        if "xSemaphoreTake(s.send_lock" not in body:
+            bad.append(name)
+    assert_test(not bad, "every user of s.sink. / sink_ready holds send_lock", ", ".join(bad))
+    assert_test("UPLINK_CLOCK_HOLD_MARGIN" in fmt and "uplink_forward_hold_for_clock" in fmt,
+                "uplink_forward_hold_for_clock is declared")
+    assert_test("uplink_forward_hold_for_clock(" in function_body(up, "do_events"),
+                "do_events calls uplink_forward_hold_for_clock")
+    assert_test("waiting_for_clock" in function_body(up, "uplink_preview_json", r"char\s*\*\s*"),
+                "the status JSON contains waiting_for_clock")
+    init = function_body(up, "uplink_init", r"esp_err_t\s+")
+    assert_test("vSemaphoreDelete(s.send_lock)" in init, "uplink_init deletes send_lock on failure")
+
+
 def main():
     test_task1()
     test_task2()
+    test_task3()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

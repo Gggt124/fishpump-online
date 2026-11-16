@@ -33,7 +33,9 @@ typedef struct {
 #define UPLINK_TOPIC_ATTRIBUTES "v1/devices/me/attributes"
 
 esp_err_t uplink_init(void);
-esp_err_t uplink_set_sink(const uplink_sink_t *sink);          /* NULL = none; copied */
+/* NULL = none; copied. Waits for any send in flight; once it returns, the previous sink's ctx is never
+ * called again (so the caller may free it). Must not be called from inside a sink callback. */
+esp_err_t uplink_set_sink(const uplink_sink_t *sink);
 void uplink_set_wall_clock(int64_t (*now_unix_ms)(void));      /* NULL = none */
 
 /* Whole preview as a malloc'd JSON string (caller frees), NULL on OOM or before init. */

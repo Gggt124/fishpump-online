@@ -30,8 +30,15 @@ typedef struct {
     uint32_t alarm_seq;
 } watched_t;
 
+/*
+ * Locks. send_lock serializes every use of s.sink (is_connected, send) with uplink_set_sink, so once
+ * set_sink returns, the old ctx is never called again. lock guards the preview buffers and counters the
+ * HTTP handler reads, so it is never held across a sink call.
+ * Lock order when both are needed: send_lock first, then lock.
+ */
 static struct {
     SemaphoreHandle_t lock;
+    SemaphoreHandle_t send_lock;
     bool initialized;
 
     uplink_sink_t sink;
@@ -48,6 +55,7 @@ static struct {
     uplink_forward_t fwd;
     uint32_t last_summary_seq;
     uint32_t pending_events;
+    bool waiting_for_clock; /* under lock: events are held until the wall clock is set */
 
     watched_t last_watched;
     uint32_t last_tel_ms;
@@ -91,6 +99,7 @@ static bool watched_changed(const watched_t *a, const watched_t *b)
            a->flow != b->flow || a->alarm_seq != b->alarm_seq;
 }
 
+/* Caller holds send_lock. */
 static bool sink_ready(void)
 {
     return s.has_sink && s.sink.is_connected != NULL && s.sink.send != NULL && s.sink.is_connected(s.sink.ctx);
@@ -125,12 +134,14 @@ static void do_telemetry(const telemetry_snapshot_t *snap, const alarm_engine_su
     s.tel_ever = true;
 
     /* A failed or skipped send is not retried: telemetry is not backfilled. */
+    xSemaphoreTake(s.send_lock, portMAX_DELAY);
     if (sink_ready()) {
         esp_err_t err = s.sink.send(s.sink.ctx, UPLINK_MSG_TELEMETRY, s.tel_buf, (size_t)len);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "telemetry send failed: %s", esp_err_to_name(err));
         }
     }
+    xSemaphoreGive(s.send_lock);
 }
 
 /* Events: store-and-forward in seq order; advance only when the sink accepts. */
@@ -145,8 +156,16 @@ static void do_events(const alarm_engine_summary_t *sm, uint32_t now)
 
     size_t n = alarm_engine_get_events_since(s.fwd.last_forwarded_seq, s.events, ALARM_HISTORY_LEN, &oldest);
     int64_t unix_now = s.wall_clock != NULL ? s.wall_clock() : 0;
-    if (n > 0 && !sink_ready()) {
-        /* No transport: keep the newest pending event formatted for the preview; the rest wait in the ring. */
+    uint32_t pending = sm->last_seq - s.fwd.last_forwarded_seq;
+    xSemaphoreTake(s.send_lock, portMAX_DELAY);
+    bool ready = sink_ready();
+    bool hold = ready && n > 0 && uplink_forward_hold_for_clock(unix_now != 0, pending, ALARM_HISTORY_LEN);
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    s.waiting_for_clock = hold;
+    xSemaphoreGive(s.lock);
+    if (n > 0 && (!ready || hold)) {
+        /* No transport, or waiting for the clock: keep the newest pending event formatted for the preview;
+         * the rest wait in the ring (a ts-less send happens once 24+ are pending, before the ring overwrites). */
         const alarm_event_t *e = &s.events[n - 1];
         xSemaphoreTake(s.lock, portMAX_DELAY);
         int len = uplink_format_event(e, sm->boot_id, unix_now != 0 ? uplink_event_ts(unix_now, now, e->uptime_ms) : 0,
@@ -175,9 +194,11 @@ static void do_events(const alarm_engine_summary_t *sm, uint32_t now)
         }
         s.fwd.last_forwarded_seq = e->seq;
     }
+    xSemaphoreGive(s.send_lock);
     s.pending_events = sm->last_seq - s.fwd.last_forwarded_seq;
 }
 
+/* Caller holds send_lock. */
 static bool send_attribute(char *(*build)(size_t *), const char *what)
 {
     size_t len = 0;
@@ -228,11 +249,13 @@ static char *build_rules(size_t *len_out)
 /* Attributes: identity then rules when the sink connects; rules again when they change. */
 static void do_attributes(void)
 {
+    xSemaphoreTake(s.send_lock, portMAX_DELAY);
     bool connected = sink_ready();
     if (!connected) {
         s.was_connected = false;
         s.want_identity = true;
         s.want_rules = true;
+        xSemaphoreGive(s.send_lock);
         return;
     }
     if (!s.was_connected) {
@@ -250,6 +273,7 @@ static void do_attributes(void)
             s.rules_sent_rev = rev;
         }
     }
+    xSemaphoreGive(s.send_lock);
 }
 
 static void uplink_task(void *arg)
@@ -280,11 +304,12 @@ esp_err_t uplink_init(void)
         return ESP_OK;
     }
     s.lock = xSemaphoreCreateMutex();
+    s.send_lock = xSemaphoreCreateMutex();
     s.tel_buf = psram_alloc(UPLINK_TELEMETRY_BUF);
     s.ev_buf = psram_alloc(UPLINK_EVENT_BUF);
     s.events = psram_alloc(ALARM_HISTORY_LEN * sizeof(alarm_event_t));
-    if (s.lock == NULL || s.tel_buf == NULL || s.ev_buf == NULL || s.events == NULL) {
-        return ESP_ERR_NO_MEM;
+    if (s.lock == NULL || s.send_lock == NULL || s.tel_buf == NULL || s.ev_buf == NULL || s.events == NULL) {
+        goto fail;
     }
     s.tel_buf[0] = '\0';
     s.ev_buf[0] = '\0';
@@ -294,10 +319,27 @@ esp_err_t uplink_init(void)
     if (xTaskCreatePinnedToCore(uplink_task, "uplink", UPLINK_TASK_STACK, NULL, UPLINK_TASK_PRIORITY, NULL,
                                 UPLINK_TASK_CORE) != pdPASS) {
         s.initialized = false;
-        return ESP_ERR_NO_MEM;
+        goto fail;
     }
     ESP_LOGI(TAG, "uplink ready (no transport; interval %d s)", UPLINK_INTERVAL_SEC);
     return ESP_OK;
+
+fail:
+    if (s.lock != NULL) {
+        vSemaphoreDelete(s.lock);
+        s.lock = NULL;
+    }
+    if (s.send_lock != NULL) {
+        vSemaphoreDelete(s.send_lock);
+        s.send_lock = NULL;
+    }
+    free(s.tel_buf);
+    free(s.ev_buf);
+    free(s.events);
+    s.tel_buf = NULL;
+    s.ev_buf = NULL;
+    s.events = NULL;
+    return ESP_ERR_NO_MEM;
 }
 
 esp_err_t uplink_set_sink(const uplink_sink_t *sink)
@@ -305,6 +347,7 @@ esp_err_t uplink_set_sink(const uplink_sink_t *sink)
     if (!s.initialized) {
         return ESP_ERR_INVALID_STATE;
     }
+    xSemaphoreTake(s.send_lock, portMAX_DELAY); /* waits out any send in flight */
     xSemaphoreTake(s.lock, portMAX_DELAY);
     if (sink == NULL) {
         s.has_sink = false;
@@ -314,6 +357,7 @@ esp_err_t uplink_set_sink(const uplink_sink_t *sink)
         s.has_sink = true;
     }
     xSemaphoreGive(s.lock);
+    xSemaphoreGive(s.send_lock);
     return ESP_OK;
 }
 
@@ -339,20 +383,23 @@ char *uplink_preview_json(void)
         return NULL;
     }
 
+    xSemaphoreTake(s.send_lock, portMAX_DELAY);
     bool connected = sink_ready();
     xSemaphoreTake(s.lock, portMAX_DELAY);
     bool has_sink = s.has_sink;
+    bool waiting = s.waiting_for_clock;
     uint32_t pending = s.pending_events;
     uint32_t dropped = s.fwd.dropped;
     int n = snprintf(out, cap,
                      "{\"ok\":true,\"sink\":\"%s\",\"connected\":%s,\"interval_sec\":%d,"
-                     "\"pending_events\":%lu,\"dropped\":%lu,\"last_telemetry\":%s,\"last_event\":%s,"
+                     "\"pending_events\":%lu,\"waiting_for_clock\":%s,\"dropped\":%lu,\"last_telemetry\":%s,\"last_event\":%s,"
                      "\"identity\":%s,\"rules\":%s}",
                      has_sink ? "set" : "none", connected ? "true" : "false", UPLINK_INTERVAL_SEC,
-                     (unsigned long)pending, (unsigned long)dropped,
+                     (unsigned long)pending, waiting ? "true" : "false", (unsigned long)dropped,
                      s.tel_len > 0 ? s.tel_buf : "null", s.ev_len > 0 ? s.ev_buf : "null",
                      identity != NULL ? identity : "null", rules != NULL ? rules : "null");
     xSemaphoreGive(s.lock);
+    xSemaphoreGive(s.send_lock);
     free(identity);
     free(rules);
     if (n < 0 || (size_t)n >= cap) {

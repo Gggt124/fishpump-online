@@ -179,4 +179,12 @@ void test_uplink_format(void)
     CHECK(uplink_forward_account_gap(&f, 14) == 10 && f.last_forwarded_seq == 13 && f.dropped == 10);
     CHECK(uplink_forward_account_gap(&f, 0) == 0 && f.last_forwarded_seq == 13); /* empty ring */
     CHECK(uplink_forward_account_gap(&f, 14) == 0 && f.dropped == 10);            /* nothing lost since */
+
+    /* ---- hold events for the clock ---- */
+    CHECK(!uplink_forward_hold_for_clock(true, 0, 32));
+    CHECK(uplink_forward_hold_for_clock(false, 0, 32));
+    CHECK(uplink_forward_hold_for_clock(false, 23, 32));
+    CHECK(!uplink_forward_hold_for_clock(false, 24, 32));
+    CHECK(!uplink_forward_hold_for_clock(false, 40, 32));
+    CHECK(!uplink_forward_hold_for_clock(false, 0, 8)); /* the margin swallows a small ring */
 }
