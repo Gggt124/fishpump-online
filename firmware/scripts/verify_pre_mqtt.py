@@ -204,12 +204,46 @@ def test_task5():
                 and "dry_run_guard_stack_hwm()" in app, "BOARD_DIAG calls all three getters")
 
 
+def test_task6():
+    print("\n--- Task 6: dry-run guard minors ---")
+    g = read(COMP_DIR / "dry_run_guard" / "dry_run_guard.c")
+    ws = read(MAIN_DIR / "web_server.c")
+    js = read(MAIN_DIR / "static" / "app.js")
+    ms = function_body(g, "dry_run_guard_measure_start", r"esp_err_t\s+")
+    m = re.search(r"if\s*\(\s*!\s*flow_switch_get_status\(&fs\)\s*\)\s*\{[^}]*ESP_ERR_NOT_FOUND", ms, re.S)
+    assert_test(m is not None, "measure_start returns ESP_ERR_NOT_FOUND when the flow switch cannot be read")
+    assert_test(m is not None and "xSemaphoreGive(s_apply)" in m.group(0),
+                "the NOT_FOUND path releases s_apply")
+    h = function_body(ws, "handle_api_protection_measure_post")
+    assert_test(re.search(r"ESP_ERR_NOT_FOUND[^;]*\{?[^}]*\"flow_unavailable\"[^;]*503", h, re.S) is not None,
+                "web handler maps ESP_ERR_NOT_FOUND to 503 flow_unavailable")
+    assert_test("flow_already_on" in h and "409" in h and "measure_unavailable" in h,
+                "web handler keeps the 409 flow_already_on / measure_unavailable mapping")
+    assert_test(re.search(r"is_start\s*\?\s*send_api_error\(req,\s*\"measure_unavailable\"", h) is None
+                or "ESP_ERR_INVALID_STATE" in h, "unknown start errors are not mapped to measure_unavailable")
+    assert_test(re.search(r"\"unavailable\"[^;]*503", h, re.S) is not None, "other start errors map to 503 unavailable")
+    assert_test("flow_unavailable" in js and "อ่านสถานะ flow switch ไม่ได้ ตรวจสายแล้วลองใหม่" in js,
+                "app.js shows the Thai flow_unavailable message")
+    ac = function_body(g, "apply_change")
+    assert_test("(void)alarm_engine_system_raise" not in ac and "(void)alarm_engine_system_clear" not in ac,
+                "apply_change does not discard the alarm raise/clear results")
+    assert_test("(void)alarm_engine_system_raise" not in g and "(void)alarm_engine_system_clear" not in g,
+                "no alarm raise/clear result is discarded anywhere in the guard")
+    tick = function_body(g, "guard_tick")
+    assert_test("alarm_resync" in tick, "guard_tick retries a failed alarm raise/clear")
+    rs = function_body(g, "alarm_resync")
+    assert_test("alarm_engine_system_raise" in rs and "alarm_engine_system_clear" in rs
+                and "s_lock" not in rs, "alarm_resync calls the engine without taking s_lock")
+    assert_test("ESP_LOGW" in rs and "ESP_LOGI" in rs, "alarm_resync logs one WARN on failure and one INFO on recovery")
+
+
 def main():
     test_task1()
     test_task2()
     test_task3()
     test_task4()
     test_task5()
+    test_task6()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

@@ -6154,11 +6154,17 @@ static esp_err_t handle_api_protection_measure_post(httpd_req_t *req) {
     return send_api_error(req, "flow_already_on", "Flow switch reads flow before the pump started",
                           "409 Conflict");
   }
+  if (is_start && err == ESP_ERR_NOT_FOUND) {
+    return send_api_error(req, "flow_unavailable", "Flow switch could not be read",
+                          "503 Service Unavailable");
+  }
+  if (is_start && err == ESP_ERR_INVALID_STATE) {
+    return send_api_error(req, "measure_unavailable", "Stop the water pump first",
+                          "409 Conflict");
+  }
   if (err != ESP_OK) {
-    return is_start ? send_api_error(req, "measure_unavailable", "Stop the water pump first",
-                                     "409 Conflict")
-                    : send_api_error(req, "unavailable", "Dry-run protection not running",
-                                     "503 Service Unavailable");
+    return send_api_error(req, "unavailable", "Dry-run protection not running",
+                          "503 Service Unavailable");
   }
   return protection_send_measure(req);
 }

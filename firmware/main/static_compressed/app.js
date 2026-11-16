@@ -888,8 +888,10 @@ function dryRunMeasureStart() {
             var code = data && data.error;
             setPumpAlert('dry-run-error', code === 'flow_already_on' ?
                 'flow switch แจ้งว่ามีน้ำไหลอยู่แล้วก่อนเริ่มวัด ตรวจ flow switch / ถอดจัมเปอร์ก่อน' :
+                (code === 'flow_unavailable' ?
+                'อ่านสถานะ flow switch ไม่ได้ ตรวจสายแล้วลองใหม่' :
                 (code === 'measure_unavailable' ?
-                'เริ่มวัดไม่ได้ในขณะนี้ ตรวจสอบสถานะปั๊มและการป้องกัน' : 'เริ่มวัดไม่สำเร็จ'));
+                'เริ่มวัดไม่ได้ในขณะนี้ ตรวจสอบสถานะปั๊มและการป้องกัน' : 'เริ่มวัดไม่สำเร็จ')));
             return;
         }
         dryRunRenderMeasure(data);

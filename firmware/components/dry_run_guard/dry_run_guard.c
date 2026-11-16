@@ -101,6 +101,47 @@ static void capture_change(change_t *c, const dry_run_out_t *out, uint8_t old_st
     c->wait_sec = dry_run_wait_remaining_sec(&s_rt, now);
 }
 
+/* The alarm state the guard wants the engine to show. Touched only under s_apply (never s_lock), so a
+ * retry needs no new lock: it runs on the same s_apply -> (engine lock, internal) path as the first try. */
+static struct {
+    bool pending; /* last raise/clear was refused: retry on each tick */
+    bool raise;   /* true: raise with value; false: clear with reason + value */
+    uint8_t reason;
+    float value;
+    bool warned; /* the failure was logged; the next success logs recovery */
+} s_alarm_want;
+
+/* Send the wanted alarm state to the engine. Caller holds s_apply, NOT s_lock. */
+static void alarm_resync(void) {
+    if (!s_alarm_want.pending) {
+        return;
+    }
+    esp_err_t err = s_alarm_want.raise
+                        ? alarm_engine_system_raise(ALARM_SYSTEM_ID_DRY_RUN, s_alarm_want.value)
+                        : alarm_engine_system_clear(ALARM_SYSTEM_ID_DRY_RUN, s_alarm_want.reason,
+                                                    s_alarm_want.value);
+    if (err == ESP_OK) {
+        s_alarm_want.pending = false;
+        if (s_alarm_want.warned) {
+            s_alarm_want.warned = false;
+            ESP_LOGI(TAG, "dry-run alarm %s delivered after retry", s_alarm_want.raise ? "raise" : "clear");
+        }
+    } else if (!s_alarm_want.warned) {
+        s_alarm_want.warned = true;
+        ESP_LOGW(TAG, "dry-run alarm %s failed (%s), will retry", s_alarm_want.raise ? "raise" : "clear",
+                 esp_err_to_name(err));
+    }
+}
+
+/* Record a new wanted state (replaces any older pending one) and try it. Caller holds s_apply. */
+static void alarm_want(bool raise, uint8_t reason, float value) {
+    s_alarm_want.pending = true;
+    s_alarm_want.raise = raise;
+    s_alarm_want.reason = reason;
+    s_alarm_want.value = value;
+    alarm_resync();
+}
+
 static void apply_change(const change_t *c) {
     uint8_t act = c->out.actions;
 
@@ -110,10 +151,10 @@ static void apply_change(const change_t *c) {
                                            (act & DRY_RUN_ACT_RELEASE_RESUME) != 0);
     }
     if (act & DRY_RUN_ACT_RAISE) {
-        (void)alarm_engine_system_raise(ALARM_SYSTEM_ID_DRY_RUN, c->out.value);
+        alarm_want(true, 0, c->out.value);
     }
     if (act & DRY_RUN_ACT_CLEAR) {
-        (void)alarm_engine_system_clear(ALARM_SYSTEM_ID_DRY_RUN, c->out.clear_reason, c->out.value);
+        alarm_want(false, c->out.clear_reason, c->out.value);
     }
     /* Every entry to and exit from LOCKED is persisted, whatever flags the machine set. */
     bool was_locked = c->old_state == DRY_RUN_LOCKED;
@@ -170,6 +211,8 @@ static void on_alarm_ack(uint16_t id) {
 
 static void guard_tick(void) {
     xSemaphoreTake(s_apply, portMAX_DELAY);
+
+    alarm_resync(); /* retry a refused raise/clear before this tick's own changes */
 
     pump_control_status_t ps;
     memset(&ps, 0, sizeof(ps));
@@ -285,6 +328,7 @@ esp_err_t dry_run_guard_init(void) {
     uint32_t now = now_ms();
     s_cfg = cfg;
     memset(&s_meas, 0, sizeof(s_meas));
+    memset(&s_alarm_want, 0, sizeof(s_alarm_want));
     dry_run_begin(&s_rt, &s_cfg, stored_locked, now);
     s_initialized = true; /* before the alarm is registered: a late ack must find a valid state */
 
@@ -298,7 +342,9 @@ esp_err_t dry_run_guard_init(void) {
     /* Make the pump match the machine (boot lock is also passed via water_guard_initial). */
     (void)pump_control_set_water_guard((pump_control_water_guard_t)s_rt.state, false);
     if (s_rt.state == DRY_RUN_LOCKED) {
-        (void)alarm_engine_system_raise(ALARM_SYSTEM_ID_DRY_RUN, (float)s_rt.trips);
+        xSemaphoreTake(s_apply, portMAX_DELAY); /* the guard task is not running yet; a late ack may be */
+        alarm_want(true, 0, (float)s_rt.trips);
+        xSemaphoreGive(s_apply);
     }
 
     if (xTaskCreatePinnedToCore(guard_task, "dry_run", GUARD_TASK_STACK, NULL, GUARD_TASK_PRIORITY, &s_task,
@@ -394,7 +440,12 @@ esp_err_t dry_run_guard_measure_start(void) {
     }
     flow_switch_status_t fs;
     memset(&fs, 0, sizeof(fs));
-    if (flow_switch_get_status(&fs) && fs.flow_on) {
+    if (!flow_switch_get_status(&fs)) {
+        /* Cannot tell whether flow is already on: do not start a measure blind. */
+        xSemaphoreGive(s_apply);
+        return ESP_ERR_NOT_FOUND;
+    }
+    if (fs.flow_on) {
         /* Flow already reads on before the pump starts (stuck switch / jumper left in): a measure
          * would finish instantly with a bogus prime time. */
         xSemaphoreGive(s_apply);
