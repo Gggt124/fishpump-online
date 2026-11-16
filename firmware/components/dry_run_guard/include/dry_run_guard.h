@@ -56,7 +56,8 @@ bool dry_run_guard_get_status(dry_run_guard_status_t *out);
 esp_err_t dry_run_guard_set_config(const dry_run_config_t *cfg, const char **bad_field);
 
 /* ESP_OK | ESP_ERR_INVALID_STATE (not initialised, water running, WAIT/LOCKED, already measuring,
- * or pump_control refused the test). */
+ * or pump_control refused the test) | ESP_ERR_INVALID_RESPONSE (flow switch already reads flow
+ * before the pump started; the relay is not started). */
 esp_err_t dry_run_guard_measure_start(void);
 /* Switches the test relay off and reports STOPPED. ESP_OK also when nothing was running. */
 esp_err_t dry_run_guard_measure_stop(void);

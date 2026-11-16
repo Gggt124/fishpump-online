@@ -6147,6 +6147,10 @@ static esp_err_t handle_api_protection_measure_post(httpd_req_t *req) {
                           "400 Bad Request");
   }
   esp_err_t err = is_start ? dry_run_guard_measure_start() : dry_run_guard_measure_stop();
+  if (is_start && err == ESP_ERR_INVALID_RESPONSE) {
+    return send_api_error(req, "flow_already_on", "Flow switch reads flow before the pump started",
+                          "409 Conflict");
+  }
   if (err != ESP_OK) {
     return is_start ? send_api_error(req, "measure_unavailable", "Stop the water pump first",
                                      "409 Conflict")

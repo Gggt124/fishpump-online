@@ -886,8 +886,10 @@ function dryRunMeasureStart() {
     apiPost('/api/protection/measure', { action: 'start' }, function (err, data) {
         if (err || !data || !data.ok) {
             var code = data && data.error;
-            setPumpAlert('dry-run-error', code === 'measure_unavailable' ?
-                'เริ่มวัดไม่ได้ในขณะนี้ ตรวจสอบสถานะปั๊มและการป้องกัน' : 'เริ่มวัดไม่สำเร็จ');
+            setPumpAlert('dry-run-error', code === 'flow_already_on' ?
+                'flow switch แจ้งว่ามีน้ำไหลอยู่แล้วก่อนเริ่มวัด ตรวจ flow switch / ถอดจัมเปอร์ก่อน' :
+                (code === 'measure_unavailable' ?
+                'เริ่มวัดไม่ได้ในขณะนี้ ตรวจสอบสถานะปั๊มและการป้องกัน' : 'เริ่มวัดไม่สำเร็จ'));
             return;
         }
         dryRunRenderMeasure(data);
@@ -1951,7 +1953,10 @@ function tickPumpCountdown() {
     var washRunning = pumpLastStatus.system_wash && pumpLastStatus.system_wash.running;
 
     if (waterRunning || washRunning) {
-        var waterExpired = waterRunning && getWaterCountdownSec() <= 0;
+        /* Dry-run WAIT/LOCKED reports running + IDLE + 0 s: not an expiry, so no rollover sync. */
+        var waterIdle = !!(pumpLastStatus.system_water &&
+            String(pumpLastStatus.system_water.phase || '').toUpperCase() === 'IDLE');
+        var waterExpired = waterRunning && !waterIdle && getWaterCountdownSec() <= 0;
         var washExpired = washRunning && getWashCountdownSec() <= 0;
         var advanced = false;
         if (waterExpired) {
@@ -2165,8 +2170,10 @@ function renderPumpCountdown() {
 
     // Render Water System Countdown & Progress Fill
     waterDisplayedCountdownSec = getWaterCountdownSec();
-    setText('water-countdown', formatPumpCountdown(waterDisplayedCountdownSec));
     var sysWater = pumpLastStatus && pumpLastStatus.system_water;
+    var waterHeld = !!(sysWater && sysWater.running && String(sysWater.phase || '').toUpperCase() === 'IDLE' &&
+        dryRunLocal && (dryRunLocal.state === 'wait' || dryRunLocal.state === 'locked'));
+    setText('water-countdown', waterHeld ? 'หยุดโดยระบบป้องกันเดินแห้ง' : formatPumpCountdown(waterDisplayedCountdownSec));
     var waterCountdown = pumpEl('water-countdown');
     var waterBarFill = pumpEl('water-progress-bar-fill');
     applySystemPhaseVisuals(waterCountdown, waterBarFill, sysWater);
@@ -5248,6 +5255,7 @@ var ALARM_SUMMARY_POLL_MS = 10000;
 var ALARM_VALUES_POLL_MS = 2000;
 var ALARM_SEEN_KEY = 'fishpump_alarm_seen';
 var ALARM_HISTORY_LEN = 32;
+var ALARM_SYSTEM_ID_BASE = 65000;
 
 var alarmSummaryTimer = null;
 var alarmSummaryInFlight = false;
@@ -5399,6 +5407,17 @@ function alarmFormatValue(key, v) {
     return out;
 }
 
+/* System alarms (rule_id >= ALARM_SYSTEM_ID_BASE) carry the trip number on raise and partial dry
+ * seconds on clear, not the signal value: never render those as on/off. */
+function alarmFormatEventValue(ruleId, key, v, type) {
+    if (Number(ruleId) >= ALARM_SYSTEM_ID_BASE) {
+        if (type && type !== 'raised') return '';
+        if (typeof v !== 'number' || !isFinite(v)) return '';
+        return 'ครั้งที่ ' + Math.round(v);
+    }
+    return alarmFormatValue(key, v);
+}
+
 function alarmAgo(ms) {
     var s = Math.max(0, Math.floor(ms / 1000));
     if (s < 60) return s + ' วินาทีที่แล้ว';
@@ -5459,7 +5478,7 @@ function renderAlarmStatus(st) {
         row.appendChild(alarmSevChip(a.severity));
         var main = alarmMake('div', 'alarm-main');
         main.appendChild(alarmMake('div', 'alarm-name', a.name));
-        var sub = alarmFormatValue(a.signal, a.value) + ' · ' + alarmAgo(st.uptime_ms - a.since_ms);
+        var sub = alarmFormatEventValue(a.rule_id, a.signal, a.value, 'raised') + ' · ' + alarmAgo(st.uptime_ms - a.since_ms);
         if (a.state === 'latched') sub += ' · ผ่านไปแล้ว รอรับทราบ';
         else if (a.acked) sub += ' · รับทราบแล้ว';
         if (a.dry_run && (a.dry_run.state === 'wait' || a.dry_run.state === 'locked')) {
@@ -5490,7 +5509,7 @@ function renderAlarmStatus(st) {
         row.appendChild(alarmMake('span', 'alarm-sev', ALARM_TYPE_TEXT[h.type] || h.type));
         var main = alarmMake('div', 'alarm-main');
         main.appendChild(alarmMake('div', 'alarm-name', h.name));
-        main.appendChild(alarmMake('div', 'alarm-sub', alarmFormatValue(h.signal, h.value)));
+        main.appendChild(alarmMake('div', 'alarm-sub', alarmFormatEventValue(h.rule_id, h.signal, h.value, h.type)));
         row.appendChild(main);
         hist.appendChild(row);
     });

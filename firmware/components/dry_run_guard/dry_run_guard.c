@@ -391,6 +391,14 @@ esp_err_t dry_run_guard_measure_start(void) {
         xSemaphoreGive(s_apply);
         return ESP_ERR_INVALID_STATE;
     }
+    flow_switch_status_t fs;
+    memset(&fs, 0, sizeof(fs));
+    if (flow_switch_get_status(&fs) && fs.flow_on) {
+        /* Flow already reads on before the pump starts (stuck switch / jumper left in): a measure
+         * would finish instantly with a bogus prime time. */
+        xSemaphoreGive(s_apply);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
     if (!pump_control_water_test(true)) {
         xSemaphoreGive(s_apply);
         return ESP_ERR_INVALID_STATE;

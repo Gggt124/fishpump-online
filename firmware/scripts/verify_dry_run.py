@@ -248,6 +248,26 @@ def test_ui():
                 "cleanupCurrentView stops dry-run polling")
 
 
+def test_final_review_fixes():
+    print("\n--- Final review fixes ---")
+    js = read(MAIN_DIR / "static" / "app.js")
+    ws = read(MAIN_DIR / "web_server.c")
+    guard = read(COMP_DIR / "dry_run_guard" / "dry_run_guard.c")
+    tick = js_function_body(js, "tickPumpCountdown")
+    assert_test(tick != "" and "'IDLE'" in tick, "tickPumpCountdown ignores water expiry while phase is IDLE")
+    assert_test("ALARM_SYSTEM_ID_BASE" in js, "app.js defines ALARM_SYSTEM_ID_BASE")
+    fmt = js_function_body(js, "alarmFormatEventValue")
+    assert_test("'ครั้งที่ '" in fmt and "ALARM_SYSTEM_ID_BASE" in fmt
+                and "alarmFormatEventValue(" in js_function_body(js, "renderAlarmStatus"),
+                "alarm render path shows system alarm value as 'ครั้งที่ n'")
+    start = function_body(guard, "dry_run_guard_measure_start", r"esp_err_t\s+")
+    i_flow = start.find("flow_switch_get_status")
+    i_test = start.find("pump_control_water_test(true)")
+    assert_test(0 <= i_flow < i_test, "measure_start reads flow_switch_get_status before starting the relay")
+    assert_test('"flow_already_on"' in ws, "web_server.c maps measure refusal to flow_already_on")
+    assert_test("'flow_already_on'" in js, "app.js handles flow_already_on")
+
+
 def main():
     test_engine()
     test_engine_lock()
@@ -255,6 +275,7 @@ def main():
     test_guard()
     test_api()
     test_ui()
+    test_final_review_fixes()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 
