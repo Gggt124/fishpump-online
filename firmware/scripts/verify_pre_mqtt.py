@@ -276,7 +276,7 @@ def test_task7():
         tag = m.group(0) if m else ""
         assert_test(f'min="{lo}"' in tag and f'max="{hi}"' in tag, f"{id_} has min={lo} max={hi}")
         lab = re.search(r'<label for="' + id_ + r'">([^<]*)</label>', html)
-        assert_test(lab is not None and f"({lo}–{hi})" in lab.group(1), f"{id_} label shows ({lo}–{hi})")
+        assert_test(lab is not None and f"{lo}–{hi}" in lab.group(1), f"{id_} label shows {lo}–{hi}")
     assert_test("ถ้าปั๊มเปิดแต่ละรอบสั้นกว่าประมาณ 6 วินาที แจ้งเตือนเดินแห้งจะไม่หายเองเมื่อน้ำกลับมา ต้องกดรับทราบ" in html,
                 "dry-run card carries the short-cycle note")
     assert_test("document.hidden" in js_function_body(js, "dryRunPollTick"),
@@ -298,6 +298,79 @@ def test_task7():
     assert_test("DRY_RUN_RANGE" in rf and "65535" not in rf, "dryRunReadForm validates the real ranges")
 
 
+def test_task8():
+    print("\n--- Task 8: alarm bell, 3 s summary, critical overlay with sound ---")
+    js = read(MAIN_DIR / "static" / "app.js")
+    html = read(MAIN_DIR / "static" / "index.html")
+    css = read(MAIN_DIR / "static" / "style.css")
+    assert_test("ALARM_SUMMARY_POLL_MS = 3000;" in js, "summary poll is 3 s")
+    for id_ in ("alarm-bell", "alarm-bell-badge", "alarm-bell-panel", "alarm-bell-list", "alarm-bell-all",
+                "alarm-critical-overlay", "alarm-critical-text", "alarm-critical-ack",
+                "alarm-critical-dismiss", "alarm-sound-enabled", "m-nav-more-dot"):
+        assert_test(f'id="{id_}"' in html, f"index.html has #{id_}")
+    for text in ("การแจ้งเตือน", "แจ้งเตือนล่าสุด", "ดูทั้งหมด", "แจ้งเตือนวิกฤต",
+                 "ปิดไว้ก่อน", "เสียงเตือนเหตุวิกฤตในเบราว์เซอร์นี้"):
+        assert_test(text in html, f"index.html carries the copy {text}")
+    assert_test("fishpump_alarm_critical_dismissed" in js and "fishpump_alarm_sound" in js,
+                "both storage keys are used in app.js")
+    for fn in ("alarmReadDismissed", "alarmWriteDismissed", "alarmSoundOn", "alarmSetSound"):
+        body = js_function_body(js, fn)
+        assert_test("localStorage" in body and "try" in body and "catch" in body,
+                    f"{fn} wraps storage access in try/catch")
+    sh = js_function_body(js, "alarmOverlayShouldShow")
+    assert_test("last_critical_seq" in sh and "critical_unacked" in sh and "alarmReadDismissed" in sh
+                and "boot_id" in sh, "overlay show rule compares last_critical_seq against the dismissed record")
+    assert_test(re.search(r"last_critical_seq\s*>\s*0", sh) is not None
+                and re.search(r"critical_unacked\s*>\s*0", sh) is not None,
+                "overlay needs critical_unacked > 0 and last_critical_seq > 0")
+    ro = js_function_body(js, "renderAlarmOverlay")
+    assert_test("alarmOverlayShouldShow" in ro and "alarm-critical-text" in ro
+                and "alarmStartBeeping" in ro and "alarmStopBeeping" in ro,
+                "renderAlarmOverlay shows/hides, sets the text and drives the beeper")
+    assert_test("innerHTML" not in ro and "textContent" in ro + js_function_body(js, "setText"),
+                "overlay text goes through textContent")
+    dm = js_function_body(js, "alarmDismissCritical")
+    assert_test("alarmWriteDismissed" in dm and "last_critical_seq" in dm, "dismiss stores {boot_id, last_critical_seq}")
+    ak = js_function_body(js, "alarmCriticalAck")
+    assert_test("all: true" in ak and "alarmWriteDismissed" in ak and "ok" in ak,
+                "overlay ack sends all:true and dismisses only on success")
+    assert_test("onDone" in js_function_body(js, "alarmAck"), "alarmAck reports completion to its caller")
+    audio = js_function_body(js, "alarmEnsureAudio")
+    assert_test("AudioContext" in audio and "try" in audio and "catch" in audio and "resume" in audio,
+                "AudioContext is created/resumed inside a try block")
+    beep = js_function_body(js, "alarmBeepBurst")
+    assert_test("try" in beep and "880" in beep and "0.15" in beep, "beep burst: 880 Hz, 150 ms, in try/catch")
+    assert_test("ALARM_BEEP_EVERY_MS = 5000;" in js and "ALARM_BEEP_EVERY_MS" in js_function_body(js, "alarmStartBeeping")
+                and "setInterval" in js_function_body(js, "alarmStartBeeping")
+                and "clearInterval" in js_function_body(js, "alarmStopBeeping"),
+                "beeper repeats every 5 s and stops on hide")
+    assert_test("addEventListener('click', alarmEnsureAudio" in js or "addEventListener('click', alarmUnlockAudio" in js,
+                "audio is unlocked by the first user click")
+    rs = js_function_body(js, "renderAlarmSummary")
+    assert_test("alarmRenderBell" in rs and "m-nav-more-dot" in rs + js_function_body(js, "alarmRenderBell"),
+                "summary render updates the bell and the more-menu dot")
+    rb = js_function_body(js, "alarmRenderBell")
+    assert_test("document.title" in rb and "ALARM_BASE_TITLE" in rb, "tab title gets the (n) prefix and returns to base")
+    assert_test("isAuthenticated" in js_function_body(js, "alarmBellVisible") and "/login" in js_function_body(js, "alarmBellVisible"),
+                "bell shows only when authenticated and not on /login")
+    op = js_function_body(js, "alarmOpenBellPanel")
+    assert_test("/api/alarms/status" in op and "alarmWriteSeen" in op, "opening the panel fetches status and marks seen")
+    rp = js_function_body(js, "alarmRenderBellList")
+    assert_test("slice" in rp and "alarmFormatEventValue" in rp and "ALARM_TYPE_TEXT" in rp and "innerHTML" not in rp,
+                "bell list shows newest events with formatted values via textContent")
+    assert_test("Escape" in js and "syncAlarmSummary(true)" in js_function_body(js, "alarmOnVisibility"),
+                "Escape closes the panel; visibilitychange to visible re-syncs the summary")
+    assert_test("alarmHideChrome" in js_function_body(js, "handleRoute"), "handleRoute hides bell and overlay on login")
+    assert_test(".alarm-bell" in css and ".alarm-critical-overlay" in css and "var(--error" in css,
+                "style.css styles the bell and overlay through theme variables")
+    # Task 7 carry-over: label format
+    for id_, lo, hi in (("dry-run-prime", 1, 600), ("dry-run-trip", 3, 120),
+                        ("dry-run-wait", 1, 240), ("dry-run-retries", 0, 5)):
+        lab = re.search(r'<label for="' + id_ + r'">([^<]*)</label>', html)
+        assert_test(lab is not None and f", {lo}–{hi}" in lab.group(1) and "))" not in lab.group(1),
+                    f"{id_} label has a single parenthesis group with {lo}–{hi}")
+
+
 def main():
     test_task1()
     test_task2()
@@ -306,6 +379,7 @@ def main():
     test_task5()
     test_task6()
     test_task7()
+    test_task8()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

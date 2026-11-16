@@ -165,7 +165,7 @@ def test_alarm_ui():
     route = m.group(1) if m else ""
     assert_test(route.count("path === '/alarms'") >= 2, "handleRoute handles /alarms in both places")
     assert_test("addEventListener('alarm'" in js, "app.js registers the alarm SSE listener")
-    assert_test("ALARM_SUMMARY_POLL_MS = 10000" in js, "summary poll is 10 s")
+    assert_test("ALARM_SUMMARY_POLL_MS = 3000" in js, "summary poll is 3 s")
     assert_test("ALARM_VALUES_POLL_MS = 2000" in js, "values poll is 2 s")
     assert_test("fishpump_alarm_seen" in js, "unseen marker stored in localStorage")
     for fn in ("initAlarmsPage", "syncAlarmSummary", "syncAlarmStatus"):

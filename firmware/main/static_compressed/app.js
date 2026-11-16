@@ -5286,9 +5286,13 @@ function doChangePassword(e) {
 
 /* ======== Alarms ======== */
 
-var ALARM_SUMMARY_POLL_MS = 10000;
+var ALARM_SUMMARY_POLL_MS = 3000;
 var ALARM_VALUES_POLL_MS = 2000;
 var ALARM_SEEN_KEY = 'fishpump_alarm_seen';
+var ALARM_CRIT_DISMISSED_KEY = 'fishpump_alarm_critical_dismissed';
+var ALARM_SOUND_KEY = 'fishpump_alarm_sound';
+var ALARM_BASE_TITLE = document.title;
+var ALARM_BEEP_EVERY_MS = 5000;
 var ALARM_HISTORY_LEN = 32;
 var ALARM_SYSTEM_ID_BASE = 65000;
 
@@ -5307,6 +5311,9 @@ var alarmValuesInFlight = false;
 var alarmEditing = null;
 var alarmSaving = false;
 var alarmWired = false;
+var alarmAudioCtx = null;
+var alarmBeepTimer = null;
+var alarmBellOpen = false;
 
 var ALARM_GROUP_TEXT = {
     pump_power: 'ไฟฟ้าปั๊มน้ำ',
@@ -5390,11 +5397,241 @@ function renderAlarmSummary(sum) {
 
     var count = active + (onPage ? 0 : alarmUnseenCount(sum));
     ['alarm-badge', 'm-alarm-badge'].forEach(function (id) {
-        var b = alarmEl(id);
-        if (!b) return;
-        b.textContent = count > 99 ? '99+' : String(count);
-        b.classList.toggle('hidden', count === 0);
+        alarmSetBadge(alarmEl(id), count);
     });
+    alarmRenderBell(count);
+    /* /api/alarms/status carries no last_critical_seq, so only the summary drives the overlay. */
+    if (typeof sum.last_critical_seq === 'number') renderAlarmOverlay(sum);
+}
+
+function alarmSetBadge(b, count) {
+    if (!b) return;
+    b.textContent = count > 99 ? '99+' : String(count);
+    b.classList.toggle('hidden', count === 0);
+}
+
+/* ---- Bell, tab title and more-menu dot ---- */
+
+function alarmBellVisible() {
+    return isAuthenticated() && window.location.pathname !== '/login';
+}
+
+function alarmRenderBell(count) {
+    var visible = alarmBellVisible();
+    var bell = alarmEl('alarm-bell');
+    if (bell) bell.classList.toggle('hidden', !visible);
+    document.body.classList.toggle('has-alarm-bell', visible);
+    var shown = visible ? count : 0;
+    alarmSetBadge(alarmEl('alarm-bell-badge'), shown);
+    var dot = alarmEl('m-nav-more-dot');
+    if (dot) dot.classList.toggle('hidden', shown === 0);
+    document.title = shown > 0 ? '(' + (shown > 99 ? '99+' : shown) + ') ' + ALARM_BASE_TITLE : ALARM_BASE_TITLE;
+}
+
+/* Login page or logged out: nothing alarm-related may stay on screen. */
+function alarmHideChrome() {
+    alarmCloseBellPanel();
+    alarmStopBeeping();
+    var ov = alarmEl('alarm-critical-overlay');
+    if (ov) ov.classList.add('hidden');
+    alarmRenderBell(0);
+}
+
+function alarmCloseBellPanel() {
+    alarmBellOpen = false;
+    var panel = alarmEl('alarm-bell-panel');
+    if (panel) panel.classList.add('hidden');
+    var bell = alarmEl('alarm-bell');
+    if (bell) bell.setAttribute('aria-expanded', 'false');
+}
+
+function alarmRenderBellList(st) {
+    var list = alarmEl('alarm-bell-list');
+    alarmClear(list);
+    var events = (st.history || []).slice(-5).reverse();
+    events.forEach(function (h) {
+        var row = alarmMake('div', 'alarm-row');
+        var main = alarmMake('div', 'alarm-main');
+        main.appendChild(alarmMake('div', 'alarm-name', h.name));
+        var sub = alarmAgo(st.uptime_ms - h.uptime_ms) + ' · ' + (ALARM_TYPE_TEXT[h.type] || h.type);
+        var val = alarmFormatEventValue(h.rule_id, h.signal, h.value, h.type);
+        if (val) sub += ' · ' + val;
+        main.appendChild(alarmMake('div', 'alarm-sub', sub));
+        row.appendChild(main);
+        list.appendChild(row);
+    });
+    if (!events.length) list.appendChild(alarmMake('p', 'text-sm text-muted', 'ยังไม่มีเหตุการณ์'));
+}
+
+function alarmOpenBellPanel() {
+    alarmBellOpen = true;
+    var panel = alarmEl('alarm-bell-panel');
+    if (panel) panel.classList.remove('hidden');
+    var bell = alarmEl('alarm-bell');
+    if (bell) bell.setAttribute('aria-expanded', 'true');
+    apiGet('/api/alarms/status', function (err, data) {
+        if (err || !data || data.ok !== true) {
+            var list = alarmEl('alarm-bell-list');
+            alarmClear(list);
+            list.appendChild(alarmMake('p', 'text-sm text-muted', 'ดึงข้อมูลไม่สำเร็จ'));
+            return;
+        }
+        alarmRenderBellList(data);
+        alarmWriteSeen(data.boot_id, data.last_seq);
+        if (alarmLastSummary) renderAlarmSummary(alarmLastSummary);
+    });
+}
+
+function alarmOnDocClick(e) {
+    if (!alarmBellOpen) return;
+    var bell = alarmEl('alarm-bell');
+    var panel = alarmEl('alarm-bell-panel');
+    if (bell && bell.contains(e.target)) return;
+    if (panel && panel.contains(e.target) && !e.target.closest('a')) return;
+    alarmCloseBellPanel();
+}
+
+function alarmOnVisibility() {
+    if (!document.hidden) syncAlarmSummary(true);
+}
+
+/* ---- Critical overlay ---- */
+
+function alarmReadDismissed() {
+    try {
+        var raw = window.localStorage.getItem(ALARM_CRIT_DISMISSED_KEY);
+        var v = raw ? JSON.parse(raw) : null;
+        if (v && typeof v.boot_id === 'number' && typeof v.seq === 'number') return v;
+    } catch (e) { }
+    return null;
+}
+
+function alarmWriteDismissed(bootId, seq) {
+    try {
+        window.localStorage.setItem(ALARM_CRIT_DISMISSED_KEY, JSON.stringify({ boot_id: bootId, seq: seq }));
+    } catch (e) { }
+}
+
+/* Show only while a critical is unacked and it is not the one the user already dismissed. */
+function alarmOverlayShouldShow(sum) {
+    var s = sum.summary || {};
+    if (!(s.critical_unacked > 0)) return false;
+    if (!(sum.last_critical_seq > 0)) return false;
+    var d = alarmReadDismissed();
+    return !(d && d.boot_id === sum.boot_id && d.seq === sum.last_critical_seq);
+}
+
+function renderAlarmOverlay(sum) {
+    var ov = alarmEl('alarm-critical-overlay');
+    if (!ov) return;
+    var show = alarmOverlayShouldShow(sum);
+    var wasHidden = ov.classList.contains('hidden');
+    if (show && alarmBellVisible()) {
+        setText('alarm-critical-text', 'มีเหตุวิกฤตที่ยังไม่รับทราบ ' + sum.summary.critical_unacked + ' รายการ');
+        ov.classList.remove('hidden');
+        if (wasHidden) {
+            var ack = alarmEl('alarm-critical-ack');
+            if (ack) ack.focus();
+        }
+        alarmStartBeeping();
+    } else {
+        ov.classList.add('hidden');
+        alarmStopBeeping();
+    }
+}
+
+function alarmDismissCritical() {
+    var sum = alarmLastSummary;
+    if (!sum) return;
+    alarmWriteDismissed(sum.boot_id, sum.last_critical_seq);
+    renderAlarmOverlay(sum);
+}
+
+function alarmCriticalAck() {
+    var sum = alarmLastSummary;
+    alarmAck({ all: true }, alarmEl('alarm-critical-ack'), function (ok) {
+        if (!ok) return; /* overlay stays; alarmAck already showed the error toast */
+        if (sum) {
+            alarmWriteDismissed(sum.boot_id, sum.last_critical_seq);
+            renderAlarmOverlay(sum);
+        }
+    });
+}
+
+/* ---- Overlay sound: one shared AudioContext, unlocked by the first click ---- */
+
+function alarmSoundOn() {
+    try {
+        return window.localStorage.getItem(ALARM_SOUND_KEY) !== 'off';
+    } catch (e) { }
+    return true;
+}
+
+function alarmSetSound(on) {
+    try {
+        window.localStorage.setItem(ALARM_SOUND_KEY, on ? 'on' : 'off');
+    } catch (e) { }
+}
+
+function alarmEnsureAudio() {
+    try {
+        if (!alarmAudioCtx) {
+            var AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) alarmAudioCtx = new AC();
+        }
+        if (alarmAudioCtx && alarmAudioCtx.state === 'suspended') {
+            var p = alarmAudioCtx.resume();
+            if (p && p.catch) p.catch(function () { });
+        }
+    } catch (e) { }
+    return alarmAudioCtx;
+}
+
+/* Three 150 ms beeps at 880 Hz with 150 ms gaps. Silent if the browser has not unlocked audio. */
+function alarmBeepBurst() {
+    if (!alarmSoundOn()) return;
+    try {
+        var ctx = alarmAudioCtx;
+        if (!ctx || ctx.state !== 'running') return;
+        for (var i = 0; i < 3; i++) {
+            var t = ctx.currentTime + i * 0.3;
+            var osc = ctx.createOscillator();
+            var gain = ctx.createGain();
+            osc.frequency.value = 880;
+            gain.gain.value = 0.2;
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(t);
+            osc.stop(t + 0.15);
+        }
+    } catch (e) { }
+}
+
+function alarmStartBeeping() {
+    if (alarmBeepTimer) return;
+    alarmBeepBurst();
+    alarmBeepTimer = setInterval(alarmBeepBurst, ALARM_BEEP_EVERY_MS);
+}
+
+function alarmStopBeeping() {
+    if (alarmBeepTimer) { clearInterval(alarmBeepTimer); alarmBeepTimer = null; }
+}
+
+function alarmInitChrome() {
+    var bell = alarmEl('alarm-bell');
+    if (bell) bell.addEventListener('click', function () {
+        if (alarmBellOpen) alarmCloseBellPanel(); else alarmOpenBellPanel();
+    });
+    var ack = alarmEl('alarm-critical-ack');
+    if (ack) ack.addEventListener('click', alarmCriticalAck);
+    var dis = alarmEl('alarm-critical-dismiss');
+    if (dis) dis.addEventListener('click', alarmDismissCritical);
+    document.addEventListener('click', alarmOnDocClick);
+    document.addEventListener('click', alarmEnsureAudio);
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && alarmBellOpen) alarmCloseBellPanel();
+    });
+    document.addEventListener('visibilitychange', alarmOnVisibility);
 }
 
 function alarmStatusIsStale(sum) {
@@ -5579,13 +5816,15 @@ function syncAlarmStatus(force) {
     });
 }
 
-function alarmAck(body, btn) {
+function alarmAck(body, btn, onDone) {
     if (btn) setLoading(btn, true);
     apiPost('/api/alarms/ack', body, function (err, data) {
         if (btn) setLoading(btn, false);
-        if (err || !data || data.ok !== true) {
+        var ok = !(err || !data || data.ok !== true);
+        if (!ok) {
             showToast('รับทราบไม่สำเร็จ' + (err ? ': ' + err.message : ''), 'error');
         }
+        if (onDone) onDone(ok);
         syncAlarmSummary(true);
         syncAlarmStatus(true);
     });
@@ -5920,6 +6159,7 @@ function alarmWire() {
     if (alarmWired) return;
     alarmWired = true;
     alarmEl('alarm-add-rule').addEventListener('click', function () { openAlarmDialog(null); });
+    alarmEl('alarm-sound-enabled').addEventListener('change', function (e) { alarmSetSound(e.target.checked); });
     alarmEl('alarm-ack-all').addEventListener('click', function () {
         showConfirmModal('รับทราบทั้งหมด', 'รับทราบการแจ้งเตือนทั้งหมดที่กำลังเกิดอยู่?', function () {
             alarmAck({ all: true }, null);
@@ -5938,6 +6178,8 @@ function alarmWire() {
 function initAlarmsPage() {
     if (window.location.pathname !== '/alarms') return;
     alarmWire();
+    var soundSwitch = alarmEl('alarm-sound-enabled');
+    if (soundSwitch) soundSwitch.checked = alarmSoundOn();
     alarmStatus = null;
     syncAlarmStatus(true);
     alarmLoadRules();
@@ -6040,6 +6282,7 @@ function handleRoute() {
     /* The alarm summary poll runs on every logged-in view and is not stopped by cleanupCurrentView(). */
     if (path === '/login' || !isAuthenticated()) {
         stopAlarmSummaryPolling();
+        alarmHideChrome();
     } else {
         startAlarmSummaryPolling();
         if (alarmLastSummary) renderAlarmSummary(alarmLastSummary);
@@ -6142,6 +6385,7 @@ window.addEventListener('popstate', handleRoute);
     }
 
     initSettingsTabs();
+    alarmInitChrome();
 
     updateThemeIcons(getEffectiveTheme());
     handleRoute();

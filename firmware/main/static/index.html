@@ -834,17 +834,17 @@
                                 <span>เปิดการป้องกัน</span>
                             </label>
                             <div class="form-row">
-                                <label for="dry-run-prime">ช่วงผ่อนผันหลังปั๊มเปิด (วินาที) (1–600)</label>
+                                <label for="dry-run-prime">ช่วงผ่อนผันหลังปั๊มเปิด (วินาที, 1–600)</label>
                                 <input id="dry-run-prime" class="input-field" type="number" min="1" max="600" step="1" inputmode="numeric">
                                 <div class="field-error" id="dry-run-prime-error" role="alert"></div>
                             </div>
                             <div class="form-row">
-                                <label for="dry-run-trip">เวลาไม่มีน้ำสะสมก่อนตัด (วินาที) (3–120)</label>
+                                <label for="dry-run-trip">เวลาไม่มีน้ำสะสมก่อนตัด (วินาที, 3–120)</label>
                                 <input id="dry-run-trip" class="input-field" type="number" min="3" max="120" step="1" inputmode="numeric">
                                 <div class="field-error" id="dry-run-trip-error" role="alert"></div>
                             </div>
                             <div class="form-row">
-                                <label for="dry-run-wait">รอก่อนลองใหม่ (นาที) (1–240)</label>
+                                <label for="dry-run-wait">รอก่อนลองใหม่ (นาที, 1–240)</label>
                                 <input id="dry-run-wait" class="input-field" type="number" min="1" max="240" step="1" inputmode="numeric">
                                 <div class="field-error" id="dry-run-wait-error" role="alert"></div>
                             </div>
@@ -856,7 +856,7 @@
                                 <span>เพิ่มเวลารอเป็นสองเท่าทุกครั้ง</span>
                             </label>
                             <div class="form-row">
-                                <label for="dry-run-retries">ลองใหม่สูงสุด (ครั้ง, 0 = ล็อกทันที) (0–5)</label>
+                                <label for="dry-run-retries">ลองใหม่สูงสุด (ครั้ง, 0–5, 0 = ล็อกทันที)</label>
                                 <input id="dry-run-retries" class="input-field" type="number" min="0" max="5" step="1" inputmode="numeric">
                                 <div class="field-error" id="dry-run-retries-error" role="alert"></div>
                             </div>
@@ -1239,6 +1239,16 @@
 
             <div class="runtime-eyebrow mb-md" id="alarms-sync-state">กำลังดึงข้อมูลการแจ้งเตือน...</div>
             <div class="alert-banner alarm-stalled-banner hidden" id="alarm-engine-stalled">ระบบตรวจจับการแจ้งเตือนหยุดทำงาน การแจ้งเตือนอาจไม่เป็นปัจจุบัน</div>
+
+            <section class="section-card" id="alarm-sound-card">
+                <label class="toggle-row" for="alarm-sound-enabled">
+                    <div class="toggle-switch">
+                        <input id="alarm-sound-enabled" type="checkbox" role="switch">
+                        <span class="toggle-slider"></span>
+                    </div>
+                    <span>เสียงเตือนเหตุวิกฤตในเบราว์เซอร์นี้</span>
+                </label>
+            </section>
 
             <section class="section-card" id="alarm-active-card">
                 <div class="section-heading-row">
@@ -2373,6 +2383,7 @@
                 <use href="#icon-menu"></use>
             </svg>
             <span>เพิ่มเติม</span>
+            <span class="more-dot hidden" id="m-nav-more-dot" aria-hidden="true"></span>
         </button>
     </nav>
 
@@ -2406,6 +2417,41 @@
             </svg>
             <span>อัปเดตเฟิร์มแวร์</span>
         </a>
+    </div>
+
+    <!-- Alarm bell, always reachable while logged in -->
+    <button type="button" id="alarm-bell" class="alarm-bell hidden" aria-label="การแจ้งเตือน" aria-expanded="false" aria-controls="alarm-bell-panel">
+        <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+        </svg>
+        <span class="alarm-badge hidden" id="alarm-bell-badge">0</span>
+    </button>
+    <div id="alarm-bell-panel" class="alarm-bell-panel hidden" role="dialog" aria-label="แจ้งเตือนล่าสุด">
+        <div class="alarm-bell-head">
+            <h3>แจ้งเตือนล่าสุด</h3>
+            <a href="/alarms" id="alarm-bell-all" class="alarm-bell-link">ดูทั้งหมด</a>
+        </div>
+        <div class="alarm-list" id="alarm-bell-list"></div>
+    </div>
+
+    <!-- Critical overlay: covers the viewport until acknowledged or dismissed -->
+    <div id="alarm-critical-overlay" class="alarm-critical-overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="alarm-critical-heading">
+        <div class="alarm-critical-card">
+            <svg viewBox="0 0 24 24" width="56" height="56" stroke="currentColor" stroke-width="2" fill="none"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                <line x1="12" y1="9" x2="12" y2="13"></line>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+            </svg>
+            <h2 id="alarm-critical-heading">แจ้งเตือนวิกฤต</h2>
+            <p id="alarm-critical-text"></p>
+            <div class="alarm-critical-actions">
+                <button type="button" class="btn btn-danger" id="alarm-critical-ack">รับทราบทั้งหมด</button>
+                <button type="button" class="btn btn-outline" id="alarm-critical-dismiss">ปิดไว้ก่อน</button>
+            </div>
+        </div>
     </div>
 
     <script src="/app.js"></script>
