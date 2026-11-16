@@ -68,7 +68,8 @@ void test_alarm_store(void)
 
     /* v1 blob written by the previous firmware: [1][count][next_id u16][count x alarm_rule_t] */
     {
-        static uint8_t v1[ALARM_BLOB_HEADER_BYTES + 3 * sizeof(alarm_rule_t)];
+        static uint8_t v1[ALARM_BLOB_HEADER_BYTES + 3 * (sizeof(alarm_rule_t) + 4)];
+        const size_t v1rs = ALARM_BLOB_V1_REC_SIZE;
         v1[0] = ALARM_BLOB_V1;
         v1[1] = 3;
         v1[2] = 40;
@@ -79,15 +80,18 @@ void test_alarm_store(void)
             r.enabled = true;
             r.threshold = 1.5f + (float)i;
             r.delay_sec = (uint16_t)(5 + i);
-            memcpy(v1 + 4 + i * rs, &r, rs);
+            memset(v1 + 4 + i * v1rs, 0, v1rs);
+            memcpy(v1 + 4 + i * v1rs, &r, v1rs < rs ? v1rs : rs);
         }
-        size_t v1len = 4 + 3 * rs;
+        size_t v1len = 4 + 3 * v1rs;
         CHECK(alarm_blob_decode(v1, v1len, &back, &dropped) && dropped == 0 && back.count == 3 && back.next_id == 40);
         for (int i = 0; i < 3; i++) {
-            CHECK(memcmp(&back.rules[i], v1 + 4 + i * rs, rs) == 0 && back.rules[i].enabled);
+            CHECK(memcmp(&back.rules[i], v1 + 4 + i * v1rs, v1rs) == 0 && back.rules[i].enabled);
         }
         CHECK(!alarm_blob_decode(v1, v1len - 1, &back, &dropped)); /* v1 keeps the exact-length rule */
         CHECK(!alarm_blob_decode(v1, v1len + 1, &back, &dropped));
+        /* a v1 blob laid out with a different stride (sizeof + 4) is the wrong length */
+        CHECK(!alarm_blob_decode(v1, 4 + 3 * (rs + 4), &back, &dropped));
     }
 
     /* v2 with a larger record: extra tail bytes are ignored */

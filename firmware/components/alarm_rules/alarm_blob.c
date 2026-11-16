@@ -36,7 +36,7 @@ bool alarm_blob_decode(const uint8_t *buf, size_t len, alarm_rule_set_t *out, ui
     }
     uint8_t count = buf[1];
     size_t header = BLOB_V1_HEADER_BYTES;
-    size_t rec_size = sizeof(alarm_rule_t);
+    size_t rec_size = ALARM_BLOB_V1_REC_SIZE; /* v1 stored the struct as it was then, not as it is now */
     if (buf[0] == ALARM_BLOB_VERSION) {
         if (len < ALARM_BLOB_HEADER_BYTES) {
             return false;

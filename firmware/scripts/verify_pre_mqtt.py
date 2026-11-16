@@ -76,6 +76,10 @@ def test_task2():
     assert_test("ALARM_BLOB_READ_MAX_BYTES" in hdr, "ALARM_BLOB_READ_MAX_BYTES is defined")
     dec = function_body(blob, "alarm_blob_decode", r"bool\s+")
     assert_test("ALARM_BLOB_V1" in dec, "alarm_blob_decode still reads v1 blobs")
+    assert_test(re.search(r"#define\s+ALARM_BLOB_V1_REC_SIZE\s+\d+u?\b", hdr) is not None
+                and "_Static_assert(sizeof(alarm_rule_t) >= ALARM_BLOB_V1_REC_SIZE" in hdr,
+                "ALARM_BLOB_V1_REC_SIZE is a literal with a size guard")
+    assert_test("ALARM_BLOB_V1_REC_SIZE" in dec, "v1 decode uses ALARM_BLOB_V1_REC_SIZE")
     assert_test("ALARM_BLOB_READ_MAX_BYTES" in nvs, "nvs_store.c loads with ALARM_BLOB_READ_MAX_BYTES")
 
 

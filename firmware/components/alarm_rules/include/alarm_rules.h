@@ -127,6 +127,11 @@ void alarm_presets_fill(alarm_rule_set_t *out);
 
 #define ALARM_BLOB_VERSION 2
 #define ALARM_BLOB_V1 1
+/* Byte size of alarm_rule_t as v1 blobs stored it (ESP32-S3). A literal on
+ * purpose: v1 blobs must keep loading after alarm_rule_t grows. */
+#define ALARM_BLOB_V1_REC_SIZE 128u
+_Static_assert(sizeof(alarm_rule_t) >= ALARM_BLOB_V1_REC_SIZE,
+               "alarm_rule_t fields are append-only; it must never shrink below the v1 record size");
 #define ALARM_BLOB_HEADER_BYTES 6
 /* Write size. */
 #define ALARM_BLOB_MAX_BYTES (ALARM_BLOB_HEADER_BYTES + ALARM_MAX_RULES * sizeof(alarm_rule_t))
