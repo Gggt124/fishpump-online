@@ -25,6 +25,8 @@
 #include "water_quality.h"
 #include "flow_switch.h"
 #include "alarm_engine.h"
+#include "dry_run_guard.h"
+#include "dry_run_logic.h"
 #include "uplink.h"
 #include "web_server.h"
 #include "wifi_manager.h"
@@ -1050,6 +1052,15 @@ void app_main(void) {
     ESP_LOGE(TAG, "Flow switch init failed: %s", esp_err_to_name(flow_ret));
   }
 
+  /* Dry-run protection: a persisted LOCKED must inhibit relay 1 before auto-start can run. A stored
+   * lock is ignored when protection is off (dry_run_guard_init also clears the stored flag). */
+  dry_run_config_t dry_run_cfg;
+  bool dry_run_locked = false;
+  if (!nvs_store_load_dry_run(&dry_run_cfg, &dry_run_locked)) {
+    ESP_LOGW(TAG, "Dry-run settings load failed; protection off");
+    dry_run_locked = false;
+  }
+
   pump_control_init_context_t pump_init_context = {
       .float_gpio = active_hardware_map.float_input_gpio,
       .relay1_gpio = active_hardware_map.pump_relay1_gpio,
@@ -1086,6 +1097,9 @@ void app_main(void) {
           },
       .water_auto_start = pump_settings.auto_start,
       .wash_auto_start = pump_settings.wash_auto_start,
+      .water_guard_initial = (dry_run_cfg.enabled && dry_run_locked)
+                                 ? PUMP_CONTROL_GUARD_LOCKED
+                                 : PUMP_CONTROL_GUARD_OFF,
   };
   if (pump_control_start_task(&pump_init_context)) {
     ESP_LOGI(TAG, "Pump control initialized successfully");
@@ -1097,6 +1111,12 @@ void app_main(void) {
   esp_err_t alarm_ret = alarm_engine_init();
   if (alarm_ret != ESP_OK) {
     ESP_LOGE(TAG, "Alarm engine init failed: %s", esp_err_to_name(alarm_ret));
+  }
+  /* Dry-run guard: registers its system alarm, so it needs the alarm engine. A failure leaves the
+   * pump unprotected but must not stop the boot. */
+  esp_err_t dry_run_ret = dry_run_guard_init();
+  if (dry_run_ret != ESP_OK) {
+    ESP_LOGE(TAG, "Dry-run guard init failed: %s", esp_err_to_name(dry_run_ret));
   }
   /* Uplink layer: formats ThingsBoard payloads; sends nothing until a transport is plugged in. */
   esp_err_t uplink_ret = uplink_init();

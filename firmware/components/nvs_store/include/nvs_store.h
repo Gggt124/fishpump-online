@@ -3,6 +3,7 @@
 #include "alarm_rules.h"
 #include "app_config.h"
 #include "cooling_rule_engine.h"
+#include "dry_run_logic.h"
 #include "hardware_map.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -247,6 +248,15 @@ typedef enum {
 nvs_store_alarm_rules_load_status_t
 nvs_store_load_alarm_rules(alarm_rule_set_t *out);
 bool nvs_store_save_alarm_rules(const alarm_rule_set_t *set);
+
+/**
+ * Pump dry-run protection. Namespace "dryrun_cfg": a versioned config blob and a separate
+ * "locked" flag (so persisting LOCKED never rewrites the settings).
+ * load: *cfg = defaults and *locked = false when missing, wrong version/length or invalid.
+ */
+bool nvs_store_load_dry_run(dry_run_config_t *cfg, bool *locked);
+bool nvs_store_save_dry_run_config(const dry_run_config_t *cfg);
+bool nvs_store_save_dry_run_locked(bool locked);
 
 bool nvs_store_get_staging_type(uint8_t *type);
 bool nvs_store_stage_wifi(const char *ssid, const char *pass);

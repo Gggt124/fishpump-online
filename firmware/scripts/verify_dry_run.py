@@ -95,9 +95,45 @@ def test_pump_control():
     assert_test("static bool water_inhibited_locked" in src, "water_inhibited_locked helper exists")
 
 
+def test_guard():
+    print("\n--- Task 5: NVS settings, dry_run_guard and boot wiring ---")
+    app = read(MAIN_DIR / "app_main.c")
+    guard = read(COMP_DIR / "dry_run_guard" / "dry_run_guard.c")
+    nvs_h = read(COMP_DIR / "nvs_store" / "include" / "nvs_store.h")
+    i_load = app.find("nvs_store_load_dry_run(")
+    i_pump = app.find("pump_control_init(")
+    i_pump_start = app.find("pump_control_start_task(&")
+    i_alarm = app.find("alarm_engine_init(")
+    i_guard = app.find("dry_run_guard_init(")
+    pump_idx = i_pump_start if i_pump_start >= 0 else i_pump
+    assert_test(i_load >= 0 and pump_idx >= 0 and i_load < pump_idx,
+                "app_main loads dry-run settings before pump_control_init")
+    assert_test(i_alarm >= 0 and i_guard > i_alarm, "app_main calls dry_run_guard_init after alarm_engine_init")
+    assert_test("water_guard_initial" in app, "app_main passes water_guard_initial")
+    assert_test("alarm_engine_system_register(ALARM_SYSTEM_ID_DRY_RUN" in guard,
+                "dry_run_guard.c registers the dry-run system alarm")
+    for fn in ("nvs_store_load_dry_run", "nvs_store_save_dry_run_config", "nvs_store_save_dry_run_locked"):
+        assert_test(re.search(r"bool\s+" + fn + r"\s*\(", nvs_h) is not None, f"nvs_store.h declares {fn}")
+    # every ESP_LOG in dry_run_guard.c must sit in a state-change logger or init
+    bad = []
+    for m in re.finditer(r"^(?:static\s+)?[\w\s\*]+?(\w+)\s*\([^;{]*\)\s*\{", guard, re.M):
+        name = m.group(1)
+        if name in ("if", "for", "while", "switch"):
+            continue
+        depth, i = 1, m.end()
+        while i < len(guard) and depth:
+            depth += (guard[i] == "{") - (guard[i] == "}")
+            i += 1
+        if "ESP_LOG" in guard[m.end():i] and not ("state_changed" in name or "log_transition" in name
+                                                  or name == "dry_run_guard_init"):
+            bad.append(name)
+    assert_test(guard != "" and not bad, "ESP_LOG only in state-change loggers or init", str(bad))
+
+
 def main():
     test_engine()
     test_pump_control()
+    test_guard()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

@@ -34,6 +34,12 @@ static const char *TAG = "nvs_store";
 #define NVS_ALARM_NAMESPACE "alarm_cfg"
 #define NVS_ALARM_KEY_RULES "rules_blob"
 
+#define NVS_DRYRUN_NAMESPACE "dryrun_cfg"
+#define NVS_DRYRUN_KEY_CFG "cfg_blob"
+#define NVS_DRYRUN_KEY_LOCKED "locked"
+#define NVS_DRYRUN_BLOB_VERSION 1
+#define NVS_DRYRUN_BLOB_LEN 10
+
 #define NVS_PUMP_NAMESPACE "pump_cfg"
 #define NVS_PUMP_KEY_T1_ON "t1_on"
 #define NVS_PUMP_KEY_T1_OFF "t1_off"
@@ -1933,9 +1939,112 @@ bool nvs_store_save_alarm_rules(const alarm_rule_set_t *set) {
   return ok;
 }
 
+/* Blob v1 (10 bytes, little-endian): ver, enabled, prime_sec[2], dry_trip_sec[2], retry_wait_min[2],
+ * retry_backoff, max_retries. Explicit layout, not a struct dump. */
+static void dry_run_blob_encode(const dry_run_config_t *c, uint8_t b[NVS_DRYRUN_BLOB_LEN]) {
+  b[0] = NVS_DRYRUN_BLOB_VERSION;
+  b[1] = c->enabled ? 1 : 0;
+  b[2] = (uint8_t)(c->prime_sec & 0xFF);
+  b[3] = (uint8_t)(c->prime_sec >> 8);
+  b[4] = (uint8_t)(c->dry_trip_sec & 0xFF);
+  b[5] = (uint8_t)(c->dry_trip_sec >> 8);
+  b[6] = (uint8_t)(c->retry_wait_min & 0xFF);
+  b[7] = (uint8_t)(c->retry_wait_min >> 8);
+  b[8] = c->retry_backoff ? 1 : 0;
+  b[9] = c->max_retries;
+}
+
+static void dry_run_blob_decode(const uint8_t b[NVS_DRYRUN_BLOB_LEN], dry_run_config_t *c) {
+  c->enabled = b[1] != 0;
+  c->prime_sec = (uint16_t)(b[2] | (b[3] << 8));
+  c->dry_trip_sec = (uint16_t)(b[4] | (b[5] << 8));
+  c->retry_wait_min = (uint16_t)(b[6] | (b[7] << 8));
+  c->retry_backoff = b[8] != 0;
+  c->max_retries = b[9];
+}
+
+bool nvs_store_load_dry_run(dry_run_config_t *cfg, bool *locked) {
+  if (!cfg || !locked) {
+    return false;
+  }
+  dry_run_config_defaults(cfg);
+  *locked = false;
+
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(NVS_DRYRUN_NAMESPACE, NVS_READONLY, &handle);
+  if (err == ESP_ERR_NVS_NOT_FOUND) {
+    return true; /* never saved: defaults */
+  }
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Open %s failed: %s", NVS_DRYRUN_NAMESPACE, esp_err_to_name(err));
+    return false;
+  }
+
+  uint8_t buf[NVS_DRYRUN_BLOB_LEN];
+  size_t len = sizeof(buf);
+  err = nvs_get_blob(handle, NVS_DRYRUN_KEY_CFG, buf, &len);
+  if (err == ESP_OK) {
+    dry_run_config_t loaded;
+    const char *bad = NULL;
+    if (len == NVS_DRYRUN_BLOB_LEN && buf[0] == NVS_DRYRUN_BLOB_VERSION) {
+      dry_run_blob_decode(buf, &loaded);
+      if (dry_run_config_validate(&loaded, &bad)) {
+        *cfg = loaded;
+      } else {
+        ESP_LOGW(TAG, "Dry-run settings invalid (%s); using defaults", bad ? bad : "?");
+      }
+    } else {
+      ESP_LOGW(TAG, "Dry-run settings blob has wrong version/length (%u); using defaults",
+               (unsigned)len);
+    }
+  } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+    ESP_LOGW(TAG, "Dry-run settings read failed (%s); using defaults", esp_err_to_name(err));
+  }
+
+  uint8_t lk = 0;
+  if (nvs_get_u8(handle, NVS_DRYRUN_KEY_LOCKED, &lk) == ESP_OK) {
+    *locked = lk != 0;
+  }
+  nvs_close(handle);
+  return true;
+}
+
+bool nvs_store_save_dry_run_config(const dry_run_config_t *cfg) {
+  if (!cfg) {
+    return false;
+  }
+  uint8_t buf[NVS_DRYRUN_BLOB_LEN];
+  dry_run_blob_encode(cfg, buf);
+  nvs_handle_t handle;
+  if (nvs_open(NVS_DRYRUN_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) {
+    return false;
+  }
+  bool ok = (nvs_set_blob(handle, NVS_DRYRUN_KEY_CFG, buf, sizeof(buf)) == ESP_OK) &&
+            (nvs_commit(handle) == ESP_OK);
+  if (!ok) {
+    ESP_LOGE(TAG, "Failed to save dry-run settings to NVS");
+  }
+  nvs_close(handle);
+  return ok;
+}
+
+bool nvs_store_save_dry_run_locked(bool locked) {
+  nvs_handle_t handle;
+  if (nvs_open(NVS_DRYRUN_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) {
+    return false;
+  }
+  bool ok = (nvs_set_u8(handle, NVS_DRYRUN_KEY_LOCKED, locked ? 1 : 0) == ESP_OK) &&
+            (nvs_commit(handle) == ESP_OK);
+  if (!ok) {
+    ESP_LOGE(TAG, "Failed to save dry-run locked flag to NVS");
+  }
+  nvs_close(handle);
+  return ok;
+}
+
 bool nvs_store_factory_reset(void) {
   /* Wipes ALL namespaces: wifi_cfg, wifi_prof, session, pump_cfg,
-   * hw_cfg, cool_cfg, alarm_cfg. OTA/app partitions are NOT affected.
+   * hw_cfg, cool_cfg, alarm_cfg, dryrun_cfg. OTA/app partitions are NOT affected.
    * Caller must call esp_restart() after this returns true. */
   ESP_LOGW(TAG, "Factory reset: erasing entire NVS partition...");
   esp_err_t ret = nvs_flash_erase();
