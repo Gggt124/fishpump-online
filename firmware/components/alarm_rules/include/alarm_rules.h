@@ -140,9 +140,14 @@ typedef enum {
     ALARM_STATE_LATCHED
 } alarm_state_t;
 
+/* A PENDING rule whose signal gives no information for this long restarts its delay. */
+#define ALARM_HOLD_RESET_MS 5000u
+
 typedef struct {
     uint8_t state;
     bool acked;
+    bool holding;           /* last tick was VERDICT_HOLD */
+    uint32_t hold_since_ms; /* first tick of the current hold run */
     uint32_t pending_since_ms;
     uint32_t active_since_ms;
     float last_value;
@@ -174,7 +179,17 @@ bool alarm_rule_reset(alarm_runtime_t *rt, alarm_transition_t *out);
 
 typedef struct {
     uint8_t active, critical, unacked, critical_unacked, max_severity;
+    uint8_t warning_unacked, info_unacked;
 } alarm_counts_t;
+
+typedef enum {
+    ALARM_LED_NONE = 0,
+    ALARM_LED_INFO,
+    ALARM_LED_WARNING,
+    ALARM_LED_CRITICAL
+} alarm_led_level_t;
+/* Highest severity that still has an unacknowledged alarm (acked alarms never light the LED). */
+alarm_led_level_t alarm_counts_led_level(const alarm_counts_t *c);
 void alarm_counts(const alarm_rule_set_t *set, const alarm_runtime_t rt[ALARM_MAX_RULES], alarm_counts_t *out);
 /* Adds one ACTIVE/LATCHED runtime of the given severity into counts (same rules as alarm_counts). */
 void alarm_counts_add(alarm_counts_t *counts, const alarm_runtime_t *rt, uint8_t severity);

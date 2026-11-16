@@ -351,3 +351,78 @@ void test_alarm_eval_wrap(void)
     snap_ph(7.0f, 0xFFFFFFF0u);
     CHECK(step(&r, &rt, 0x00000100u) == NO_EVT && rt.state == ALARM_STATE_NORMAL); /* age 272 ms */
 }
+
+void test_alarm_eval_hold(void)
+{
+    alarm_runtime_t rt;
+    alarm_rule_t r;
+
+    /* pending reset after a long hold */
+    memset(&s_snap, 0, sizeof(s_snap));
+    memset(&rt, 0, sizeof(rt));
+    r = mk("water_ph", ALARM_COND_ABOVE, 8.5f, 0, 0, 60, false);
+    snap_ph(9.0f, 1);
+    CHECK(step(&r, &rt, 0) == NO_EVT && rt.state == ALARM_STATE_PENDING);
+    snap_ph_state(false, false, 20000);
+    CHECK(step(&r, &rt, 20000) == NO_EVT && rt.state == ALARM_STATE_PENDING);
+    CHECK(step(&r, &rt, 24999) == NO_EVT && rt.state == ALARM_STATE_PENDING);
+    CHECK(step(&r, &rt, 25000) == NO_EVT && rt.state == ALARM_STATE_NORMAL);
+    snap_ph_state(true, false, 26000);
+    CHECK(step(&r, &rt, 26000) == NO_EVT && rt.state == ALARM_STATE_PENDING);
+    CHECK(step(&r, &rt, 85999) == NO_EVT);
+    CHECK(step(&r, &rt, 86000) == ALARM_EVT_RAISED);
+
+    /* a trusted tick in between clears the hold timer */
+    memset(&rt, 0, sizeof(rt));
+    snap_ph(9.0f, 1);
+    step(&r, &rt, 0);
+    snap_ph_state(false, false, 10000);
+    step(&r, &rt, 10000);
+    snap_ph_state(true, false, 12000);
+    CHECK(step(&r, &rt, 12000) == NO_EVT && !rt.holding);
+    snap_ph_state(false, false, 14000);
+    step(&r, &rt, 14000);
+    CHECK(step(&r, &rt, 18999) == NO_EVT && rt.state == ALARM_STATE_PENDING);
+
+    /* ACTIVE is unaffected */
+    memset(&rt, 0, sizeof(rt));
+    r = mk("water_ph", ALARM_COND_ABOVE, 8.5f, 0, 0, 0, false);
+    snap_ph(9.0f, 1);
+    CHECK(step(&r, &rt, 0) == ALARM_EVT_RAISED);
+    snap_ph_state(false, false, 1000);
+    CHECK(step(&r, &rt, 1000) == NO_EVT);
+    CHECK(step(&r, &rt, 11000) == NO_EVT && rt.state == ALARM_STATE_ACTIVE);
+
+    /* per-severity unacked counts */
+    alarm_counts_t c;
+    alarm_runtime_t a;
+    memset(&a, 0, sizeof(a));
+    a.state = ALARM_STATE_ACTIVE;
+    memset(&c, 0, sizeof(c));
+    alarm_counts_add(&c, &a, ALARM_SEV_WARNING);
+    CHECK(c.warning_unacked == 1 && c.info_unacked == 0 && c.critical_unacked == 0);
+    alarm_counts_add(&c, &a, ALARM_SEV_INFO);
+    CHECK(c.warning_unacked == 1 && c.info_unacked == 1);
+    a.acked = true;
+    memset(&c, 0, sizeof(c));
+    alarm_counts_add(&c, &a, ALARM_SEV_WARNING);
+    alarm_counts_add(&c, &a, ALARM_SEV_INFO);
+    CHECK(c.warning_unacked == 0 && c.info_unacked == 0 && c.active == 2);
+    a.state = ALARM_STATE_LATCHED;
+    memset(&c, 0, sizeof(c));
+    alarm_counts_add(&c, &a, ALARM_SEV_WARNING);
+    CHECK(c.warning_unacked == 1);
+
+    /* LED level */
+    memset(&c, 0, sizeof(c));
+    CHECK(alarm_counts_led_level(&c) == ALARM_LED_NONE);
+    c.info_unacked = 1;
+    CHECK(alarm_counts_led_level(&c) == ALARM_LED_INFO);
+    c.warning_unacked = 1;
+    CHECK(alarm_counts_led_level(&c) == ALARM_LED_WARNING);
+    c.critical_unacked = 1;
+    CHECK(alarm_counts_led_level(&c) == ALARM_LED_CRITICAL);
+    memset(&c, 0, sizeof(c));
+    c.active = 3;
+    CHECK(alarm_counts_led_level(&c) == ALARM_LED_NONE);
+}

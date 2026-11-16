@@ -12,6 +12,7 @@ void app_main(void)
     test_signal_registry();
     test_alarm_rules();
     test_alarm_eval();
+    test_alarm_eval_hold();
     test_alarm_eval_wrap();
     test_alarm_store();
     test_uplink_format();

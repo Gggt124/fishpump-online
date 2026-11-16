@@ -101,8 +101,19 @@ bool alarm_rule_step(const alarm_rule_t *rule, alarm_runtime_t *rt, const teleme
     verdict_t verdict = evaluate(rule, rt, snap, now_ms, &value);
 
     if (verdict == VERDICT_HOLD) {
+        if (rt->state == ALARM_STATE_PENDING) {
+            if (!rt->holding) {
+                rt->holding = true;
+                rt->hold_since_ms = now_ms;
+            }
+            if ((uint32_t)(now_ms - rt->hold_since_ms) >= ALARM_HOLD_RESET_MS) {
+                rt->state = ALARM_STATE_NORMAL;
+                rt->holding = false;
+            }
+        }
         return false;
     }
+    rt->holding = false;
     if (verdict == VERDICT_FAULT) {
         /* Cannot confirm either way: a pending alarm is dropped, an active one stays. */
         if (rt->state == ALARM_STATE_PENDING) {
@@ -195,6 +206,10 @@ void alarm_counts_add(alarm_counts_t *out, const alarm_runtime_t *rt, uint8_t se
         out->unacked++;
         if (sev == ALARM_SEV_CRITICAL) {
             out->critical_unacked++;
+        } else if (sev == ALARM_SEV_WARNING) {
+            out->warning_unacked++;
+        } else if (sev == ALARM_SEV_INFO) {
+            out->info_unacked++;
         }
     }
     if (sev > out->max_severity) {
@@ -209,4 +224,18 @@ void alarm_counts(const alarm_rule_set_t *set, const alarm_runtime_t rt[ALARM_MA
     for (uint8_t i = 0; i < set->count && i < ALARM_MAX_RULES; i++) {
         alarm_counts_add(out, &rt[i], set->rules[i].severity);
     }
+}
+
+alarm_led_level_t alarm_counts_led_level(const alarm_counts_t *c)
+{
+    if (c->critical_unacked) {
+        return ALARM_LED_CRITICAL;
+    }
+    if (c->warning_unacked) {
+        return ALARM_LED_WARNING;
+    }
+    if (c->info_unacked) {
+        return ALARM_LED_INFO;
+    }
+    return ALARM_LED_NONE;
 }

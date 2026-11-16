@@ -22,6 +22,7 @@ void test_contact_debounce(void);
 void test_signal_registry(void);
 void test_alarm_rules(void);
 void test_alarm_eval(void);
+void test_alarm_eval_hold(void);
 void test_alarm_eval_wrap(void);
 void test_alarm_store(void);
 void test_uplink_format(void);
