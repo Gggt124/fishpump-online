@@ -824,6 +824,7 @@
                     </summary>
                     <div class="settings-body">
                         <p class="dry-run-status" id="dry-run-status" role="status">กำลังโหลด...</p>
+                        <p class="dry-run-note" id="dry-run-note">ถ้าปั๊มเปิดแต่ละรอบสั้นกว่าประมาณ 6 วินาที แจ้งเตือนเดินแห้งจะไม่หายเองเมื่อน้ำกลับมา ต้องกดรับทราบ</p>
                         <form id="dry-run-form" novalidate class="settings-form">
                             <label class="toggle-row" for="dry-run-enabled">
                                 <div class="toggle-switch">
@@ -833,18 +834,18 @@
                                 <span>เปิดการป้องกัน</span>
                             </label>
                             <div class="form-row">
-                                <label for="dry-run-prime">ช่วงผ่อนผันหลังปั๊มเปิด (วินาที)</label>
-                                <input id="dry-run-prime" class="input-field" type="number" min="0" max="65535" step="1" inputmode="numeric">
+                                <label for="dry-run-prime">ช่วงผ่อนผันหลังปั๊มเปิด (วินาที) (1–600)</label>
+                                <input id="dry-run-prime" class="input-field" type="number" min="1" max="600" step="1" inputmode="numeric">
                                 <div class="field-error" id="dry-run-prime-error" role="alert"></div>
                             </div>
                             <div class="form-row">
-                                <label for="dry-run-trip">เวลาไม่มีน้ำสะสมก่อนตัด (วินาที)</label>
-                                <input id="dry-run-trip" class="input-field" type="number" min="0" max="65535" step="1" inputmode="numeric">
+                                <label for="dry-run-trip">เวลาไม่มีน้ำสะสมก่อนตัด (วินาที) (3–120)</label>
+                                <input id="dry-run-trip" class="input-field" type="number" min="3" max="120" step="1" inputmode="numeric">
                                 <div class="field-error" id="dry-run-trip-error" role="alert"></div>
                             </div>
                             <div class="form-row">
-                                <label for="dry-run-wait">รอก่อนลองใหม่ (นาที)</label>
-                                <input id="dry-run-wait" class="input-field" type="number" min="0" max="65535" step="1" inputmode="numeric">
+                                <label for="dry-run-wait">รอก่อนลองใหม่ (นาที) (1–240)</label>
+                                <input id="dry-run-wait" class="input-field" type="number" min="1" max="240" step="1" inputmode="numeric">
                                 <div class="field-error" id="dry-run-wait-error" role="alert"></div>
                             </div>
                             <label class="toggle-row" for="dry-run-backoff">
@@ -855,8 +856,8 @@
                                 <span>เพิ่มเวลารอเป็นสองเท่าทุกครั้ง</span>
                             </label>
                             <div class="form-row">
-                                <label for="dry-run-retries">ลองใหม่สูงสุด (ครั้ง, 0 = ล็อกทันที)</label>
-                                <input id="dry-run-retries" class="input-field" type="number" min="0" max="255" step="1" inputmode="numeric">
+                                <label for="dry-run-retries">ลองใหม่สูงสุด (ครั้ง, 0 = ล็อกทันที) (0–5)</label>
+                                <input id="dry-run-retries" class="input-field" type="number" min="0" max="5" step="1" inputmode="numeric">
                                 <div class="field-error" id="dry-run-retries-error" role="alert"></div>
                             </div>
                             <div class="pump-alert hidden" id="dry-run-warning" role="alert"></div>
@@ -1331,8 +1332,8 @@
                         <div class="alarm-field-row">
                             <select id="alarm-f-gate-signal" class="input-field"></select>
                             <select id="alarm-f-gate-when" class="input-field">
-                                <option value="true">เปิด</option>
-                                <option value="false">ปิด</option>
+                                <option value="true">ใช่</option>
+                                <option value="false">ไม่ใช่</option>
                             </select>
                         </div>
                     </div>

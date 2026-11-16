@@ -237,6 +237,67 @@ def test_task6():
     assert_test("ESP_LOGW" in rs and "ESP_LOGI" in rs, "alarm_resync logs one WARN on failure and one INFO on recovery")
 
 
+def js_function_body(source, name):
+    m = re.search(r"\bfunction\s+" + re.escape(name) + r"\s*\([^)]*\)\s*\{", source)
+    if not m:
+        return ""
+    depth, i = 1, m.end()
+    while i < len(source) and depth:
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+        i += 1
+    return source[m.start():i]
+
+
+def test_task7():
+    print("\n--- Task 7: web bool values and dry-run card polish ---")
+    js = read(MAIN_DIR / "static" / "app.js")
+    html = read(MAIN_DIR / "static" / "index.html")
+    fv = js_function_body(js, "alarmFormatValue")
+    assert_test("'ใช่'" in fv and "'ไม่ใช่'" in fv and "เปิด" not in fv and "ปิด" not in fv,
+                "alarmFormatValue shows bool as ใช่/ไม่ใช่ and no longer เปิด/ปิด")
+    assert_test("is_true: 'เป็นจริง (ใช่)'" in js and "is_false: 'เป็นเท็จ (ไม่ใช่)'" in js,
+                "ALARM_COND_TEXT is_true/is_false use ใช่/ไม่ใช่")
+    dr = js_function_body(js, "alarmDescribeRule")
+    assert_test("' = ใช่'" in dr and "' = ไม่ใช่'" in dr and "' ใช่' : ' ไม่ใช่'" in dr
+                and "เปิด" not in dr and "ปิด" not in dr,
+                "alarmDescribeRule uses ใช่/ไม่ใช่ for the condition and the gate")
+    gw = re.search(r'<select[^>]*id="alarm-f-gate-when"[^>]*>(.*?)</select>', html, re.S)
+    assert_test(gw is not None and ">ใช่<" in gw.group(1) and ">ไม่ใช่<" in gw.group(1)
+                and "เปิด" not in gw.group(1) and "ปิด" not in gw.group(1),
+                "alarm-f-gate-when options read ใช่/ไม่ใช่")
+    ev = js_function_body(js, "alarmFormatEventValue")
+    assert_test("'ครั้งที่ '" in ev, "system alarm events still show ครั้งที่ n")
+    for id_, lo, hi in (("dry-run-prime", 1, 600), ("dry-run-trip", 3, 120),
+                        ("dry-run-wait", 1, 240), ("dry-run-retries", 0, 5)):
+        m = re.search(r'<input id="' + id_ + r'"[^>]*>', html)
+        tag = m.group(0) if m else ""
+        assert_test(f'min="{lo}"' in tag and f'max="{hi}"' in tag, f"{id_} has min={lo} max={hi}")
+        lab = re.search(r'<label for="' + id_ + r'">([^<]*)</label>', html)
+        assert_test(lab is not None and f"({lo}–{hi})" in lab.group(1), f"{id_} label shows ({lo}–{hi})")
+    assert_test("ถ้าปั๊มเปิดแต่ละรอบสั้นกว่าประมาณ 6 วินาที แจ้งเตือนเดินแห้งจะไม่หายเองเมื่อน้ำกลับมา ต้องกดรับทราบ" in html,
+                "dry-run card carries the short-cycle note")
+    assert_test("document.hidden" in js_function_body(js, "dryRunPollTick"),
+                "the dry-run card poll skips while document.hidden")
+    assert_test("addEventListener('visibilitychange', dryRunVisibilityChange)" in js_function_body(js, "dryRunStartPolling")
+                and "dryRunLoad(" in js_function_body(js, "dryRunVisibilityChange"),
+                "dry-run polls once on visibilitychange back to visible")
+    assert_test("visibilitychange" in js_function_body(js, "dryRunStopPolling"),
+                "dryRunStopPolling removes the visibility listener")
+    mp = js_function_body(js, "dryRunMeasurePoll")
+    assert_test(re.search(r">=\s*5\b", mp) is not None and "dryRunMeasureFails" in mp
+                and "ติดต่อบอร์ดไม่ได้ ลองกดวัดใหม่อีกครั้ง" in mp,
+                "measure poll counts consecutive failures, stops at 5 and shows the failure text")
+    assert_test("dryRunMeasureFails = 0" in mp, "a successful measure poll resets the failure counter")
+    ld = js_function_body(js, "dryRunLoad")
+    assert_test("wasUnavailable" in ld and "dryRunFillForm" in ld,
+                "dryRunLoad re-fills the form after a 503 clears")
+    rf = js_function_body(js, "dryRunReadForm")
+    assert_test("DRY_RUN_RANGE" in rf and "65535" not in rf, "dryRunReadForm validates the real ranges")
+
+
 def main():
     test_task1()
     test_task2()
@@ -244,6 +305,7 @@ def main():
     test_task4()
     test_task5()
     test_task6()
+    test_task7()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

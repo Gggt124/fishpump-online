@@ -605,6 +605,13 @@ var dryRunUnavailable = false;
 var dryRunSaving = false;
 var dryRunMeasureRunning = false;
 var dryRunSuggested = 0;
+var dryRunMeasureFails = 0;
+var DRY_RUN_RANGE = {
+    prime_sec: [1, 600],
+    dry_trip_sec: [3, 120],
+    retry_wait_min: [1, 240],
+    max_retries: [0, 5]
+};
 var DRY_RUN_FIELDS = {
     prime_sec: 'dry-run-prime',
     dry_trip_sec: 'dry-run-trip',
@@ -718,8 +725,9 @@ function dryRunLoad(fillForm) {
             dryRunShowStatus();
             return;
         }
+        var wasUnavailable = dryRunUnavailable;
         dryRunUnavailable = false;
-        if (fillForm && data.pump) dryRunFillForm(data.pump);
+        if ((fillForm || wasUnavailable) && data.pump) dryRunFillForm(data.pump);
         dryRunApplyStatus(data.pump_status);
         dryRunUpdateButtons();
         if (fillForm) dryRunResumeMeasure();
@@ -731,13 +739,26 @@ function dryRunStopStatusTimers() {
     if (dryRunTickTimer) { clearInterval(dryRunTickTimer); dryRunTickTimer = null; }
 }
 
+function dryRunPollTick() {
+    if (document.hidden) return;
+    dryRunLoad(false);
+}
+
+function dryRunVisibilityChange() {
+    if (document.hidden) return;
+    if (!pumpEl('dry-run-card')) return;
+    dryRunLoad(false);
+}
+
 function dryRunStartPolling() {
     dryRunStopStatusTimers();
-    dryRunStatusTimer = setInterval(function () { dryRunLoad(false); }, 5000);
+    dryRunStatusTimer = setInterval(dryRunPollTick, 5000);
     dryRunTickTimer = setInterval(dryRunShowStatus, 1000);
+    document.addEventListener('visibilitychange', dryRunVisibilityChange);
 }
 
 function dryRunStopPolling() {
+    document.removeEventListener('visibilitychange', dryRunVisibilityChange);
     dryRunStopStatusTimers();
     if (dryRunMeasureTimer) { clearInterval(dryRunMeasureTimer); dryRunMeasureTimer = null; }
     dryRunMeasureBusy = false;
@@ -774,10 +795,11 @@ function dryRunReadForm() {
         if (DRY_RUN_FIELDS.hasOwnProperty(k)) {
             var el = pumpEl(DRY_RUN_FIELDS[k]);
             var raw = el ? String(el.value).trim() : '';
-            var max = (k === 'max_retries') ? 255 : 65535;
+            var lo = DRY_RUN_RANGE[k][0];
+            var hi = DRY_RUN_RANGE[k][1];
             var n = Number(raw);
-            if (raw === '' || !isFinite(n) || Math.floor(n) !== n || n < 0 || n > max) {
-                dryRunMarkField(k, 'กรอกจำนวนเต็ม 0 ถึง ' + max);
+            if (raw === '' || !isFinite(n) || Math.floor(n) !== n || n < lo || n > hi) {
+                dryRunMarkField(k, 'กรอกจำนวนเต็ม ' + lo + ' ถึง ' + hi);
                 ok = false;
             } else {
                 out[k] = n;
@@ -856,12 +878,23 @@ function dryRunMeasurePoll() {
     dryRunMeasureBusy = true;
     apiGet('/api/protection/measure', function (err, data) {
         dryRunMeasureBusy = false;
-        if (err || !data || !data.ok) return;
+        if (err || !data || !data.ok) {
+            dryRunMeasureFails++;
+            if (dryRunMeasureFails >= 5) {
+                if (dryRunMeasureTimer) { clearInterval(dryRunMeasureTimer); dryRunMeasureTimer = null; }
+                dryRunMeasureRunning = false;
+                dryRunSetMeasureText('ติดต่อบอร์ดไม่ได้ ลองกดวัดใหม่อีกครั้ง', false, false);
+                dryRunUpdateButtons();
+            }
+            return;
+        }
+        dryRunMeasureFails = 0;
         dryRunRenderMeasure(data);
     }, 3000);
 }
 
 function dryRunBeginMeasurePolling() {
+    dryRunMeasureFails = 0;
     if (dryRunMeasureTimer) clearInterval(dryRunMeasureTimer);
     dryRunMeasureTimer = setInterval(dryRunMeasurePoll, 1000);
 }
@@ -5289,8 +5322,8 @@ var ALARM_COND_TEXT = {
     below: 'น้อยกว่า',
     outside: 'นอกช่วง',
     inside: 'อยู่ในช่วง',
-    is_true: 'เป็นจริง (เปิด)',
-    is_false: 'เป็นเท็จ (ปิด)',
+    is_true: 'เป็นจริง (ใช่)',
+    is_false: 'เป็นเท็จ (ไม่ใช่)',
     stale: 'ไม่มีข้อมูลใหม่'
 };
 var ALARM_SEV_TEXT = { info: 'ข้อมูล', warning: 'เตือน', critical: 'วิกฤต' };
@@ -5402,7 +5435,7 @@ function alarmSignal(key) { return alarmSignalMap[key] || null; }
 function alarmFormatValue(key, v) {
     var sig = alarmSignal(key);
     if (v == null || typeof v === 'undefined') return '--';
-    if (sig && sig.kind === 'bool') return v ? 'เปิด' : 'ปิด';
+    if (sig && sig.kind === 'bool') return v ? 'ใช่' : 'ไม่ใช่';
     if (typeof v !== 'number' || !isFinite(v)) return '--';
     var out = v.toFixed(sig ? sig.decimals : 2);
     if (sig && sig.unit) out += ' ' + sig.unit;
@@ -5455,14 +5488,14 @@ function alarmDescribeRule(r) {
         case 'below': text = label + ' < ' + r.threshold + unit; break;
         case 'outside': text = label + ' นอกช่วง ' + r.lo + '–' + r.hi + unit; break;
         case 'inside': text = label + ' อยู่ในช่วง ' + r.lo + '–' + r.hi + unit; break;
-        case 'is_true': text = label + ' = เปิด'; break;
-        case 'is_false': text = label + ' = ปิด'; break;
+        case 'is_true': text = label + ' = ใช่'; break;
+        case 'is_false': text = label + ' = ไม่ใช่'; break;
         default: text = label + ' ไม่มีข้อมูลใหม่เกิน ' + r.stale_sec + ' วิ'; break;
     }
     if (r.delay_sec > 0) text += ' นาน ' + r.delay_sec + ' วิ';
     if (r.gate) {
         var g = alarmSignal(r.gate.signal);
-        text += ' · เฉพาะตอน ' + (g ? g.label : r.gate.signal) + (r.gate.when ? ' เปิด' : ' ปิด');
+        text += ' · เฉพาะตอน ' + (g ? g.label : r.gate.signal) + (r.gate.when ? ' ใช่' : ' ไม่ใช่');
     }
     if (r.latch) text += ' · ค้างจนรับทราบ';
     return text;
