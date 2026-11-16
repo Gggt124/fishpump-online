@@ -180,29 +180,33 @@ bool alarm_rule_reset(alarm_runtime_t *rt, alarm_transition_t *out)
     return was_open;
 }
 
+void alarm_counts_add(alarm_counts_t *out, const alarm_runtime_t *rt, uint8_t sev)
+{
+    uint8_t st = rt->state;
+    if (st != ALARM_STATE_ACTIVE && st != ALARM_STATE_LATCHED) {
+        return;
+    }
+    bool unacked = st == ALARM_STATE_LATCHED || !rt->acked;
+    out->active++;
+    if (sev == ALARM_SEV_CRITICAL) {
+        out->critical++;
+    }
+    if (unacked) {
+        out->unacked++;
+        if (sev == ALARM_SEV_CRITICAL) {
+            out->critical_unacked++;
+        }
+    }
+    if (sev > out->max_severity) {
+        out->max_severity = sev;
+    }
+}
+
 void alarm_counts(const alarm_rule_set_t *set, const alarm_runtime_t rt[ALARM_MAX_RULES],
                   alarm_counts_t *out)
 {
     memset(out, 0, sizeof(*out));
     for (uint8_t i = 0; i < set->count && i < ALARM_MAX_RULES; i++) {
-        uint8_t st = rt[i].state;
-        if (st != ALARM_STATE_ACTIVE && st != ALARM_STATE_LATCHED) {
-            continue;
-        }
-        uint8_t sev = set->rules[i].severity;
-        bool unacked = st == ALARM_STATE_LATCHED || !rt[i].acked;
-        out->active++;
-        if (sev == ALARM_SEV_CRITICAL) {
-            out->critical++;
-        }
-        if (unacked) {
-            out->unacked++;
-            if (sev == ALARM_SEV_CRITICAL) {
-                out->critical_unacked++;
-            }
-        }
-        if (sev > out->max_severity) {
-            out->max_severity = sev;
-        }
+        alarm_counts_add(out, &rt[i], set->rules[i].severity);
     }
 }

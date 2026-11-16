@@ -49,7 +49,7 @@ bool alarm_engine_get_rules(alarm_rule_set_t *out, nvs_store_alarm_rules_load_st
 esp_err_t alarm_engine_upsert_rule(const alarm_rule_t *rule, bool has_id, alarm_rule_t *stored,
                                    const char **bad_field);
 esp_err_t alarm_engine_delete_rule(uint16_t id);         /* ESP_OK | ESP_ERR_NOT_FOUND | ESP_FAIL */
-/* ESP_OK | ESP_ERR_NOT_FOUND | ESP_ERR_INVALID_STATE | ESP_ERR_NO_MEM */
+/* ESP_OK | ESP_ERR_NOT_FOUND | ESP_ERR_INVALID_STATE | ESP_ERR_NO_MEM. A registered system id is found. */
 esp_err_t alarm_engine_ack(uint16_t rule_id);
 /* ESP_OK (*acked = number acknowledged) | ESP_ERR_INVALID_STATE | ESP_ERR_NO_MEM.
  * *acked is 0 on every error; acked may be NULL. */
@@ -58,6 +58,24 @@ size_t alarm_engine_get_active(alarm_active_t *out, size_t max); /* ACTIVE and L
 size_t alarm_engine_get_events_since(uint32_t after_seq, alarm_event_t *out, size_t max,
                                      uint32_t *oldest_seq);
 uint32_t alarm_engine_get_rules_revision(void); /* +1 on every successful upsert or delete; 0 before init */
+
+/* ---- System alarms: owned by a firmware module, not by the rule set ----
+ * They count, list, record history, publish SSE and uplink exactly like rule alarms, and are never
+ * saved or edited. Ack of an active system alarm does not change its state: it calls on_ack (after the
+ * engine lock is released, so on_ack may call alarm_engine_system_clear) and the owner decides. */
+typedef void (*alarm_engine_system_ack_cb_t)(uint16_t id);
+#define ALARM_ENGINE_MAX_SYSTEM 2
+/* ESP_OK | ESP_ERR_INVALID_ARG (id < ALARM_SYSTEM_ID_BASE, or NULL name) | ESP_ERR_NO_MEM (table full)
+ * | ESP_ERR_INVALID_STATE (engine not initialised, or id already registered). on_ack may be NULL. */
+esp_err_t alarm_engine_system_register(uint16_t id, const char *name, uint8_t severity, uint8_t signal_id,
+                                       alarm_engine_system_ack_cb_t on_ack);
+/* Not active: ACTIVE + acked=false + RAISED event. Already active: acked=false, value updated,
+ * new RAISED event (re-alert). ESP_ERR_NOT_FOUND if not registered; ESP_ERR_INVALID_STATE before init;
+ * ESP_ERR_NO_MEM if the event buffer cannot be allocated. */
+esp_err_t alarm_engine_system_raise(uint16_t id, float value);
+/* Active: NORMAL + CLEARED event with `reason` (ALARM_REASON_*). Not active: ESP_OK, no event.
+ * Same error codes as raise. */
+esp_err_t alarm_engine_system_clear(uint16_t id, uint8_t reason, float value);
 
 #ifdef __cplusplus
 }

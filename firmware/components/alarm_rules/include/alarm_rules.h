@@ -21,6 +21,8 @@ extern "C" {
 
 #define ALARM_MAX_RULES 24
 #define ALARM_NAME_BYTES 97 /* 96 bytes UTF-8 + NUL */
+#define ALARM_SYSTEM_ID_BASE 65000u /* user rule ids stay below this; at or above = firmware-owned system alarms */
+#define ALARM_SYSTEM_ID_DRY_RUN 65001u
 
 typedef enum {
     ALARM_COND_ABOVE = 0,
@@ -118,7 +120,7 @@ size_t alarm_ring_since(const alarm_ring_t *ring, uint32_t after_seq, alarm_even
 
 /* ---- Presets and storage blob ---- */
 
-/* 13 rules, ids 1..13, all enabled=false, next_id=14. */
+/* 12 rules, ids 1..12, all enabled=false, next_id=13. */
 void alarm_presets_fill(alarm_rule_set_t *out);
 
 #define ALARM_BLOB_VERSION 1
@@ -174,6 +176,8 @@ typedef struct {
     uint8_t active, critical, unacked, critical_unacked, max_severity;
 } alarm_counts_t;
 void alarm_counts(const alarm_rule_set_t *set, const alarm_runtime_t rt[ALARM_MAX_RULES], alarm_counts_t *out);
+/* Adds one ACTIVE/LATCHED runtime of the given severity into counts (same rules as alarm_counts). */
+void alarm_counts_add(alarm_counts_t *counts, const alarm_runtime_t *rt, uint8_t severity);
 
 #ifdef __cplusplus
 }

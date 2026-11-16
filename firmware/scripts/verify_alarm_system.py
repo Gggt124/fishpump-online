@@ -209,7 +209,7 @@ def test_uplink():
 def test_review_fixes():
     print("\n--- Review fixes: findings 5, 6, 8 ---")
     eng = read(COMP_DIR / "alarm_engine" / "alarm_engine.c")
-    assert_test(re.search(r"ALARM_MAX_RULES\s*\|\|\s*next->next_id\s*==\s*0\)\s*\{\s*err\s*=\s*ESP_ERR_INVALID_SIZE", eng) is not None,
+    assert_test(re.search(r"ALARM_MAX_RULES\s*\|\|\s*next->next_id\s*==\s*0\s*\|\|\s*next->next_id\s*>=\s*ALARM_SYSTEM_ID_BASE\)\s*\{\s*err\s*=\s*ESP_ERR_INVALID_SIZE", eng) is not None,
                 "upsert: rules full returns ESP_ERR_INVALID_SIZE")
     ws = read(MAIN_DIR / "web_server.c")
     post = function_body(ws, "handle_api_alarms_rules_post")

@@ -85,6 +85,9 @@ void test_alarm_rules(void)
           && r.severity == ALARM_SEV_CRITICAL && r.condition == ALARM_COND_BELOW && r.threshold == 0.3f);
     CHECK(parse(R_IS_FALSE, &r, &f) == ALARM_JSON_OK && r.gate_mode == ALARM_GATE_WHEN_FALSE && r.delay_sec == 15);
 
+    /* ids from ALARM_SYSTEM_ID_BASE up belong to firmware-owned system alarms */
+    CHECK(parse("{\"id\":64999,\"name\":\"x\",\"signal\":\"water_ph\",\"condition\":\"above\",\"threshold\":5,\"severity\":\"info\"}", &r, &f) == ALARM_JSON_OK && r.id == 64999);
+    CHECK(parse("{\"id\":65000,\"name\":\"x\",\"signal\":\"water_ph\",\"condition\":\"above\",\"threshold\":5,\"severity\":\"info\"}", &r, &f) == ALARM_JSON_INVALID_VALUE && !strcmp(f, "id"));
     CHECK(parse(R_STALE_HEALTH(10), &r, &f) == ALARM_JSON_INVALID_VALUE && !strcmp(f, "stale_sec")); /* min 15 */
     CHECK(parse(R_STALE_HEALTH(15), &r, &f) == ALARM_JSON_OK);
     CHECK(parse(R_STALE_HEALTH(3601), &r, &f) == ALARM_JSON_INVALID_VALUE && !strcmp(f, "stale_sec"));

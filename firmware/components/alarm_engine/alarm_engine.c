@@ -18,13 +18,26 @@ static const char *TAG = "alarm_engine";
 #define ENGINE_TASK_PRIORITY 2 /* below the sensor tasks (3) and cooling (4) */
 #define ENGINE_TASK_CORE 1
 
-/* One mutex guards everything in here. Hub publishes happen after it is released. */
+/* A firmware-owned alarm (e.g. pump dry-run). Raised and cleared by its owner, never saved. */
+typedef struct {
+    uint16_t id;
+    uint8_t severity;
+    uint8_t signal_id;
+    char name[ALARM_NAME_BYTES];
+    alarm_runtime_t rt;
+    alarm_engine_system_ack_cb_t on_ack;
+} system_alarm_t;
+
+/* One mutex guards everything in here. Hub publishes happen after it is released.
+ * Acknowledge callbacks of system alarms are also called after it is released. */
 static struct {
     SemaphoreHandle_t lock;
     alarm_rule_set_t set;
     alarm_runtime_t rt[ALARM_MAX_RULES];
     alarm_ring_t ring;
     alarm_counts_t counts;
+    system_alarm_t sys[ALARM_ENGINE_MAX_SYSTEM];
+    uint8_t sys_count;
     uint32_t boot_id;
     uint32_t last_tick_ms;
     uint32_t rules_revision;
@@ -54,36 +67,52 @@ typedef struct {
 } pending_t;
 
 /* Caller holds the lock. Pushes the event into the ring and queues the hub payload. */
-static void record_event(pending_t *p, const alarm_rule_t *rule, const alarm_transition_t *tr, uint32_t now)
+static void record_event_for(pending_t *p, uint16_t id, uint8_t signal_id, uint8_t severity, const char *name,
+                             const alarm_transition_t *tr, uint32_t now)
 {
     alarm_event_t evt;
     memset(&evt, 0, sizeof(evt));
     evt.type = tr->type;
     evt.reason = tr->reason;
-    evt.rule_id = rule->id;
-    evt.signal_id = rule->signal_id;
-    evt.severity = rule->severity;
+    evt.rule_id = id;
+    evt.signal_id = signal_id;
+    evt.severity = severity;
     evt.value = tr->value;
     evt.uptime_ms = now;
-    copy_name(evt.name, rule->name);
+    copy_name(evt.name, name);
     uint32_t seq = alarm_ring_push(&s.ring, &evt);
 
     if (p->count < sizeof(p->items) / sizeof(p->items[0])) {
         telemetry_alarm_payload_t *a = &p->items[p->count++];
         memset(a, 0, sizeof(*a));
         a->seq = seq;
-        a->rule_id = rule->id;
+        a->rule_id = id;
         a->type = tr->type;
-        a->severity = rule->severity;
-        a->signal_id = rule->signal_id;
+        a->severity = severity;
+        a->signal_id = signal_id;
         a->value = tr->value;
     }
+}
+
+/* Caller holds the lock. */
+static void record_event(pending_t *p, const alarm_rule_t *rule, const alarm_transition_t *tr, uint32_t now)
+{
+    record_event_for(p, rule->id, rule->signal_id, rule->severity, rule->name, tr, now);
+}
+
+/* Caller holds the lock. */
+static void record_system_event(pending_t *p, const system_alarm_t *a, const alarm_transition_t *tr, uint32_t now)
+{
+    record_event_for(p, a->id, a->signal_id, a->severity, a->name, tr, now);
 }
 
 /* Caller holds the lock. */
 static void refresh_counts(pending_t *p)
 {
     alarm_counts(&s.set, s.rt, &s.counts);
+    for (uint8_t i = 0; i < s.sys_count; i++) {
+        alarm_counts_add(&s.counts, &s.sys[i].rt, s.sys[i].severity);
+    }
     for (size_t i = 0; i < p->count; i++) {
         p->items[i].active_count = s.counts.active;
         p->items[i].critical_count = s.counts.critical;
@@ -110,6 +139,17 @@ static int find_rule(uint16_t id)
         }
     }
     return -1;
+}
+
+/* Caller holds the lock. */
+static system_alarm_t *find_system(uint16_t id)
+{
+    for (uint8_t i = 0; i < s.sys_count; i++) {
+        if (s.sys[i].id == id) {
+            return &s.sys[i];
+        }
+    }
+    return NULL;
 }
 
 static void engine_task(void *arg)
@@ -235,7 +275,7 @@ esp_err_t alarm_engine_upsert_rule(const alarm_rule_t *rule, bool has_id, alarm_
         if (idx < 0) {
             err = ESP_ERR_NOT_FOUND;
         }
-    } else if (next->count >= ALARM_MAX_RULES || next->next_id == 0) {
+    } else if (next->count >= ALARM_MAX_RULES || next->next_id == 0 || next->next_id >= ALARM_SYSTEM_ID_BASE) {
         err = ESP_ERR_INVALID_SIZE;
     } else {
         r.id = next->next_id++;
@@ -328,20 +368,30 @@ esp_err_t alarm_engine_ack(uint16_t rule_id)
         return ESP_ERR_NO_MEM;
     }
     esp_err_t err = ESP_OK;
+    alarm_engine_system_ack_cb_t on_ack = NULL;
     xSemaphoreTake(s.lock, portMAX_DELAY);
     int idx = find_rule(rule_id);
-    if (idx < 0) {
-        err = ESP_ERR_NOT_FOUND;
-    } else {
+    system_alarm_t *sys = idx < 0 ? find_system(rule_id) : NULL;
+    if (idx >= 0) {
         alarm_transition_t tr;
         if (alarm_rule_ack(&s.rt[idx], &tr)) {
             record_event(pending, &s.set.rules[idx], &tr, now_ms());
         }
         refresh_counts(pending);
+    } else if (sys != NULL) {
+        /* State is not touched: the owner decides (it may ignore the ack, or clear the alarm). */
+        if (sys->rt.state == ALARM_STATE_ACTIVE) {
+            on_ack = sys->on_ack;
+        }
+    } else {
+        err = ESP_ERR_NOT_FOUND;
     }
     xSemaphoreGive(s.lock);
     publish_pending(pending);
     free(pending);
+    if (on_ack != NULL) {
+        on_ack(rule_id); /* after the unlock: it may call alarm_engine_system_clear */
+    }
     return err;
 }
 
@@ -359,6 +409,11 @@ esp_err_t alarm_engine_ack_all(size_t *acked)
     }
     size_t n = 0;
     uint32_t now = now_ms();
+    struct {
+        uint16_t id;
+        alarm_engine_system_ack_cb_t on_ack;
+    } sys_acks[ALARM_ENGINE_MAX_SYSTEM];
+    size_t n_sys = 0;
     xSemaphoreTake(s.lock, portMAX_DELAY);
     for (int i = 0; i < s.set.count; i++) {
         alarm_transition_t tr;
@@ -367,10 +422,21 @@ esp_err_t alarm_engine_ack_all(size_t *acked)
             n++;
         }
     }
+    for (uint8_t i = 0; i < s.sys_count; i++) {
+        if (s.sys[i].rt.state == ALARM_STATE_ACTIVE && s.sys[i].on_ack != NULL) {
+            sys_acks[n_sys].id = s.sys[i].id;
+            sys_acks[n_sys].on_ack = s.sys[i].on_ack;
+            n_sys++;
+        }
+    }
     refresh_counts(pending);
     xSemaphoreGive(s.lock);
     publish_pending(pending);
     free(pending);
+    for (size_t i = 0; i < n_sys; i++) {
+        sys_acks[i].on_ack(sys_acks[i].id); /* after the unlock: a callback may call alarm_engine_system_clear */
+        n++;
+    }
     if (acked != NULL) {
         *acked = n;
     }
@@ -400,6 +466,22 @@ size_t alarm_engine_get_active(alarm_active_t *out, size_t max)
         a->since_ms = s.rt[i].active_since_ms;
         copy_name(a->name, s.set.rules[i].name);
     }
+    for (uint8_t i = 0; i < s.sys_count && n < max; i++) {
+        const system_alarm_t *sa = &s.sys[i];
+        if (sa->rt.state != ALARM_STATE_ACTIVE) {
+            continue;
+        }
+        alarm_active_t *a = &out[n++];
+        memset(a, 0, sizeof(*a));
+        a->rule_id = sa->id;
+        a->signal_id = sa->signal_id;
+        a->severity = sa->severity;
+        a->state = sa->rt.state;
+        a->acked = sa->rt.acked;
+        a->value = sa->rt.last_value;
+        a->since_ms = sa->rt.active_since_ms;
+        copy_name(a->name, sa->name);
+    }
     xSemaphoreGive(s.lock);
     return n;
 }
@@ -427,4 +509,94 @@ uint32_t alarm_engine_get_rules_revision(void)
     uint32_t rev = s.rules_revision;
     xSemaphoreGive(s.lock);
     return rev;
+}
+
+esp_err_t alarm_engine_system_register(uint16_t id, const char *name, uint8_t severity, uint8_t signal_id,
+                                       alarm_engine_system_ack_cb_t on_ack)
+{
+    if (!s.initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (id < ALARM_SYSTEM_ID_BASE || name == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = ESP_OK;
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    if (find_system(id) != NULL) {
+        err = ESP_ERR_INVALID_STATE;
+    } else if (s.sys_count >= ALARM_ENGINE_MAX_SYSTEM) {
+        err = ESP_ERR_NO_MEM;
+    } else {
+        system_alarm_t *a = &s.sys[s.sys_count];
+        memset(a, 0, sizeof(*a));
+        a->id = id;
+        a->severity = severity;
+        a->signal_id = signal_id;
+        a->on_ack = on_ack;
+        copy_name(a->name, name);
+        s.sys_count++;
+    }
+    xSemaphoreGive(s.lock);
+    return err;
+}
+
+esp_err_t alarm_engine_system_raise(uint16_t id, float value)
+{
+    if (!s.initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    pending_t *pending = calloc(1, sizeof(*pending));
+    if (pending == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    esp_err_t err = ESP_OK;
+    uint32_t now = now_ms();
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    system_alarm_t *a = find_system(id);
+    if (a == NULL) {
+        err = ESP_ERR_NOT_FOUND;
+    } else {
+        if (a->rt.state != ALARM_STATE_ACTIVE) {
+            a->rt.state = ALARM_STATE_ACTIVE;
+            a->rt.active_since_ms = now;
+        }
+        a->rt.acked = false; /* a repeat raise is a re-alert */
+        a->rt.last_value = value;
+        alarm_transition_t tr = {.type = ALARM_EVT_RAISED, .reason = ALARM_REASON_NONE, .value = value};
+        record_system_event(pending, a, &tr, now);
+        refresh_counts(pending);
+    }
+    xSemaphoreGive(s.lock);
+    publish_pending(pending);
+    free(pending);
+    return err;
+}
+
+esp_err_t alarm_engine_system_clear(uint16_t id, uint8_t reason, float value)
+{
+    if (!s.initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    pending_t *pending = calloc(1, sizeof(*pending));
+    if (pending == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    esp_err_t err = ESP_OK;
+    uint32_t now = now_ms();
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    system_alarm_t *a = find_system(id);
+    if (a == NULL) {
+        err = ESP_ERR_NOT_FOUND;
+    } else if (a->rt.state == ALARM_STATE_ACTIVE) {
+        a->rt.state = ALARM_STATE_NORMAL;
+        a->rt.acked = false;
+        a->rt.last_value = value;
+        alarm_transition_t tr = {.type = ALARM_EVT_CLEARED, .reason = reason, .value = value};
+        record_system_event(pending, a, &tr, now);
+        refresh_counts(pending);
+    }
+    xSemaphoreGive(s.lock);
+    publish_pending(pending);
+    free(pending);
+    return err;
 }

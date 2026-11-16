@@ -316,6 +316,20 @@ void test_alarm_eval(void)
     rts[2].state = ALARM_STATE_NORMAL;
     alarm_counts(&set, rts, &c);
     CHECK(c.active == 1 && c.critical == 0 && c.unacked == 0 && c.critical_unacked == 0 && c.max_severity == 2);
+
+    /* alarm_counts_add: one runtime of a given severity (system alarms) */
+    alarm_runtime_t one;
+    memset(&c, 0, sizeof(c));
+    memset(&one, 0, sizeof(one));
+    alarm_counts_add(&c, &one, ALARM_SEV_CRITICAL); /* NORMAL adds nothing */
+    CHECK(c.active == 0 && c.critical == 0 && c.unacked == 0 && c.critical_unacked == 0 && c.max_severity == 0);
+    one.state = ALARM_STATE_ACTIVE;
+    alarm_counts_add(&c, &one, ALARM_SEV_CRITICAL);
+    CHECK(c.active == 1 && c.critical == 1 && c.unacked == 1 && c.critical_unacked == 1 && c.max_severity == ALARM_SEV_CRITICAL);
+    memset(&c, 0, sizeof(c));
+    one.acked = true;
+    alarm_counts_add(&c, &one, ALARM_SEV_CRITICAL);
+    CHECK(c.active == 1 && c.critical == 1 && c.unacked == 0 && c.critical_unacked == 0);
 }
 
 void test_alarm_eval_wrap(void)

@@ -104,7 +104,7 @@ alarm_json_err_t alarm_rule_from_json(const cJSON *obj, alarm_rule_t *out, bool 
     unsigned u;
     if (cJSON_GetObjectItemCaseSensitive(obj, "id") != NULL) {
         TRY(get_uint(&c, "id", false, 65535, &u));
-        if (u == 0) return fail(&c, "id", ALARM_JSON_INVALID_VALUE);
+        if (u == 0 || u >= ALARM_SYSTEM_ID_BASE) return fail(&c, "id", ALARM_JSON_INVALID_VALUE);
         out->id = (uint16_t)u;
         *has_id = true;
     }

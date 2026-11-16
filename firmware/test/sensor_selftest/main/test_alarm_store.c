@@ -27,13 +27,14 @@ void test_alarm_store(void)
     static alarm_rule_set_t set;
     const char *f;
     alarm_presets_fill(&set);
-    CHECK(set.count == 13 && set.next_id == 14);
+    CHECK(set.count == 12 && set.next_id == 13);
     for (int i = 0; i < set.count; i++) {
         CHECK(set.rules[i].id == i + 1 && !set.rules[i].enabled && alarm_rule_validate(&set.rules[i], &f));
     }
-    CHECK(set.rules[4].signal_id == 52 && set.rules[4].condition == ALARM_COND_IS_FALSE
-          && set.rules[4].gate_mode == ALARM_GATE_WHEN_TRUE && set.rules[4].gate_signal_id == 41
-          && set.rules[4].delay_sec == 15);
+    /* the dry-run preset is retired: rule 5 is now "flow while pump off" (is_true, gate relay1 false) */
+    CHECK(set.rules[4].signal_id == 52 && set.rules[4].condition == ALARM_COND_IS_TRUE
+          && set.rules[4].gate_mode == ALARM_GATE_WHEN_FALSE && set.rules[4].gate_signal_id == 41
+          && set.rules[4].delay_sec == 30);
     CHECK(set.rules[3].latch && set.rules[3].severity == ALARM_SEV_CRITICAL);
 
     /* blob: Review Focus 2 */
@@ -41,8 +42,8 @@ void test_alarm_store(void)
     static alarm_rule_set_t back;
     uint8_t dropped;
     size_t len = alarm_blob_encode(&set, buf, sizeof(buf));
-    CHECK(len == 4 + 13 * sizeof(alarm_rule_t) && buf[0] == ALARM_BLOB_VERSION);
-    CHECK(alarm_blob_decode(buf, len, &back, &dropped) && dropped == 0 && back.count == 13 && back.next_id == 14
+    CHECK(len == 4 + 12 * sizeof(alarm_rule_t) && buf[0] == ALARM_BLOB_VERSION);
+    CHECK(alarm_blob_decode(buf, len, &back, &dropped) && dropped == 0 && back.count == 12 && back.next_id == 13
           && memcmp(&back.rules[0], &set.rules[0], sizeof(alarm_rule_t)) == 0);
     CHECK(!alarm_blob_decode(buf, len - 1, &back, &dropped)); /* truncated */
     CHECK(!alarm_blob_decode(buf, 3, &back, &dropped));       /* shorter than the header */
@@ -51,9 +52,9 @@ void test_alarm_store(void)
     buf[0] = ALARM_BLOB_VERSION;
     buf[1] = 25;
     CHECK(!alarm_blob_decode(buf, len, &back, &dropped)); /* count > max */
-    buf[1] = 13;
+    buf[1] = 12;
     set.rules[2].signal_id = 200; /* a signal this firmware lacks */
     len = alarm_blob_encode(&set, buf, sizeof(buf));
-    CHECK(alarm_blob_decode(buf, len, &back, &dropped) && dropped == 1 && back.count == 12 && back.next_id == 14);
+    CHECK(alarm_blob_decode(buf, len, &back, &dropped) && dropped == 1 && back.count == 11 && back.next_id == 13);
     CHECK(alarm_blob_encode(&set, buf, 10) == 0);
 }

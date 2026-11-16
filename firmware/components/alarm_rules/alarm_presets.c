@@ -21,7 +21,6 @@ static const preset_t s_presets[] = {
     {"น้ำร้อนเกิน", "pt100_temp_c", ALARM_COND_ABOVE, 32.0f, 0, 0.5f, 60, ALARM_SEV_WARNING, false, NULL, false},
     {"ไฟตก/ไฟเกิน", "pump_voltage_v", ALARM_COND_OUTSIDE, 200.0f, 245.0f, 2.0f, 5, ALARM_SEV_WARNING, false, NULL, false},
     {"รีเลย์ปั๊มน้ำค้าง", "pump_current_a", ALARM_COND_ABOVE, 0.1f, 0, 0, 10, ALARM_SEV_CRITICAL, true, "relay1_on", false},
-    {"ปั๊มน้ำเปิดแต่น้ำไม่ไหล", "flow_on", ALARM_COND_IS_FALSE, 0, 0, 0, 15, ALARM_SEV_CRITICAL, false, "relay1_on", true},
     {"น้ำไหลทั้งที่ปั๊มปิด", "flow_on", ALARM_COND_IS_TRUE, 0, 0, 0, 30, ALARM_SEV_WARNING, false, "relay1_on", false},
     {"ปั๊มน้ำไม่ทำงานตามคำสั่ง", "pump_current_a", ALARM_COND_BELOW, 0.3f, 0, 0, 10, ALARM_SEV_CRITICAL, false, "relay1_on", true},
     {"Chiller ไม่ทำงานตามคำสั่ง", "chiller_power_w", ALARM_COND_BELOW, 50.0f, 0, 0, 180, ALARM_SEV_CRITICAL, false, "cooling_on", true},
