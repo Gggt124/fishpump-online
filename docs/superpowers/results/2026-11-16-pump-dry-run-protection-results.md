@@ -28,7 +28,7 @@ Gate: `verify_alarm_system.py` (FAILED 0) · `verify_dry_run.py` (FAILED 0, เ�
 | 4 | water guard inhibit, โหมดทดสอบรีเลย์ 1, สัญญาณ `pump_dry_run_state` | `75342c5` | 99 pass | 14 pass | 1086 |
 | 4 (แก้ รอบ 1) | backstop 130 วินาทีของโหมดทดสอบ | `499af9f` | 99 pass | 15 pass | 1086 |
 | 5 | `dry_run_guard` task, NVS, ล็อกตอนบูต | `0a0dc26` | 99 pass | 23 pass | 1086 |
-| 5 (แก้ รอบ 1) | stack ของ guard เป็น 4096 | `57b657f` | 99 pass | (ผ่าน) | 1086 |
+| 5 (แก้ รอบ 1) | stack ของ guard เป็น 4096 | `57b657f` | 99 pass | 23 pass | 1086 |
 | 6 | API `/api/protection*`, บล็อก start ตอน WAIT/LOCKED | `a8c7453` | 99 pass | 46 pass | 1086 |
 | 7 | การ์ด UI, ปุ่มวัดให้, ข้อความตอน start | `6ed9d57` | 99 pass | 80 pass | 1086 |
 | 7 (แก้ รอบ 1) | sync สถานะการวัดตอนกลับมาหน้า dashboard | `532a4cb` | 99 pass | 82 pass | 1086 |
@@ -36,7 +36,7 @@ Gate: `verify_alarm_system.py` (FAILED 0) · `verify_dry_run.py` (FAILED 0, เ�
 
 ผล gate ล่าสุด (Task 8 / `3a38f1a`): `verify_alarm_system` PASSED 99 FAILED 0 · `verify_dry_run` PASSED 89 FAILED 0 · `verify_sensor_integration` exit 0 · `SELFTEST PASS (1086 checks)` · `idf.py build` exit 0 ไม่มี warning
 
-หมายเหตุ: Task 5 รอบแก้ รายงานระบุเพียงว่า verify_dry_run FAILED 0 โดยไม่บอกจำนวน check ที่ผ่าน ตัวเลขอื่นในตารางมาจาก report ของแต่ละ task
+ตัวเลขในตารางมาจาก report ของแต่ละ task
 
 ระบบ alarm engine เองไม่มี test แบบ runtime ใน self-test (ต้องมี FreeRTOS/NVS) พฤติกรรมของมันและของ `pump_control`/`dry_run_guard` ผ่านการตรวจโค้ด, review และสคริปต์ static เท่านั้น
 
@@ -60,7 +60,7 @@ Gate: `verify_alarm_system.py` (FAILED 0) · `verify_dry_run.py` (FAILED 0, เ�
 
 **Task 3:** verify พิสูจน์ว่า callback ถูกเรียกหลัง Give แต่ไม่พิสูจน์ว่าไม่มีก่อน · `on_ack` เป็น NULL ได้ค่า `acked:1` · คอมเมนต์เก่าใน `alarm_presets.c:18-19` · engine ไม่มี runtime test
 
-**Task 3 → Task 6 (ยกไปทำ):** buffer active ของ `/api/alarms/status` ขนาด `ALARM_MAX_RULES` (`web_server.c:5765,5774`) อาจทำให้แจ้งเตือนของระบบหล่นเมื่อ active ครบ 24 กฎ ต้องขยายเป็น `ALARM_MAX_RULES + ALARM_ENGINE_MAX_SYSTEM` และปรับคอมเมนต์หัวฟังก์ชัน `get_active`
+**Task 3 → Task 6 (ยกไปทำ และแก้แล้วใน Task 6 `a8c7453`):** buffer active ของ `/api/alarms/status` ขนาด `ALARM_MAX_RULES` (`web_server.c:5765,5774`) อาจทำให้แจ้งเตือนของระบบหล่นเมื่อ active ครบ 24 กฎ ต้องขยายเป็น `ALARM_MAX_RULES + ALARM_ENGINE_MAX_SYSTEM` และปรับคอมเมนต์หัวฟังก์ชัน `get_active`
 
 **Task 3 → Task 5 (ยกไปทำ):** `on_ack` ทำงานหลังปลดล็อก อาจมาช้า guard ต้องตัดสินจากสถานะของตัวเอง (`dry_run_ack` ไม่สนใจเมื่อ `!alarm_active`)
 
