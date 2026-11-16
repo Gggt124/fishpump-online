@@ -44,6 +44,7 @@ static struct {
     uint32_t boot_id;
     uint32_t last_tick_ms;
     uint32_t rules_revision;
+    uint32_t last_critical_seq; /* newest raised critical event this boot, 0 if none */
     nvs_store_alarm_rules_load_status_t storage;
     bool running;
     bool initialized;
@@ -84,6 +85,9 @@ static void record_event_for(pending_t *p, uint16_t id, uint8_t signal_id, uint8
     evt.uptime_ms = now;
     copy_name(evt.name, name);
     uint32_t seq = alarm_ring_push(&s.ring, &evt);
+    if (tr->type == ALARM_EVT_RAISED && severity == ALARM_SEV_CRITICAL) {
+        s.last_critical_seq = seq; /* rule and system alarms alike; lock is held */
+    }
 
     if (p->count < sizeof(p->items) / sizeof(p->items[0])) {
         telemetry_alarm_payload_t *a = &p->items[p->count++];
@@ -233,6 +237,7 @@ bool alarm_engine_get_summary(alarm_engine_summary_t *out)
     xSemaphoreTake(s.lock, portMAX_DELAY);
     out->counts = s.counts;
     out->last_seq = s.ring.last_seq;
+    out->last_critical_seq = s.last_critical_seq;
     out->boot_id = s.boot_id;
     out->last_tick_ms = s.last_tick_ms;
     out->running = s.running;

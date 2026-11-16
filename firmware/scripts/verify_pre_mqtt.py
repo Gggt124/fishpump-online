@@ -115,10 +115,44 @@ def test_task3():
     assert_test("vSemaphoreDelete(s.send_lock)" in init, "uplink_init deletes send_lock on failure")
 
 
+def test_task4():
+    print("\n--- Task 4: LED colour by severity, last_critical_seq ---")
+    app = read(MAIN_DIR / "app_main.c")
+    hdr = read(MAIN_DIR / "app_main.h")
+    web = read(MAIN_DIR / "web_server.c")
+    eng = read(COMP_DIR / "alarm_engine" / "alarm_engine.c")
+    eng_h = read(COMP_DIR / "alarm_engine" / "include" / "alarm_engine.h")
+    assert_test("alarm_counts_led_level(" in app, "the app_main alarm branch calls alarm_counts_led_level")
+    assert_test("LED_STATE_ALARM_WARNING" in hdr and "LED_STATE_ALARM_INFO" in hdr,
+                "LED_STATE_ALARM_WARNING and LED_STATE_ALARM_INFO are declared")
+    leds = function_body(app, "update_status_leds")
+    assert_test("LED_STATE_ALARM_WARNING" in leds and "LED_STATE_ALARM_INFO" in leds,
+                "update_status_leds handles the warning and info states")
+    names = function_body(app, "app_led_state_name", r"const\s+char\s*\*\s*")
+    assert_test('"alarm_warning"' in names and '"alarm_info"' in names, "app_led_state_name names the new states")
+    stg = app.find("LED_STATE_STAGING_PENDING;")
+    alm = app.find("alarm_counts_led_level(")
+    assert_test(0 <= stg < alm, "the staging branch comes before the alarm branch in the LED loop")
+    assert_test(app.find("LED_STATE_BTN_HOLD_SHORT;") < alm and app.find("LED_STATE_FACTORY_RESET;") < alm,
+                "button hold and factory reset come before the alarm branch")
+    counts = function_body(web, "alarms_add_counts")
+    assert_test('"warning_unacked"' in counts and '"info_unacked"' in counts,
+                "alarms_add_counts emits warning_unacked and info_unacked")
+    summ = function_body(web, "handle_api_alarms_summary")
+    assert_test('"last_critical_seq"' in summ, "the summary handler emits last_critical_seq")
+    assert_test("last_critical_seq" in eng_h, "alarm_engine_summary_t has last_critical_seq")
+    rec = function_body(eng, "record_event_for")
+    assert_test("s.last_critical_seq" in rec and "ALARM_SEV_CRITICAL" in rec,
+                "record_event_for sets last_critical_seq for critical raised events")
+    assert_test("s.last_critical_seq" in function_body(eng, "alarm_engine_get_summary", r"bool\s+"),
+                "alarm_engine_get_summary copies last_critical_seq")
+
+
 def main():
     test_task1()
     test_task2()
     test_task3()
+    test_task4()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

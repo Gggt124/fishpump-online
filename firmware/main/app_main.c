@@ -108,6 +108,10 @@ const char *app_led_state_name(app_led_state_t state) {
     return "factory_reset";
   case LED_STATE_ALARM:
     return "alarm";
+  case LED_STATE_ALARM_WARNING:
+    return "alarm_warning";
+  case LED_STATE_ALARM_INFO:
+    return "alarm_info";
   default:
     return "unknown";
   }
@@ -557,6 +561,16 @@ static void update_status_leds(app_led_state_t state, int blink_phase,
     g = 0;
     b = 0; // Red, blinking (critical alarm not acknowledged)
     break;
+  case LED_STATE_ALARM_WARNING:
+    r = STATUS_RGB_BRIGHTNESS_DEFAULT;
+    g = STATUS_RGB_BRIGHTNESS_DEFAULT;
+    b = 0; // Yellow, steady (warning not acknowledged)
+    break;
+  case LED_STATE_ALARM_INFO:
+    r = 0;
+    g = 0;
+    b = STATUS_RGB_BRIGHTNESS_DEFAULT; // Blue, steady (info not acknowledged)
+    break;
   }
 
   // Apply blink phase to RGB LED if state calls for blinking
@@ -745,21 +759,30 @@ static void hardware_ui_task(void *pvParameters) {
         }
         update_status_leds(s_led_state, blink, blink);
       } else {
-        /* Critical unacknowledged alarm: blink at 1 Hz. The engine summary is
-         * re-read at most once per second, like the staging type above. */
-        static bool cached_critical_unacked = false;
+        /* Unacknowledged alarms: critical blinks red at 1 Hz, warning is steady
+         * yellow, info is steady blue (critical beats warning beats info). The
+         * engine summary is re-read at most once per second, like the staging
+         * type above, and only the resulting level is cached. */
+        static alarm_led_level_t cached_alarm_level = ALARM_LED_NONE;
         static uint32_t last_alarm_check_ms = 0;
         if (now_ms - last_alarm_check_ms >= 1000) {
           alarm_engine_summary_t alarm_summary;
-          cached_critical_unacked =
-              alarm_engine_get_summary(&alarm_summary) &&
-              alarm_summary.counts.critical_unacked > 0;
+          cached_alarm_level =
+              alarm_engine_get_summary(&alarm_summary)
+                  ? alarm_counts_led_level(&alarm_summary.counts)
+                  : ALARM_LED_NONE;
           last_alarm_check_ms = now_ms;
         }
-        if (cached_critical_unacked) {
+        if (cached_alarm_level == ALARM_LED_CRITICAL) {
           s_led_state = LED_STATE_ALARM;
           int blink = ((release_ticks / 10) % 2) == 0;
           update_status_leds(s_led_state, blink, blink);
+        } else if (cached_alarm_level == ALARM_LED_WARNING) {
+          s_led_state = LED_STATE_ALARM_WARNING;
+          update_status_leds(s_led_state, 1, 1);
+        } else if (cached_alarm_level == ALARM_LED_INFO) {
+          s_led_state = LED_STATE_ALARM_INFO;
+          update_status_leds(s_led_state, 1, 1);
         } else if (wifi_manager_is_ap_active()) {
           s_led_state = LED_STATE_ON;
           update_status_leds(s_led_state, 1, 1);

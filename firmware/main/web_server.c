@@ -5564,6 +5564,8 @@ static void alarms_add_counts(cJSON *parent, const alarm_counts_t *c) {
   cJSON_AddNumberToObject(o, "critical", c->critical);
   cJSON_AddNumberToObject(o, "unacked", c->unacked);
   cJSON_AddNumberToObject(o, "critical_unacked", c->critical_unacked);
+  cJSON_AddNumberToObject(o, "warning_unacked", c->warning_unacked);
+  cJSON_AddNumberToObject(o, "info_unacked", c->info_unacked);
   cJSON_AddNumberToObject(o, "max_severity", c->max_severity);
 }
 
@@ -5867,6 +5869,7 @@ static esp_err_t handle_api_alarms_summary(httpd_req_t *req) {
   cJSON_AddBoolToObject(root, "ok", true);
   cJSON_AddNumberToObject(root, "boot_id", sm.boot_id);
   cJSON_AddNumberToObject(root, "last_seq", sm.last_seq);
+  cJSON_AddNumberToObject(root, "last_critical_seq", sm.last_critical_seq);
   cJSON_AddBoolToObject(root, "engine_stalled", alarms_engine_stalled(&sm, ok));
   alarms_add_counts(root, &sm.counts);
   return alarms_send_tree(req, root);

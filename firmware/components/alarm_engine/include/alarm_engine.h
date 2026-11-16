@@ -22,6 +22,7 @@ extern "C" {
 typedef struct {
     alarm_counts_t counts;
     uint32_t last_seq;
+    uint32_t last_critical_seq; /* seq of the newest raised critical event this boot; 0 if none */
     uint32_t boot_id;
     uint32_t last_tick_ms;
     bool running;
