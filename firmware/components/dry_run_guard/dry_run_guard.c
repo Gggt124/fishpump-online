@@ -15,7 +15,7 @@
 
 static const char *TAG = "dry_run_guard";
 
-#define GUARD_TASK_STACK 3072
+#define GUARD_TASK_STACK 4096 /* trip path publishes SSE/telemetry from this task */
 #define GUARD_TASK_PRIORITY 2
 #define GUARD_TASK_CORE 1
 #define GUARD_TICK_MS 1000
