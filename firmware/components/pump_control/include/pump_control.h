@@ -35,6 +35,13 @@ typedef enum {
   PUMP_CONTROL_START_PHASE_OFF,
 } pump_control_start_phase_t;
 
+typedef enum {
+  PUMP_CONTROL_GUARD_OFF = 0,  /* == DRY_RUN_DISABLED */
+  PUMP_CONTROL_GUARD_MONITOR,  /* == DRY_RUN_MONITOR */
+  PUMP_CONTROL_GUARD_WAIT,     /* == DRY_RUN_WAIT: relay 1 inhibited */
+  PUMP_CONTROL_GUARD_LOCKED,   /* == DRY_RUN_LOCKED: relay 1 inhibited */
+} pump_control_water_guard_t;
+
 typedef struct {
   uint32_t on_sec;
   uint32_t off_sec;
@@ -60,6 +67,8 @@ typedef struct {
   uint32_t total_duration_sec;
   uint32_t cooldown_remaining_sec;
   bool auto_start;
+  uint8_t guard;     /* pump_control_water_guard_t */
+  bool test_active;  /* measure-button relay 1 test */
 } pump_control_water_status_t;
 
 typedef struct {
@@ -92,6 +101,8 @@ typedef struct {
   pump_control_timer_set_config_t wash_timer;
   bool water_auto_start;
   bool wash_auto_start;
+  /* LOCKED at boot: auto-start sets running but never energises relay 1. */
+  pump_control_water_guard_t water_guard_initial;
 } pump_control_init_context_t;
 
 bool pump_control_init(const pump_control_init_context_t *context);
@@ -101,6 +112,13 @@ bool pump_control_start_wash(void);
 bool pump_control_stop_wash(void);
 bool pump_control_get_status(pump_control_status_t *out);
 bool pump_control_update_config(const pump_control_config_update_t *update);
+
+/* Sets the guard. WAIT/LOCKED: relay 1 off, water timer frozen, start refused, `running` kept.
+ * Leaving WAIT/LOCKED with resume_from_on && running: restart the water schedule in its ON phase. */
+bool pump_control_set_water_guard(pump_control_water_guard_t guard, bool resume_from_on);
+/* Measure button: energise/de-energise relay 1 directly. Refused (false) when water running,
+ * guard WAIT/LOCKED, or not initialised. While active, pump_control_start_water() returns false. */
+bool pump_control_water_test(bool on);
 
 /** Optional callback invoked after water/wash runtime state changes. */
 typedef void (*pump_control_state_changed_cb_t)(void);

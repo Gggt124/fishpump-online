@@ -54,6 +54,7 @@ typedef struct {
     uint32_t remaining_sec;
     bool relay_1_active;
     bool relay_2_active;
+    uint8_t dry_run_state; /* pump_control_water_guard_t */
 } telemetry_pump_payload_t;
 
 typedef struct {

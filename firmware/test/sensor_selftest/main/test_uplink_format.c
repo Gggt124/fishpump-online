@@ -130,7 +130,7 @@ void test_uplink_format(void)
     CHECK(t != NULL && str_eq(t, "fw_type", "fishpump") && num_eq(t, "contract_version", 1)
           && str_eq(t, "fw_version", "0.2.0-dev"));
     const cJSON *sigs = t ? get(t, "signals") : NULL;
-    CHECK(cJSON_IsArray(sigs) && cJSON_GetArraySize(sigs) == 36);
+    CHECK(cJSON_IsArray(sigs) && cJSON_GetArraySize(sigs) == 37);
     bool found = false;
     const cJSON *s;
     cJSON_ArrayForEach(s, sigs) {

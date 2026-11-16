@@ -37,6 +37,7 @@ static const signal_def_t s_signals[] = {
     {42, "relay2_on", "รีเลย์ 2 (ล้าง) เปิด", "", "pump", B, SIGNAL_SRC_PUMP, 0, 0},
     {43, "pump_is_running", "ระบบปั๊มทำงาน", "", "pump", B, SIGNAL_SRC_PUMP, 0, 0},
     {44, "pump_active_set", "ชุดเวลาที่ใช้", "", "pump", N, SIGNAL_SRC_PUMP, 0, 0},
+    {45, "pump_dry_run_state", "สถานะป้องกันเดินแห้ง", "", "pump", N, SIGNAL_SRC_PUMP, 0, 0},
 
     {51, "float_high", "ลูกลอยลอย", "", "float", B, SIGNAL_SRC_FLOAT, 0, 0},
     {52, "flow_on", "น้ำไหล", "", "pump", B, SIGNAL_SRC_FLOW, 0, 5},
@@ -202,6 +203,8 @@ void signal_registry_read(const signal_def_t *def, const telemetry_snapshot_t *s
         case 41: out->value = snap->pump.relay_1_active ? 1.0 : 0.0; break;
         case 42: out->value = snap->pump.relay_2_active ? 1.0 : 0.0; break;
         case 43: out->value = snap->pump.is_running ? 1.0 : 0.0; break;
+        case 44: out->value = snap->pump.active_pump; break;
+        case 45: out->value = snap->pump.dry_run_state; break;
         default: out->value = snap->pump.active_pump; break;
         }
         break;

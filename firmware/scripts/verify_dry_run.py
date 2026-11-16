@@ -71,8 +71,31 @@ def test_engine():
     assert_test("ALARM_SYSTEM_ID_BASE" in eng, "alarm_engine.c guards next_id with ALARM_SYSTEM_ID_BASE")
 
 
+def test_pump_control():
+    print("\n--- Task 4: pump_control guard, test mode and signal ---")
+    hdr = read(COMP_DIR / "pump_control" / "include" / "pump_control.h")
+    src = read(COMP_DIR / "pump_control" / "pump_control.c")
+    assert_test(re.search(r"bool\s+pump_control_set_water_guard\s*\(", hdr) is not None,
+                "pump_control.h declares pump_control_set_water_guard")
+    assert_test(re.search(r"bool\s+pump_control_water_test\s*\(", hdr) is not None,
+                "pump_control.h declares pump_control_water_test")
+    assert_test("water_guard_initial" in hdr, "pump_control_init_context_t has water_guard_initial")
+    apply = function_body(src, "apply_water_set_start_phase", r"static\s+bool\s+")
+    assert_test(apply != "" and re.search(r"guard[\s\S]*set_relay1_energized", apply) is not None,
+                "apply_water_set_start_phase checks the guard before set_relay1_energized")
+    tick = function_body(src, "pump_tick_cb", r"static\s+void\s+")
+    water = tick.split("/* Process Water System */")[-1].split("/* Process Wash System */")[0]
+    assert_test(tick != "" and "water_inhibited_locked" in water,
+                "pump_tick_cb water branch references the guard")
+    start = function_body(src, "pump_control_start_water", r"bool\s+")
+    assert_test(start != "" and re.search(r"water_inhibited_locked\(\)[\s\S]*return false", start) is not None,
+                "pump_control_start_water returns false when inhibited or testing")
+    assert_test("static bool water_inhibited_locked" in src, "water_inhibited_locked helper exists")
+
+
 def main():
     test_engine()
+    test_pump_control()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

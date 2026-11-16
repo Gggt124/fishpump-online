@@ -8,7 +8,7 @@ void test_signal_registry(void)
 {
     size_t n;
     const signal_def_t *all = signal_registry_all(&n);
-    CHECK(n == 36);
+    CHECK(n == 37);
     for (size_t i = 0; i < n; i++) {
         for (size_t j = i + 1; j < n; j++) {
             CHECK(all[i].id != all[j].id && strcmp(all[i].key, all[j].key) != 0);
@@ -62,6 +62,13 @@ void test_signal_registry(void)
     s.health.wifi_rssi = -61;
     signal_registry_read(signal_registry_by_key("wifi_rssi_dbm"), &s, 5000, &v);
     CHECK(v.trusted && v.value == -61.0);
+
+    const signal_def_t *dr = signal_registry_by_key("pump_dry_run_state");
+    CHECK(dr != NULL && dr->id == 45 && dr->kind == SIGNAL_KIND_NUMBER);
+    s.has_pump = true;
+    s.pump.dry_run_state = 3;
+    signal_registry_read(dr, &s, 5000, &v);
+    CHECK(v.present && v.trusted && v.value == 3.0);
 
     s.has_flow = true;
     s.flow.flow_on = true;

@@ -65,6 +65,18 @@ typedef struct {
 
 static water_runtime_state_t s_water_state;
 
+/* Dry-run guard (set by dry_run_guard) and measure-button test mode.
+ * Both are protected by s_pump_mutex like the rest of the state. */
+static pump_control_water_guard_t s_guard = PUMP_CONTROL_GUARD_OFF;
+static bool s_test_active = false;
+
+/* True when relay 1 must stay off from the timer: guard WAIT/LOCKED, or the
+ * measure-button test owns relay 1. Caller holds s_pump_mutex. */
+static bool water_inhibited_locked(void) {
+  return s_guard == PUMP_CONTROL_GUARD_WAIT ||
+         s_guard == PUMP_CONTROL_GUARD_LOCKED || s_test_active;
+}
+
 typedef struct {
   bool running;
   bool relay_energized;
@@ -113,6 +125,7 @@ static void get_current_pump_telemetry_locked(int64_t now_ms,
   out->remaining_sec = rem;
   out->relay_1_active = s_water_state.relay_energized;
   out->relay_2_active = s_wash_state.relay_energized;
+  out->dry_run_state = (uint8_t)s_guard;
 }
 
 static bool pump_telemetry_changed(const telemetry_pump_payload_t *p) {
@@ -124,7 +137,8 @@ static bool pump_telemetry_changed(const telemetry_pump_payload_t *p) {
           p->remaining_sec != s_last_published_pump.remaining_sec ||
           p->elapsed_sec != s_last_published_pump.elapsed_sec ||
           p->relay_1_active != s_last_published_pump.relay_1_active ||
-          p->relay_2_active != s_last_published_pump.relay_2_active);
+          p->relay_2_active != s_last_published_pump.relay_2_active ||
+          p->dry_run_state != s_last_published_pump.dry_run_state);
 }
 
 /**
@@ -199,6 +213,9 @@ static bool init_context_valid(const pump_control_init_context_t *context) {
       !timer_set_config_valid(&context->wash_timer)) {
     return false;
   }
+  if ((unsigned)context->water_guard_initial > PUMP_CONTROL_GUARD_LOCKED) {
+    return false;
+  }
 
   return context->float_gpio != context->relay1_gpio &&
          context->float_gpio != context->relay2_gpio &&
@@ -228,6 +245,7 @@ static void pump_force_relays_inactive_locked(void) {
 
   s_water_state.running = false;
   s_water_state.relay_energized = false;
+  s_test_active = false;
   s_water_state.phase = PUMP_CONTROL_PHASE_IDLE;
   s_water_state.phase_deadline_ms = 0;
   s_water_state.total_duration_sec = 0;
@@ -310,7 +328,21 @@ get_active_water_set_config(pump_control_active_set_t set) {
   return &s_config.water_set1;
 }
 
+/* Freezes the water timer and keeps relay 1 off. `running` is kept so that a
+ * later resume works. Caller holds s_pump_mutex. */
+static bool freeze_water_timer_locked(void) {
+  s_water_state.phase = PUMP_CONTROL_PHASE_IDLE;
+  s_water_state.phase_deadline_ms = 0;
+  s_water_state.total_duration_sec = 0;
+  s_test_active = false;
+  return set_relay1_energized(false);
+}
+
 static bool apply_water_set_start_phase(int64_t now_ms) {
+  if (water_inhibited_locked()) {
+    /* Dry-run guard (or test mode) owns relay 1: never energise from here. */
+    return freeze_water_timer_locked();
+  }
   const pump_control_timer_set_config_t *cfg =
       get_active_water_set_config(s_water_state.active_set);
   pump_control_timer_phase_t phase =
@@ -324,6 +356,25 @@ static bool apply_water_set_start_phase(int64_t now_ms) {
   s_water_state.total_duration_sec = duration;
   s_water_state.phase_deadline_ms = now_ms + ((int64_t)duration * MS_PER_SEC);
   if (!set_relay1_energized(phase == PUMP_CONTROL_PHASE_ON)) {
+    return false;
+  }
+  notify_state_changed();
+  return true;
+}
+
+/* Resume variant: restart the active set's schedule in its ON phase. */
+static bool apply_water_set_on_phase(int64_t now_ms) {
+  if (water_inhibited_locked()) {
+    /* Dry-run guard (or test mode) owns relay 1: never energise from here. */
+    return freeze_water_timer_locked();
+  }
+  const pump_control_timer_set_config_t *cfg =
+      get_active_water_set_config(s_water_state.active_set);
+  s_water_state.phase = PUMP_CONTROL_PHASE_ON;
+  s_water_state.total_duration_sec = cfg->on_sec;
+  s_water_state.phase_deadline_ms =
+      now_ms + ((int64_t)cfg->on_sec * MS_PER_SEC);
+  if (!set_relay1_energized(true)) {
     return false;
   }
   notify_state_changed();
@@ -374,7 +425,12 @@ static void pump_tick_cb(void *arg) {
   bool float_changed = update_float_debounce(now_ms);
 
   /* Process Water System */
-  if (s_water_state.running) {
+  if (s_water_state.running && water_inhibited_locked()) {
+    /* Guard WAIT/LOCKED: timer frozen, relay 1 forced off every tick. */
+    if (s_water_state.relay_energized && !freeze_water_timer_locked()) {
+      goto exit_tick;
+    }
+  } else if (s_water_state.running) {
     pump_control_active_set_t target_set =
         (s_confirmed_float_state == PUMP_CONTROL_FLOAT_ON) ? PUMP_CONTROL_SET_2
                                                            : PUMP_CONTROL_SET_1;
@@ -496,6 +552,9 @@ bool pump_control_init(const pump_control_init_context_t *context) {
   s_config.relay2_active_low = context->relay2_active_low;
   s_config.min_dwell_sec = context->min_dwell_sec;
   s_runtime_enabled = context->allow_runtime_control;
+  /* Set before any auto-start: LOCKED must keep relay 1 off from the first instant. */
+  s_guard = context->water_guard_initial;
+  s_test_active = false;
 
   bool auto_start_permitted = context->allow_auto_start && s_runtime_enabled;
   s_config.water_auto_start = auto_start_permitted && context->water_auto_start;
@@ -647,6 +706,11 @@ bool pump_control_start_water(void) {
     return false;
   }
 #endif
+  if (water_inhibited_locked()) {
+    /* Guard WAIT/LOCKED or measure-button test active: refuse to start. */
+    xSemaphoreGive(s_pump_mutex);
+    return false;
+  }
   if (s_water_state.running) {
     xSemaphoreGive(s_pump_mutex);
     return true;
@@ -694,6 +758,7 @@ bool pump_control_stop_water(void) {
   s_water_state.phase_deadline_ms = 0;
   s_water_state.total_duration_sec = 0;
   s_water_state.last_set_switch_ms = 0;
+  s_test_active = false; /* stop always ends a relay-1 test as well */
   bool ok = set_relay1_energized(false);
   notify_state_changed();
 
@@ -827,6 +892,8 @@ bool pump_control_get_status(pump_control_status_t *out) {
       s_water_state.running ? s_water_state.total_duration_sec : 0;
   out->water.cooldown_remaining_sec = calc_switch_cooldown_sec(now_ms);
   out->water.auto_start = s_config.water_auto_start;
+  out->water.guard = (uint8_t)s_guard;
+  out->water.test_active = s_test_active;
 
   out->wash.running = s_wash_state.running;
   out->wash.relay_energized = s_wash_state.relay_energized;
@@ -864,4 +931,108 @@ bool pump_control_update_config(const pump_control_config_update_t *update) {
 
   xSemaphoreGive(s_pump_mutex);
   return true;
+}
+
+bool pump_control_set_water_guard(pump_control_water_guard_t guard,
+                                  bool resume_from_on) {
+  if ((unsigned)guard > PUMP_CONTROL_GUARD_LOCKED || !s_pump_mutex ||
+      xSemaphoreTake(s_pump_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    return false;
+  }
+  if (!s_initialized) {
+    xSemaphoreGive(s_pump_mutex);
+    return false;
+  }
+
+  int64_t now_ms = esp_timer_get_time() / 1000;
+  bool was_inhibited = (s_guard == PUMP_CONTROL_GUARD_WAIT ||
+                        s_guard == PUMP_CONTROL_GUARD_LOCKED);
+  bool now_inhibited = (guard == PUMP_CONTROL_GUARD_WAIT ||
+                        guard == PUMP_CONTROL_GUARD_LOCKED);
+  bool ok = true;
+  s_guard = guard;
+
+  if (now_inhibited) {
+    /* Relay 1 off, timer frozen, `running` kept for a later resume. This also
+     * ends any measure-button test. */
+    bool was_on = s_water_state.relay_energized;
+    ok = freeze_water_timer_locked();
+    if (was_on) {
+      notify_state_changed();
+    }
+  } else if (was_inhibited && s_water_state.running && !s_fault &&
+             s_runtime_enabled) {
+    /* Leaving WAIT/LOCKED with the user's intent still "running". */
+    s_water_state.active_set =
+        (s_confirmed_float_state == PUMP_CONTROL_FLOAT_ON) ? PUMP_CONTROL_SET_2
+                                                           : PUMP_CONTROL_SET_1;
+    s_water_state.last_set_switch_ms = now_ms;
+    ok = resume_from_on ? apply_water_set_on_phase(now_ms)
+                        : apply_water_set_start_phase(now_ms);
+  }
+
+  telemetry_event_t pump_evt;
+  bool do_pub_pump = false;
+  prepare_telemetry_if_changed_locked(now_ms, false, NULL, NULL, &pump_evt,
+                                      &do_pub_pump);
+  xSemaphoreGive(s_pump_mutex);
+
+  /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
+  if (do_pub_pump) {
+    telemetry_hub_publish(&pump_evt);
+  }
+  return ok;
+}
+
+bool pump_control_water_test(bool on) {
+  if (!s_pump_mutex ||
+      xSemaphoreTake(s_pump_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    return false;
+  }
+#if defined(APP_CONFIG_RELAY_FAULT_ENABLED) && (APP_CONFIG_RELAY_FAULT_ENABLED == 0)
+  if (!s_initialized) {
+    xSemaphoreGive(s_pump_mutex);
+    return false;
+  }
+#else
+  if (!s_initialized || s_fault || !s_runtime_enabled) {
+    xSemaphoreGive(s_pump_mutex);
+    return false;
+  }
+#endif
+
+  int64_t now_ms = esp_timer_get_time() / 1000;
+  bool ok = true;
+  bool changed = false;
+  if (on) {
+    if (s_water_state.running || s_guard == PUMP_CONTROL_GUARD_WAIT ||
+        s_guard == PUMP_CONTROL_GUARD_LOCKED) {
+      xSemaphoreGive(s_pump_mutex);
+      return false;
+    }
+    if (!s_test_active) {
+      ok = set_relay1_energized(true);
+      s_test_active = ok;
+      changed = ok;
+    }
+  } else if (s_test_active) {
+    s_test_active = false;
+    ok = set_relay1_energized(false);
+    changed = true;
+  }
+  if (changed) {
+    notify_state_changed();
+  }
+
+  telemetry_event_t pump_evt;
+  bool do_pub_pump = false;
+  prepare_telemetry_if_changed_locked(now_ms, false, NULL, NULL, &pump_evt,
+                                      &do_pub_pump);
+  xSemaphoreGive(s_pump_mutex);
+
+  /* Publish telemetry OUTSIDE mutex lock to prevent deadlock */
+  if (do_pub_pump) {
+    telemetry_hub_publish(&pump_evt);
+  }
+  return ok;
 }
