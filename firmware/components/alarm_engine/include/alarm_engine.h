@@ -54,7 +54,7 @@ esp_err_t alarm_engine_ack(uint16_t rule_id);
 /* ESP_OK (*acked = number acknowledged) | ESP_ERR_INVALID_STATE | ESP_ERR_NO_MEM.
  * *acked is 0 on every error; acked may be NULL. */
 esp_err_t alarm_engine_ack_all(size_t *acked);
-size_t alarm_engine_get_active(alarm_active_t *out, size_t max); /* ACTIVE and LATCHED rules */
+size_t alarm_engine_get_active(alarm_active_t *out, size_t max); /* ACTIVE and LATCHED rules and system alarms: size out for ALARM_MAX_RULES + ALARM_ENGINE_MAX_SYSTEM */
 size_t alarm_engine_get_events_since(uint32_t after_seq, alarm_event_t *out, size_t max,
                                      uint32_t *oldest_seq);
 uint32_t alarm_engine_get_rules_revision(void); /* +1 on every successful upsert or delete; 0 before init */

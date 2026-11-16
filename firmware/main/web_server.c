@@ -30,6 +30,7 @@
 #include "water_quality.h"
 #include "flow_switch.h"
 #include "alarm_engine.h"
+#include "dry_run_guard.h"
 #include "alarm_rules.h"
 #include "signal_registry.h"
 #include "uplink.h"
@@ -1850,12 +1851,115 @@ api_cooling_send_apply_error(httpd_req_t *req, const char *code,
   return result;
 }
 
+/* ---------------- Dry-run protection helpers ---------------- */
+
+static const char *dry_run_state_name(uint8_t state) {
+  switch (state) {
+  case DRY_RUN_MONITOR:
+    return "monitor";
+  case DRY_RUN_WAIT:
+    return "wait";
+  case DRY_RUN_LOCKED:
+    return "locked";
+  default:
+    return "disabled";
+  }
+}
+
+/* {state,trips,max_retries,wait_remaining_sec,dry_accum_sec} - the pump_status shape. */
+static void dry_run_add_runtime_fields(cJSON *obj, const dry_run_guard_status_t *gs) {
+  cJSON_AddStringToObject(obj, "state", dry_run_state_name(gs->state));
+  cJSON_AddNumberToObject(obj, "trips", gs->trips);
+  cJSON_AddNumberToObject(obj, "max_retries", gs->cfg.max_retries);
+  cJSON_AddNumberToObject(obj, "wait_remaining_sec", gs->wait_remaining_sec);
+  cJSON_AddNumberToObject(obj, "dry_accum_sec", gs->dry_accum_sec);
+}
+
+/* Appends "dry_run":{enabled + runtime fields} to a pump status document. */
+static void dry_run_add_status_gen(json_gen_t *gen) {
+  dry_run_guard_status_t gs;
+  if (!dry_run_guard_get_status(&gs)) {
+    return;
+  }
+  json_gen_add_key(gen, "dry_run");
+  json_gen_append(gen, "{");
+  gen->first_item = true;
+  json_gen_add_bool(gen, "enabled", gs.cfg.enabled);
+  json_gen_add_string(gen, "state", dry_run_state_name(gs.state));
+  json_gen_add_number(gen, "trips", gs.trips);
+  json_gen_add_number(gen, "max_retries", gs.cfg.max_retries);
+  json_gen_add_number(gen, "wait_remaining_sec", (double)gs.wait_remaining_sec);
+  json_gen_add_number(gen, "dry_accum_sec", (double)gs.dry_accum_sec);
+  json_gen_end_object(gen);
+}
+
+static void dry_run_add_status_object(cJSON *root) {
+  dry_run_guard_status_t gs;
+  if (!dry_run_guard_get_status(&gs)) {
+    return;
+  }
+  cJSON *obj = cJSON_AddObjectToObject(root, "dry_run");
+  if (!obj) {
+    return;
+  }
+  cJSON_AddBoolToObject(obj, "enabled", gs.cfg.enabled);
+  dry_run_add_runtime_fields(obj, &gs);
+}
+
+/* Water start is refused while the dry-run guard waits or is locked, and while the measure test
+ * holds relay 1. Sends the 409 and returns true when blocked. Never touches the pump (stopping it
+ * would erase the user's running intent). A guard that is not initialised does not block. */
+static bool pump_start_blocked_response(httpd_req_t *req, esp_err_t *sent) {
+  dry_run_guard_status_t gs;
+  if (dry_run_guard_get_status(&gs)) {
+    if (gs.state == DRY_RUN_WAIT) {
+      cJSON *root = cJSON_CreateObject();
+      if (!root) {
+        *sent = send_api_error(req, "memory", "JSON allocation failed",
+                               "500 Internal Server Error");
+        return true;
+      }
+      cJSON_AddBoolToObject(root, "ok", false);
+      cJSON_AddStringToObject(root, "error", "dry_run_waiting");
+      cJSON_AddStringToObject(root, "message", "Water pump is waiting to retry after a dry run");
+      cJSON_AddNumberToObject(root, "wait_remaining_sec", gs.wait_remaining_sec);
+      char *json_str = cJSON_PrintUnformatted(root);
+      cJSON_Delete(root);
+      if (!json_str) {
+        *sent = send_api_error(req, "memory", "JSON allocation failed",
+                               "500 Internal Server Error");
+        return true;
+      }
+      *sent = send_json(req, json_str, "409 Conflict");
+      free(json_str);
+      return true;
+    }
+    if (gs.state == DRY_RUN_LOCKED) {
+      *sent = send_api_error(req, "dry_run_locked",
+                             "Water pump is locked after repeated dry runs; acknowledge the alarm",
+                             "409 Conflict");
+      return true;
+    }
+  }
+  dry_run_measure_status_t ms;
+  if (dry_run_guard_get_measure(&ms) && ms.state == DRY_RUN_MEASURE_RUNNING) {
+    *sent = send_api_error(req, "measuring", "Flow-time measurement is running",
+                           "409 Conflict");
+    return true;
+  }
+  return false;
+}
+
 static bool api_pump_add_status_object(cJSON *root) {
   cJSON *status_obj = cJSON_AddObjectToObject(root, "status");
   if (!status_obj) {
     return false;
   }
-  return api_pump_add_status_fields(status_obj);
+  if (!api_pump_add_status_fields(status_obj)) {
+    return false;
+  }
+  dry_run_add_status_object(root);
+  return true;
 }
 
 static bool api_pump_json_has_field(const cJSON *root, const char *name) {
@@ -4207,14 +4311,14 @@ static esp_err_t handle_api_pump_status(httpd_req_t *req) {
                      "401 Unauthorized");
   }
 
-  char *json_buf = malloc(2048);
+  char *json_buf = malloc(3072);
   if (!json_buf) {
     return send_api_error(req, "memory", "JSON allocation failed",
                           "500 Internal Server Error");
   }
 
   json_gen_t gen;
-  json_gen_init(&gen, json_buf, 2048);
+  json_gen_init(&gen, json_buf, 3072);
   json_gen_start_object(&gen);
   json_gen_add_bool(&gen, "ok", true);
 
@@ -4223,6 +4327,7 @@ static esp_err_t handle_api_pump_status(httpd_req_t *req) {
     return send_api_error(req, "status_unavailable",
                           "Pump status is unavailable", "409 Conflict");
   }
+  dry_run_add_status_gen(&gen);
   json_gen_end_object(&gen);
 
   esp_err_t result = send_json(req, json_buf, "200 OK");
@@ -4743,6 +4848,11 @@ static esp_err_t handle_api_pump_start(httpd_req_t *req) {
                           "Pump status is unavailable", "409 Conflict");
   }
 
+  esp_err_t blocked_sent = ESP_OK;
+  if (pump_start_blocked_response(req, &blocked_sent)) {
+    return blocked_sent;
+  }
+
   bool already_running = before_status.water.running;
   if (!already_running && !pump_control_start_water()) {
     pump_control_stop_water();
@@ -4901,6 +5011,13 @@ static esp_err_t handle_api_pump_control_post(httpd_req_t *req) {
   if (!do_water && !do_wash) {
     return send_api_error(req, "invalid_system", "System must be 'water', 'wash', or 'all'",
                           "400 Bad Request");
+  }
+
+  if (is_start && do_water) {
+    esp_err_t blocked_sent = ESP_OK;
+    if (pump_start_blocked_response(req, &blocked_sent)) {
+      return blocked_sent;
+    }
   }
 
   bool success = true;
@@ -5762,7 +5879,8 @@ static esp_err_t handle_api_alarms_status(httpd_req_t *req) {
   }
   alarm_engine_summary_t sm = {0};
   bool ok = alarm_engine_get_summary(&sm);
-  alarm_active_t *active = calloc(ALARM_MAX_RULES, sizeof(*active));
+  alarm_active_t *active =
+      calloc(ALARM_MAX_RULES + ALARM_ENGINE_MAX_SYSTEM, sizeof(*active));
   alarm_event_t *events = calloc(ALARM_HISTORY_LEN, sizeof(*events));
   cJSON *root = cJSON_CreateObject();
   if (!active || !events || !root) {
@@ -5771,7 +5889,7 @@ static esp_err_t handle_api_alarms_status(httpd_req_t *req) {
     cJSON_Delete(root);
     return alarms_send_tree(req, NULL);
   }
-  size_t n_active = ok ? alarm_engine_get_active(active, ALARM_MAX_RULES) : 0;
+  size_t n_active = ok ? alarm_engine_get_active(active, ALARM_MAX_RULES + ALARM_ENGINE_MAX_SYSTEM) : 0;
   uint32_t oldest = 0;
   size_t n_events =
       ok ? alarm_engine_get_events_since(0, events, ALARM_HISTORY_LEN, &oldest) : 0;
@@ -5799,6 +5917,16 @@ static esp_err_t handle_api_alarms_status(httpd_req_t *req) {
     cJSON_AddBoolToObject(o, "acked", active[i].acked);
     alarms_add_value(o, "value", active[i].value);
     cJSON_AddNumberToObject(o, "since_ms", active[i].since_ms);
+    if (active[i].rule_id == ALARM_SYSTEM_ID_DRY_RUN) {
+      dry_run_guard_status_t gs;
+      cJSON *dr = dry_run_guard_get_status(&gs) ? cJSON_AddObjectToObject(o, "dry_run") : NULL;
+      if (dr) {
+        cJSON_AddStringToObject(dr, "state", dry_run_state_name(gs.state));
+        cJSON_AddNumberToObject(dr, "trips", gs.trips);
+        cJSON_AddNumberToObject(dr, "max_retries", gs.cfg.max_retries);
+        cJSON_AddNumberToObject(dr, "wait_remaining_sec", gs.wait_remaining_sec);
+      }
+    }
     cJSON_AddItemToArray(arr, o);
   }
 
@@ -5832,6 +5960,200 @@ static esp_err_t handle_api_alarms_status(httpd_req_t *req) {
   free(active);
   free(events);
   return alarms_send_tree(req, root);
+}
+
+/* ---------------- Dry-run protection API ---------------- */
+
+/* The GET /api/protection document: {"ok":true,"pump":{settings},"pump_status":{runtime}}.
+ * Sends 503 when the guard is not running. */
+static esp_err_t protection_send_status(httpd_req_t *req) {
+  dry_run_guard_status_t gs;
+  if (!dry_run_guard_get_status(&gs)) {
+    return send_api_error(req, "unavailable", "Dry-run protection not running",
+                          "503 Service Unavailable");
+  }
+  cJSON *root = cJSON_CreateObject();
+  cJSON *pump = root ? cJSON_AddObjectToObject(root, "pump") : NULL;
+  if (!pump) {
+    cJSON_Delete(root);
+    return alarms_send_tree(req, NULL);
+  }
+  cJSON_AddBoolToObject(root, "ok", true);
+  cJSON_AddBoolToObject(pump, "enabled", gs.cfg.enabled);
+  cJSON_AddNumberToObject(pump, "prime_sec", gs.cfg.prime_sec);
+  cJSON_AddNumberToObject(pump, "dry_trip_sec", gs.cfg.dry_trip_sec);
+  cJSON_AddNumberToObject(pump, "retry_wait_min", gs.cfg.retry_wait_min);
+  cJSON_AddBoolToObject(pump, "retry_backoff", gs.cfg.retry_backoff);
+  cJSON_AddNumberToObject(pump, "max_retries", gs.cfg.max_retries);
+  cJSON *st = cJSON_AddObjectToObject(root, "pump_status");
+  if (!st) {
+    cJSON_Delete(root);
+    return alarms_send_tree(req, NULL);
+  }
+  dry_run_add_runtime_fields(st, &gs);
+  return alarms_send_tree(req, root);
+}
+
+/* GET /api/protection */
+static esp_err_t handle_api_protection_get(httpd_req_t *req) {
+  if (!require_auth(req)) {
+    return alarms_unauthorized(req);
+  }
+  return protection_send_status(req);
+}
+
+/* Reads a required JSON boolean; sends the 400 and returns false on a bad value. */
+static bool protection_read_bool(httpd_req_t *req, const cJSON *obj, const char *name,
+                                 bool *out, esp_err_t *sent) {
+  const cJSON *it = cJSON_GetObjectItem(obj, name);
+  if (!it) {
+    *sent = send_api_error(req, "missing_field", name, "400 Bad Request");
+    return false;
+  }
+  if (!cJSON_IsBool(it)) {
+    *sent = send_api_error(req, "invalid_type", name, "400 Bad Request");
+    return false;
+  }
+  *out = cJSON_IsTrue(it);
+  return true;
+}
+
+/* Reads a required whole JSON number in 0..max (same rules as alarms_read_id). */
+static bool protection_read_uint(httpd_req_t *req, const cJSON *obj, const char *name,
+                                 double max, uint32_t *out, esp_err_t *sent) {
+  const cJSON *it = cJSON_GetObjectItem(obj, name);
+  if (!it) {
+    *sent = send_api_error(req, "missing_field", name, "400 Bad Request");
+    return false;
+  }
+  if (!cJSON_IsNumber(it)) {
+    *sent = send_api_error(req, "invalid_type", name, "400 Bad Request");
+    return false;
+  }
+  double d = it->valuedouble;
+  if (!isfinite(d) || d < 0.0 || d > max || d != floor(d)) {
+    *sent = send_api_error(req, "value_out_of_range", name, "400 Bad Request");
+    return false;
+  }
+  *out = (uint32_t)d;
+  return true;
+}
+
+/* POST /api/protection {"pump":{enabled,prime_sec,dry_trip_sec,retry_wait_min,retry_backoff,max_retries}} */
+static esp_err_t handle_api_protection_post(httpd_req_t *req) {
+  esp_err_t sent = ESP_OK;
+  char body[384];
+  cJSON *root = api_begin_json_post(req, body, sizeof(body), &sent);
+  if (!root) {
+    return sent;
+  }
+  const cJSON *pump = cJSON_GetObjectItem(root, "pump");
+  if (!pump) {
+    cJSON_Delete(root);
+    return send_api_error(req, "missing_field", "pump", "400 Bad Request");
+  }
+  if (!cJSON_IsObject(pump)) {
+    cJSON_Delete(root);
+    return send_api_error(req, "invalid_type", "pump", "400 Bad Request");
+  }
+  dry_run_config_t cfg = {0};
+  uint32_t prime = 0, trip = 0, wait_min = 0, retries = 0;
+  bool ok = protection_read_bool(req, pump, "enabled", &cfg.enabled, &sent) &&
+            protection_read_uint(req, pump, "prime_sec", 65535.0, &prime, &sent) &&
+            protection_read_uint(req, pump, "dry_trip_sec", 65535.0, &trip, &sent) &&
+            protection_read_uint(req, pump, "retry_wait_min", 65535.0, &wait_min, &sent) &&
+            protection_read_bool(req, pump, "retry_backoff", &cfg.retry_backoff, &sent) &&
+            protection_read_uint(req, pump, "max_retries", 255.0, &retries, &sent);
+  cJSON_Delete(root);
+  if (!ok) {
+    return sent;
+  }
+  cfg.prime_sec = (uint16_t)prime;
+  cfg.dry_trip_sec = (uint16_t)trip;
+  cfg.retry_wait_min = (uint16_t)wait_min;
+  cfg.max_retries = (uint8_t)retries;
+
+  const char *field = "";
+  esp_err_t err = dry_run_guard_set_config(&cfg, &field);
+  switch (err) {
+  case ESP_OK:
+    return protection_send_status(req);
+  case ESP_ERR_INVALID_ARG:
+    return send_api_error(req, "value_out_of_range", field, "400 Bad Request");
+  case ESP_ERR_INVALID_STATE:
+    return send_api_error(req, "unavailable", "Dry-run protection not running",
+                          "503 Service Unavailable");
+  default:
+    return send_api_error(req, "storage_failed", "Could not save settings",
+                          "500 Internal Server Error");
+  }
+}
+
+static const char *protection_measure_state_name(uint8_t state) {
+  switch (state) {
+  case DRY_RUN_MEASURE_RUNNING:
+    return "running";
+  case DRY_RUN_MEASURE_DONE:
+    return "done";
+  case DRY_RUN_MEASURE_NO_FLOW:
+    return "no_flow";
+  case DRY_RUN_MEASURE_STOPPED:
+    return "stopped";
+  default:
+    return "idle";
+  }
+}
+
+/* {"ok":true,"state","elapsed_ms","suggested_prime_sec"}; 503 when the guard is not running. */
+static esp_err_t protection_send_measure(httpd_req_t *req) {
+  dry_run_measure_status_t ms;
+  if (!dry_run_guard_get_measure(&ms)) {
+    return send_api_error(req, "unavailable", "Dry-run protection not running",
+                          "503 Service Unavailable");
+  }
+  cJSON *root = cJSON_CreateObject();
+  if (!root) {
+    return alarms_send_tree(req, NULL);
+  }
+  cJSON_AddBoolToObject(root, "ok", true);
+  cJSON_AddStringToObject(root, "state", protection_measure_state_name(ms.state));
+  cJSON_AddNumberToObject(root, "elapsed_ms", ms.elapsed_ms);
+  cJSON_AddNumberToObject(root, "suggested_prime_sec", ms.suggested_prime_sec);
+  return alarms_send_tree(req, root);
+}
+
+/* GET /api/protection/measure */
+static esp_err_t handle_api_protection_measure_get(httpd_req_t *req) {
+  if (!require_auth(req)) {
+    return alarms_unauthorized(req);
+  }
+  return protection_send_measure(req);
+}
+
+/* POST /api/protection/measure {"action":"start"|"stop"} */
+static esp_err_t handle_api_protection_measure_post(httpd_req_t *req) {
+  esp_err_t sent = ESP_OK;
+  char body[128];
+  cJSON *root = api_begin_json_post(req, body, sizeof(body), &sent);
+  if (!root) {
+    return sent;
+  }
+  const cJSON *act = cJSON_GetObjectItem(root, "action");
+  bool is_start = cJSON_IsString(act) && act->valuestring && strcmp(act->valuestring, "start") == 0;
+  bool is_stop = cJSON_IsString(act) && act->valuestring && strcmp(act->valuestring, "stop") == 0;
+  cJSON_Delete(root);
+  if (!is_start && !is_stop) {
+    return send_api_error(req, "invalid_action", "Action must be 'start' or 'stop'",
+                          "400 Bad Request");
+  }
+  esp_err_t err = is_start ? dry_run_guard_measure_start() : dry_run_guard_measure_stop();
+  if (err != ESP_OK) {
+    return is_start ? send_api_error(req, "measure_unavailable", "Stop the water pump first",
+                                     "409 Conflict")
+                    : send_api_error(req, "unavailable", "Dry-run protection not running",
+                                     "503 Service Unavailable");
+  }
+  return protection_send_measure(req);
 }
 
 static void web_server_telemetry_cb(const telemetry_event_t *event,
@@ -6129,6 +6451,18 @@ static web_route_diag_t s_routes[] = {
     {.uri = "/api/alarms/ack",
      .method = HTTP_POST,
      .handler = handle_api_alarms_ack},
+    {.uri = "/api/protection",
+     .method = HTTP_GET,
+     .handler = handle_api_protection_get},
+    {.uri = "/api/protection",
+     .method = HTTP_POST,
+     .handler = handle_api_protection_post},
+    {.uri = "/api/protection/measure",
+     .method = HTTP_GET,
+     .handler = handle_api_protection_measure_get},
+    {.uri = "/api/protection/measure",
+     .method = HTTP_POST,
+     .handler = handle_api_protection_measure_post},
     {.uri = "/api/uplink/preview",
      .method = HTTP_GET,
      .handler = handle_api_uplink_preview},
