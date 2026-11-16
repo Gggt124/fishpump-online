@@ -49,8 +49,11 @@ bool alarm_engine_get_rules(alarm_rule_set_t *out, nvs_store_alarm_rules_load_st
 esp_err_t alarm_engine_upsert_rule(const alarm_rule_t *rule, bool has_id, alarm_rule_t *stored,
                                    const char **bad_field);
 esp_err_t alarm_engine_delete_rule(uint16_t id);         /* ESP_OK | ESP_ERR_NOT_FOUND | ESP_FAIL */
-esp_err_t alarm_engine_ack(uint16_t rule_id);            /* ESP_OK | ESP_ERR_NOT_FOUND */
-size_t alarm_engine_ack_all(void);                       /* number acknowledged */
+/* ESP_OK | ESP_ERR_NOT_FOUND | ESP_ERR_INVALID_STATE | ESP_ERR_NO_MEM */
+esp_err_t alarm_engine_ack(uint16_t rule_id);
+/* ESP_OK (*acked = number acknowledged) | ESP_ERR_INVALID_STATE | ESP_ERR_NO_MEM.
+ * *acked is 0 on every error; acked may be NULL. */
+esp_err_t alarm_engine_ack_all(size_t *acked);
 size_t alarm_engine_get_active(alarm_active_t *out, size_t max); /* ACTIVE and LATCHED rules */
 size_t alarm_engine_get_events_since(uint32_t after_seq, alarm_event_t *out, size_t max,
                                      uint32_t *oldest_seq);

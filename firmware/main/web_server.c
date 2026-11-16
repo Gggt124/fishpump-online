@@ -5670,6 +5670,23 @@ static esp_err_t handle_api_alarms_rules_delete(httpd_req_t *req) {
   return send_json(req, "{\"ok\":true}", "200 OK");
 }
 
+/* Maps an alarm_engine_ack / ack_all error to its HTTP response. */
+static esp_err_t alarms_send_ack_error(httpd_req_t *req, esp_err_t err) {
+  switch (err) {
+  case ESP_ERR_NOT_FOUND:
+    return send_api_error(req, "not_found", "id", "404 Not Found");
+  case ESP_ERR_NO_MEM:
+    return send_api_error(req, "out_of_memory", "Not enough memory, try again",
+                          "503 Service Unavailable");
+  case ESP_ERR_INVALID_STATE:
+    return send_api_error(req, "unavailable", "Alarm engine not running",
+                          "503 Service Unavailable");
+  default:
+    return send_api_error(req, "internal_error", "Ack failed",
+                          "500 Internal Server Error");
+  }
+}
+
 /* POST /api/alarms/ack {"id":n} or {"all":true} */
 static esp_err_t handle_api_alarms_ack(httpd_req_t *req) {
   esp_err_t sent = ESP_OK;
@@ -5682,7 +5699,10 @@ static esp_err_t handle_api_alarms_ack(httpd_req_t *req) {
   const cJSON *all = cJSON_GetObjectItem(root, "all");
   if (cJSON_IsTrue(all)) {
     cJSON_Delete(root);
-    acked = alarm_engine_ack_all();
+    esp_err_t err = alarm_engine_ack_all(&acked);
+    if (err != ESP_OK) {
+      return alarms_send_ack_error(req, err);
+    }
   } else {
     uint16_t id = 0;
     bool ok = alarms_read_id(req, root, &id, &sent);
@@ -5690,8 +5710,9 @@ static esp_err_t handle_api_alarms_ack(httpd_req_t *req) {
     if (!ok) {
       return sent;
     }
-    if (alarm_engine_ack(id) != ESP_OK) {
-      return send_api_error(req, "not_found", "id", "404 Not Found");
+    esp_err_t err = alarm_engine_ack(id);
+    if (err != ESP_OK) {
+      return alarms_send_ack_error(req, err);
     }
     acked = 1;
   }

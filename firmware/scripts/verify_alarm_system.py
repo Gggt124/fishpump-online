@@ -220,6 +220,17 @@ def test_review_fixes():
     js = read(MAIN_DIR / "static" / "app.js")
     assert_test("code === 'out_of_memory'" in js, "app.js shows a message for out_of_memory")
 
+    eh = read(COMP_DIR / "alarm_engine" / "include" / "alarm_engine.h")
+    assert_test(re.search(r"esp_err_t\s+alarm_engine_ack_all\s*\(\s*size_t\s*\*\s*acked\s*\)", eh) is not None,
+                "alarm_engine_ack_all returns esp_err_t and reports the count through a pointer")
+    ack = function_body(ws, "handle_api_alarms_ack")
+    assert_test("alarms_send_ack_error(req," in ack, "ack handler maps engine errors through alarms_send_ack_error")
+    helper = function_body(ws, "alarms_send_ack_error")
+    assert_test('"out_of_memory"' in helper and '"unavailable"' in helper and '"not_found"' in helper,
+                "ack error helper covers not_found, out_of_memory, unavailable")
+    assert_test(not re.search(r"alarm_engine_ack\(id\)\s*!=\s*ESP_OK\)\s*\{\s*return send_api_error\(req, \"not_found\"", ack),
+                "ack no longer reports every failure as not_found")
+
 
 def main():
     test_flow_and_rename()

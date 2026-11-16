@@ -345,14 +345,17 @@ esp_err_t alarm_engine_ack(uint16_t rule_id)
     return err;
 }
 
-size_t alarm_engine_ack_all(void)
+esp_err_t alarm_engine_ack_all(size_t *acked)
 {
+    if (acked != NULL) {
+        *acked = 0;
+    }
     if (!s.initialized) {
-        return 0;
+        return ESP_ERR_INVALID_STATE;
     }
     pending_t *pending = calloc(1, sizeof(*pending));
     if (pending == NULL) {
-        return 0;
+        return ESP_ERR_NO_MEM;
     }
     size_t n = 0;
     uint32_t now = now_ms();
@@ -368,7 +371,10 @@ size_t alarm_engine_ack_all(void)
     xSemaphoreGive(s.lock);
     publish_pending(pending);
     free(pending);
-    return n;
+    if (acked != NULL) {
+        *acked = n;
+    }
+    return ESP_OK;
 }
 
 size_t alarm_engine_get_active(alarm_active_t *out, size_t max)
