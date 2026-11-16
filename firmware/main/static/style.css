@@ -5802,3 +5802,25 @@ select:hover:not(:disabled) {
     overflow-wrap: anywhere;
     margin-top: var(--space-3);
 }
+
+/* Dry-run protection card */
+.dry-run-status {
+    font-weight: 600;
+    margin-bottom: var(--space-2);
+}
+
+.dry-run-status.is-warn {
+    color: var(--warning);
+}
+
+.dry-run-measure {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.dry-run-measure.hidden {
+    display: none;
+}

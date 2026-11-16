@@ -175,11 +175,53 @@ def test_api():
                 "alarm_engine_get_active comment mentions system alarms")
 
 
+def js_function_body(source, name):
+    """Return the text of `function name(...) { ... }` in JS source, or ''."""
+    m = re.search(r"\bfunction\s+" + re.escape(name) + r"\s*\([^)]*\)\s*\{", source)
+    if not m:
+        return ""
+    depth, i = 1, m.end()
+    while i < len(source) and depth:
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+        i += 1
+    return source[m.start():i]
+
+
+DRY_RUN_UI_FUNCTIONS = (
+    "dryRunStatusText", "dryRunApplyStatus", "dryRunLoad", "dryRunStartPolling", "dryRunStopPolling",
+    "dryRunRenderWarning", "dryRunReadForm", "dryRunSave", "dryRunMeasureStart", "dryRunMeasurePoll",
+    "dryRunRenderMeasure", "dryRunStartError", "initDryRunCard",
+)
+
+
+def test_ui():
+    print("\n--- Task 7: dashboard web UI ---")
+    html = read(MAIN_DIR / "static" / "index.html")
+    js = read(MAIN_DIR / "static" / "app.js")
+    m = re.search(r'<section id="view-dashboard"[\s\S]*?</section>\s*<section id="view-cooling"', html)
+    assert_test(m is not None and 'id="dry-run-card"' in m.group(0),
+                "index.html has id=\"dry-run-card\" inside view-dashboard")
+    for token in ("/api/protection", "/api/protection/measure", "'dry_run_locked'", "'dry_run_waiting'",
+                  "'measuring'", "a.dry_run"):
+        assert_test(token in js, f"app.js contains {token}")
+    for fn in DRY_RUN_UI_FUNCTIONS:
+        body = js_function_body(js, fn)
+        assert_test(body != "", f"app.js defines {fn}")
+        assert_test(body != "" and "innerHTML" not in body and "setHtml(" not in body,
+                    f"{fn} does not use innerHTML/setHtml")
+    assert_test("dryRunStopPolling" in js_function_body(js, "cleanupCurrentView"),
+                "cleanupCurrentView stops dry-run polling")
+
+
 def main():
     test_engine()
     test_pump_control()
     test_guard()
     test_api()
+    test_ui()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

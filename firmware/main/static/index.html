@@ -812,6 +812,69 @@
                         </form>
                     </div>
                 </details>
+
+                <details class="settings-collapsible" id="dry-run-card">
+                    <summary aria-expanded="false" aria-controls="dry-run-form">
+                        <div>
+                            <h3 class="settings-title">การป้องกันปั๊มเดินแห้ง</h3>
+                        </div>
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" class="chevron-icon">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </summary>
+                    <div class="settings-body">
+                        <p class="dry-run-status" id="dry-run-status" role="status">กำลังโหลด...</p>
+                        <form id="dry-run-form" novalidate class="settings-form">
+                            <label class="toggle-row" for="dry-run-enabled">
+                                <div class="toggle-switch">
+                                    <input id="dry-run-enabled" type="checkbox" role="switch">
+                                    <span class="toggle-slider"></span>
+                                </div>
+                                <span>เปิดการป้องกัน</span>
+                            </label>
+                            <div class="form-row">
+                                <label for="dry-run-prime">ช่วงผ่อนผันหลังปั๊มเปิด (วินาที)</label>
+                                <input id="dry-run-prime" class="input-field" type="number" min="0" max="65535" step="1" inputmode="numeric">
+                                <div class="field-error" id="dry-run-prime-error" role="alert"></div>
+                            </div>
+                            <div class="form-row">
+                                <label for="dry-run-trip">เวลาไม่มีน้ำสะสมก่อนตัด (วินาที)</label>
+                                <input id="dry-run-trip" class="input-field" type="number" min="0" max="65535" step="1" inputmode="numeric">
+                                <div class="field-error" id="dry-run-trip-error" role="alert"></div>
+                            </div>
+                            <div class="form-row">
+                                <label for="dry-run-wait">รอก่อนลองใหม่ (นาที)</label>
+                                <input id="dry-run-wait" class="input-field" type="number" min="0" max="65535" step="1" inputmode="numeric">
+                                <div class="field-error" id="dry-run-wait-error" role="alert"></div>
+                            </div>
+                            <label class="toggle-row" for="dry-run-backoff">
+                                <div class="toggle-switch">
+                                    <input id="dry-run-backoff" type="checkbox" role="switch">
+                                    <span class="toggle-slider"></span>
+                                </div>
+                                <span>เพิ่มเวลารอเป็นสองเท่าทุกครั้ง</span>
+                            </label>
+                            <div class="form-row">
+                                <label for="dry-run-retries">ลองใหม่สูงสุด (ครั้ง, 0 = ล็อกทันที)</label>
+                                <input id="dry-run-retries" class="input-field" type="number" min="0" max="255" step="1" inputmode="numeric">
+                                <div class="field-error" id="dry-run-retries-error" role="alert"></div>
+                            </div>
+                            <div class="pump-alert hidden" id="dry-run-warning" role="alert"></div>
+                            <div class="settings-actions">
+                                <div class="settings-button-row">
+                                    <button class="btn btn-outline" id="dry-run-measure-btn" type="button">วัดให้</button>
+                                    <button class="btn btn-primary" id="dry-run-save" type="submit" disabled>บันทึก</button>
+                                </div>
+                            </div>
+                            <div class="dry-run-measure hidden" id="dry-run-measure" role="status">
+                                <span id="dry-run-measure-text"></span>
+                                <button class="btn btn-outline btn-sm hidden" id="dry-run-measure-stop" type="button">หยุดวัด</button>
+                                <button class="btn btn-outline btn-sm hidden" id="dry-run-measure-use" type="button">ใช้ค่านี้</button>
+                            </div>
+                            <div class="pump-alert hidden" id="dry-run-error" role="alert"></div>
+                        </form>
+                    </div>
+                </details>
             </div>
         </section>
 

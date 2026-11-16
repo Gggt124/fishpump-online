@@ -12,6 +12,7 @@ var statusInterval = null;
 function cleanupCurrentView() {
     if (dashboardInterval) { clearInterval(dashboardInterval); dashboardInterval = null; }
     if (statusInterval) { clearInterval(statusInterval); statusInterval = null; }
+    if (typeof dryRunStopPolling === 'function') dryRunStopPolling();
     if (typeof pumpPollTimer !== 'undefined' && pumpPollTimer) { clearInterval(pumpPollTimer); pumpPollTimer = null; }
     if (typeof pumpTickTimer !== 'undefined' && pumpTickTimer) { clearInterval(pumpTickTimer); pumpTickTimer = null; }
     if (typeof coolingPollTimer !== 'undefined' && coolingPollTimer) { clearInterval(coolingPollTimer); coolingPollTimer = null; }
@@ -580,6 +581,7 @@ function initPumpDashboard() {
     updatePumpConfigSaveButton(false);
     updatePumpButtons();
     loadPumpConfig();
+    initDryRunCard();
     syncPumpStatus(true);
     refreshStatus();
     dashboardInterval = setInterval(refreshStatus, 10000);
@@ -589,6 +591,351 @@ function initPumpDashboard() {
 
 function pumpEl(id) {
     return document.getElementById(id);
+}
+
+/* ======== Dry-run protection card ======== */
+
+var dryRunWired = false;
+var dryRunStatusTimer = null;
+var dryRunTickTimer = null;
+var dryRunMeasureTimer = null;
+var dryRunMeasureBusy = false;
+var dryRunLocal = null;
+var dryRunUnavailable = false;
+var dryRunSaving = false;
+var dryRunMeasureRunning = false;
+var dryRunSuggested = 0;
+var DRY_RUN_FIELDS = {
+    prime_sec: 'dry-run-prime',
+    dry_trip_sec: 'dry-run-trip',
+    retry_wait_min: 'dry-run-wait',
+    max_retries: 'dry-run-retries'
+};
+
+function dryRunFmtMmss(sec) {
+    sec = Math.max(0, Math.floor(Number(sec) || 0));
+    var m = Math.floor(sec / 60);
+    var s = sec % 60;
+    return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+function dryRunStatusText(ps) {
+    if (!ps) return '';
+    if (ps.state === 'disabled') return 'ยังไม่ได้เปิดการป้องกัน';
+    if (ps.state === 'monitor') return 'เฝ้าดูอยู่';
+    if (ps.state === 'wait') {
+        return 'หยุดปั๊ม ลองใหม่ใน ' + dryRunFmtMmss(ps.wait_remaining_sec) +
+            ' (ครั้งที่ ' + ps.trips + '/' + ps.max_retries + ')';
+    }
+    if (ps.state === 'locked') return 'ล็อกปั๊ม รอรับทราบที่หน้าแจ้งเตือน';
+    return '';
+}
+
+function dryRunShowStatus() {
+    var el = pumpEl('dry-run-status');
+    if (!el) return;
+    var ps = dryRunLocal;
+    if (dryRunUnavailable) {
+        el.textContent = 'ระบบป้องกันไม่พร้อมใช้งาน';
+        el.classList.add('is-warn');
+        return;
+    }
+    if (ps && ps.state === 'wait') {
+        var elapsed = Math.floor((Date.now() - ps.at) / 1000);
+        ps = { state: 'wait', trips: ps.trips, max_retries: ps.max_retries,
+               wait_remaining_sec: Math.max(0, ps.wait_remaining_sec - elapsed) };
+    }
+    el.textContent = dryRunStatusText(ps);
+    el.classList.toggle('is-warn', !!ps && ps.state === 'disabled');
+}
+
+function dryRunApplyStatus(ps) {
+    if (ps) {
+        dryRunLocal = {
+            state: ps.state,
+            trips: ps.trips,
+            max_retries: ps.max_retries,
+            wait_remaining_sec: ps.wait_remaining_sec || 0,
+            at: Date.now()
+        };
+    }
+    dryRunShowStatus();
+}
+
+function dryRunFillForm(cfg) {
+    var en = pumpEl('dry-run-enabled');
+    if (en) en.checked = !!cfg.enabled;
+    var bo = pumpEl('dry-run-backoff');
+    if (bo) bo.checked = !!cfg.retry_backoff;
+    var k;
+    for (k in DRY_RUN_FIELDS) {
+        if (DRY_RUN_FIELDS.hasOwnProperty(k)) {
+            var el = pumpEl(DRY_RUN_FIELDS[k]);
+            if (el && cfg[k] != null) el.value = cfg[k];
+        }
+    }
+    dryRunRenderWarning();
+}
+
+function dryRunUpdateButtons() {
+    var save = pumpEl('dry-run-save');
+    if (save) save.disabled = dryRunUnavailable || dryRunSaving;
+    var mb = pumpEl('dry-run-measure-btn');
+    if (mb) mb.disabled = dryRunUnavailable || dryRunMeasureRunning;
+}
+
+function dryRunClearErrors() {
+    var k;
+    for (k in DRY_RUN_FIELDS) {
+        if (DRY_RUN_FIELDS.hasOwnProperty(k)) {
+            var el = pumpEl(DRY_RUN_FIELDS[k]);
+            if (el) el.classList.remove('invalid');
+            setText(DRY_RUN_FIELDS[k] + '-error', '');
+        }
+    }
+    setPumpAlert('dry-run-error', '');
+}
+
+function dryRunMarkField(apiName, msg) {
+    var id = DRY_RUN_FIELDS[apiName];
+    if (!id) return false;
+    var el = pumpEl(id);
+    if (el) el.classList.add('invalid');
+    setText(id + '-error', msg);
+    return true;
+}
+
+function dryRunLoad(fillForm) {
+    apiGet('/api/protection', function (err, data) {
+        if (isUnauthorizedError(err)) { handleUnauthorized(); return; }
+        if (err || !data || !data.ok) {
+            if (err && err.message === 'HTTP 503') {
+                dryRunUnavailable = true;
+            } else if (fillForm) {
+                setPumpAlert('dry-run-error', 'โหลดการตั้งค่าการป้องกันไม่สำเร็จ');
+            }
+            dryRunUpdateButtons();
+            dryRunShowStatus();
+            return;
+        }
+        dryRunUnavailable = false;
+        if (fillForm && data.pump) dryRunFillForm(data.pump);
+        dryRunApplyStatus(data.pump_status);
+        dryRunUpdateButtons();
+        if (fillForm) dryRunResumeMeasure();
+    });
+}
+
+function dryRunStopStatusTimers() {
+    if (dryRunStatusTimer) { clearInterval(dryRunStatusTimer); dryRunStatusTimer = null; }
+    if (dryRunTickTimer) { clearInterval(dryRunTickTimer); dryRunTickTimer = null; }
+}
+
+function dryRunStartPolling() {
+    dryRunStopStatusTimers();
+    dryRunStatusTimer = setInterval(function () { dryRunLoad(false); }, 5000);
+    dryRunTickTimer = setInterval(dryRunShowStatus, 1000);
+}
+
+function dryRunStopPolling() {
+    dryRunStopStatusTimers();
+    if (dryRunMeasureTimer) { clearInterval(dryRunMeasureTimer); dryRunMeasureTimer = null; }
+    dryRunMeasureBusy = false;
+}
+
+function dryRunRenderWarning() {
+    var el = pumpEl('dry-run-warning');
+    if (!el) return;
+    var en = pumpEl('dry-run-enabled');
+    var primeEl = pumpEl('dry-run-prime');
+    var sets = [];
+    if (en && en.checked && primeEl && primeEl.value !== '' && pumpConfig) {
+        var prime = parseInt(primeEl.value, 10);
+        var on1 = pumpConfig.water_set1_on != null ? pumpConfig.water_set1_on : pumpConfig.timer1_on_sec;
+        var on2 = pumpConfig.water_set2_on != null ? pumpConfig.water_set2_on : pumpConfig.timer2_on_sec;
+        if (!isNaN(prime)) {
+            if (on1 != null && Number(on1) <= prime) sets.push(1);
+            if (on2 != null && Number(on2) <= prime) sets.push(2);
+        }
+    }
+    var parts = [];
+    var i;
+    for (i = 0; i < sets.length; i++) {
+        parts.push('เวลาเปิดปั๊ม (ชุด ' + sets[i] + ') สั้นกว่าหรือเท่ากับช่วงผ่อนผัน การป้องกันจะไม่ทำงาน');
+    }
+    setPumpAlert('dry-run-warning', parts.join(' · '));
+}
+
+function dryRunReadForm() {
+    var out = { enabled: !!pumpEl('dry-run-enabled').checked, retry_backoff: !!pumpEl('dry-run-backoff').checked };
+    var ok = true;
+    var k;
+    for (k in DRY_RUN_FIELDS) {
+        if (DRY_RUN_FIELDS.hasOwnProperty(k)) {
+            var el = pumpEl(DRY_RUN_FIELDS[k]);
+            var raw = el ? String(el.value).trim() : '';
+            var max = (k === 'max_retries') ? 255 : 65535;
+            var n = Number(raw);
+            if (raw === '' || !isFinite(n) || Math.floor(n) !== n || n < 0 || n > max) {
+                dryRunMarkField(k, 'กรอกจำนวนเต็ม 0 ถึง ' + max);
+                ok = false;
+            } else {
+                out[k] = n;
+            }
+        }
+    }
+    return ok ? out : null;
+}
+
+function dryRunSave() {
+    if (dryRunSaving || dryRunUnavailable) return;
+    dryRunClearErrors();
+    var cfg = dryRunReadForm();
+    if (!cfg) return;
+    dryRunSaving = true;
+    dryRunUpdateButtons();
+    apiPost('/api/protection', { pump: cfg }, function (err, data) {
+        dryRunSaving = false;
+        if (err || !data || !data.ok) {
+            var code = data && data.error;
+            if (code === 'unavailable') {
+                dryRunUnavailable = true;
+                dryRunShowStatus();
+            } else if (code === 'missing_field' || code === 'invalid_type' || code === 'value_out_of_range') {
+                if (!dryRunMarkField(data.message, 'ค่าไม่ถูกต้อง')) setPumpAlert('dry-run-error', 'ค่าไม่ถูกต้อง');
+            } else if (code === 'storage_failed') {
+                setPumpAlert('dry-run-error', 'บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง');
+            } else {
+                setPumpAlert('dry-run-error', 'บันทึกไม่สำเร็จ');
+            }
+            dryRunUpdateButtons();
+            showToast('บันทึกไม่สำเร็จ', 'error');
+            return;
+        }
+        if (data.pump) dryRunFillForm(data.pump);
+        dryRunApplyStatus(data.pump_status);
+        dryRunUpdateButtons();
+        showToast('บันทึกการป้องกันแล้ว', 'success');
+    });
+}
+
+function dryRunSetMeasureText(text, showStop, showUse) {
+    var box = pumpEl('dry-run-measure');
+    if (box) box.classList.toggle('hidden', !text);
+    setText('dry-run-measure-text', text);
+    var stop = pumpEl('dry-run-measure-stop');
+    if (stop) stop.classList.toggle('hidden', !showStop);
+    var use = pumpEl('dry-run-measure-use');
+    if (use) use.classList.toggle('hidden', !showUse);
+}
+
+function dryRunRenderMeasure(m) {
+    var secs = Math.floor((Number(m.elapsed_ms) || 0) / 1000);
+    if (m.state === 'running') {
+        dryRunMeasureRunning = true;
+        dryRunSetMeasureText('กำลังวัด... ' + secs + ' วินาที', true, false);
+    } else {
+        dryRunMeasureRunning = false;
+        if (dryRunMeasureTimer) { clearInterval(dryRunMeasureTimer); dryRunMeasureTimer = null; }
+        if (m.state === 'done') {
+            dryRunSuggested = Number(m.suggested_prime_sec) || 0;
+            dryRunSetMeasureText('น้ำมาถึงใน ' + secs + ' วินาที แนะนำช่วงผ่อนผัน ' + dryRunSuggested + ' วินาที', false, true);
+        } else if (m.state === 'no_flow') {
+            dryRunSetMeasureText('ไม่พบน้ำไหลใน 120 วินาที ตรวจ flow switch / การล่อน้ำ', false, false);
+        } else if (m.state === 'stopped') {
+            dryRunSetMeasureText('หยุดวัดแล้ว', false, false);
+        } else {
+            dryRunSetMeasureText('', false, false);
+        }
+    }
+    dryRunUpdateButtons();
+}
+
+function dryRunMeasurePoll() {
+    if (dryRunMeasureBusy) return;
+    dryRunMeasureBusy = true;
+    apiGet('/api/protection/measure', function (err, data) {
+        dryRunMeasureBusy = false;
+        if (err || !data || !data.ok) return;
+        dryRunRenderMeasure(data);
+    }, 3000);
+}
+
+function dryRunBeginMeasurePolling() {
+    if (dryRunMeasureTimer) clearInterval(dryRunMeasureTimer);
+    dryRunMeasureTimer = setInterval(dryRunMeasurePoll, 1000);
+}
+
+function dryRunResumeMeasure() {
+    apiGet('/api/protection/measure', function (err, data) {
+        if (err || !data || !data.ok || data.state !== 'running') return;
+        dryRunRenderMeasure(data);
+        dryRunBeginMeasurePolling();
+    });
+}
+
+function dryRunMeasureStart() {
+    if (dryRunMeasureRunning || dryRunUnavailable) return;
+    if (!window.confirm('ปั๊มอาจเดินแห้งได้นานสุด 120 วินาทีระหว่างวัด ดำเนินการต่อ?')) return;
+    setPumpAlert('dry-run-error', '');
+    apiPost('/api/protection/measure', { action: 'start' }, function (err, data) {
+        if (err || !data || !data.ok) {
+            var code = data && data.error;
+            setPumpAlert('dry-run-error', code === 'measure_unavailable' ?
+                'เริ่มวัดไม่ได้ในขณะนี้ ตรวจสอบสถานะปั๊มและการป้องกัน' : 'เริ่มวัดไม่สำเร็จ');
+            return;
+        }
+        dryRunRenderMeasure(data);
+        if (data.state === 'running') dryRunBeginMeasurePolling();
+    });
+}
+
+function dryRunMeasureStop() {
+    apiPost('/api/protection/measure', { action: 'stop' }, function (err, data) {
+        if (err || !data || !data.ok) {
+            setPumpAlert('dry-run-error', 'หยุดวัดไม่สำเร็จ');
+            return;
+        }
+        dryRunRenderMeasure(data);
+    });
+}
+
+function dryRunStartError(data) {
+    if (!data) return '';
+    if (data.error === 'dry_run_locked') return 'ปั๊มถูกล็อกเพราะเดินแห้ง กดรับทราบที่หน้าแจ้งเตือนก่อน';
+    if (data.error === 'dry_run_waiting') return 'ปั๊มหยุดพักเพราะเดินแห้ง จะลองใหม่ใน ' + dryRunFmtMmss(data.wait_remaining_sec);
+    if (data.error === 'measuring') return 'กำลังวัดอยู่ รอให้เสร็จก่อน';
+    return '';
+}
+
+function initDryRunCard() {
+    if (!pumpEl('dry-run-card')) return;
+    if (!dryRunWired) {
+        dryRunWired = true;
+        var form = pumpEl('dry-run-form');
+        if (form) form.addEventListener('submit', function (e) { e.preventDefault(); dryRunSave(); });
+        var ids = ['dry-run-enabled', 'dry-run-prime'];
+        var i;
+        for (i = 0; i < ids.length; i++) {
+            var f = pumpEl(ids[i]);
+            if (f) {
+                f.addEventListener('input', dryRunRenderWarning);
+                f.addEventListener('change', dryRunRenderWarning);
+            }
+        }
+        var mb = pumpEl('dry-run-measure-btn');
+        if (mb) mb.addEventListener('click', dryRunMeasureStart);
+        var ms = pumpEl('dry-run-measure-stop');
+        if (ms) ms.addEventListener('click', dryRunMeasureStop);
+        var mu = pumpEl('dry-run-measure-use');
+        if (mu) mu.addEventListener('click', function () {
+            var p = pumpEl('dry-run-prime');
+            if (p) { p.value = dryRunSuggested; dryRunRenderWarning(); }
+        });
+    }
+    dryRunClearErrors();
+    dryRunLoad(true);
+    dryRunStartPolling();
 }
 
 function updateBadgeCardState(cardId, isActive) {
@@ -853,7 +1200,8 @@ function requestSubsystemControl(system, action, pendingText, successText) {
         pumpPending = waterPending || washPending;
         if (err || !data || !data.ok) {
             if (stateEl) setText(stateEl.id, '');
-            setPumpAlert(system + '-status-error', (data && data.message) ? data.message : 'สั่งงานไม่สำเร็จ');
+            var dryMsg = dryRunStartError(data);
+            setPumpAlert(system + '-status-error', dryMsg || ((data && data.message) ? data.message : 'สั่งงานไม่สำเร็จ'));
             updatePumpButtons();
             showToast('สั่งงานไม่สำเร็จ', 'error');
             return;
@@ -998,6 +1346,7 @@ function loadPumpConfig() {
         pumpConfig = data;
         pumpRelayPolarity = data.relay_polarity || null;
         pumpConfigLoaded = true;
+        dryRunRenderWarning();
         if (pumpEditVersion !== requestEditVersion) {
             setText('pump-config-state', 'มีแก้ไขที่ยังไม่ได้บันทึก');
             updatePumpConfigSaveButton();
@@ -5108,6 +5457,9 @@ function renderAlarmStatus(st) {
         var sub = alarmFormatValue(a.signal, a.value) + ' · ' + alarmAgo(st.uptime_ms - a.since_ms);
         if (a.state === 'latched') sub += ' · ผ่านไปแล้ว รอรับทราบ';
         else if (a.acked) sub += ' · รับทราบแล้ว';
+        if (a.dry_run && (a.dry_run.state === 'wait' || a.dry_run.state === 'locked')) {
+            sub += ' · ' + dryRunStatusText(a.dry_run);
+        }
         main.appendChild(alarmMake('div', 'alarm-sub', sub));
         row.appendChild(main);
         if (a.state === 'latched' || !a.acked) {
