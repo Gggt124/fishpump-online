@@ -209,7 +209,7 @@ uint32_t uplink_forward_account_gap(uplink_forward_t *f, uint32_t oldest_seq)
     return gap;
 }
 
-bool uplink_forward_hold_for_clock(bool clock_set, uint32_t pending, uint32_t ring_len)
+bool uplink_forward_hold_for_clock(bool clock_set, uint32_t pending, uint32_t ring_len, uint32_t held_ms)
 {
-    return !clock_set && pending + UPLINK_CLOCK_HOLD_MARGIN < ring_len;
+    return !clock_set && pending + UPLINK_CLOCK_HOLD_MARGIN < ring_len && held_ms < UPLINK_CLOCK_HOLD_MAX_MS;
 }

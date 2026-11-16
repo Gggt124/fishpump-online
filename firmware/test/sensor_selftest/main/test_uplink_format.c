@@ -181,10 +181,13 @@ void test_uplink_format(void)
     CHECK(uplink_forward_account_gap(&f, 14) == 0 && f.dropped == 10);            /* nothing lost since */
 
     /* ---- hold events for the clock ---- */
-    CHECK(!uplink_forward_hold_for_clock(true, 0, 32));
-    CHECK(uplink_forward_hold_for_clock(false, 0, 32));
-    CHECK(uplink_forward_hold_for_clock(false, 23, 32));
-    CHECK(!uplink_forward_hold_for_clock(false, 24, 32));
-    CHECK(!uplink_forward_hold_for_clock(false, 40, 32));
-    CHECK(!uplink_forward_hold_for_clock(false, 0, 8)); /* the margin swallows a small ring */
+    CHECK(!uplink_forward_hold_for_clock(true, 0, 32, 0));
+    CHECK(uplink_forward_hold_for_clock(false, 0, 32, 0));
+    CHECK(uplink_forward_hold_for_clock(false, 23, 32, 0));
+    CHECK(!uplink_forward_hold_for_clock(false, 24, 32, 0));
+    CHECK(!uplink_forward_hold_for_clock(false, 40, 32, 0));
+    CHECK(!uplink_forward_hold_for_clock(false, 0, 8, 0)); /* the margin swallows a small ring */
+    CHECK(uplink_forward_hold_for_clock(false, 0, 32, 119999u));
+    CHECK(!uplink_forward_hold_for_clock(false, 0, 32, 120000u)); /* time cap */
+    CHECK(UPLINK_CLOCK_HOLD_MAX_MS == 120000u);
 }

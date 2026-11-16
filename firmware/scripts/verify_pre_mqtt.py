@@ -38,7 +38,7 @@ def read(path):
 
 def function_body(source, name, rettype=r"static\s+[\w\s\*]+?"):
     """Return the text of `<rettype> name(...) { ... }`, or ''. The default matches static functions."""
-    m = re.search(rettype + r"\b" + re.escape(name) + r"\s*\([^)]*\)\s*\{", source)
+    m = re.search(rettype + r"\b" + re.escape(name) + r"\s*\((?:[^()]|\([^()]*\))*\)\s*\{", source)
     if not m:
         return ""
     depth, i = 1, m.end()
@@ -91,20 +91,34 @@ def test_task3():
     assert_test("xSemaphoreTake(s.send_lock" in setter, "uplink_set_sink takes send_lock")
     assert_test(setter.find("s.send_lock") < setter.find("xSemaphoreTake(s.lock"),
                 "uplink_set_sink takes send_lock before lock (lock order)")
-    # every function that touches s.sink. must take send_lock; sink_ready's callers must too
-    bad = []
-    for m in re.finditer(r"^(?:static\s+)?[\w\s\*]+?\b(\w+)\s*\([^;{]*\)\s*\{", up, re.M):
+    # every function that touches s.sink., sink_ready() or send_attribute() must take send_lock
+    bad, empty, scanned = [], [], 0
+    for m in re.finditer(r"^(?:static\s+)?[\w\s\*]+?\b(\w+)\s*\((?:[^;{()]|\([^()]*\))*\)\s*\{", up, re.M):
         name = m.group(1)
         if name in ("if", "for", "while", "switch"):
             continue
         body = function_body(up, name, r"(?:static\s+)?[\w\s\*]+?")
-        if "s.sink." not in body and "sink_ready()" not in body:
+        if body == "":
+            empty.append(name)  # a header was found but its body was not: the scan would be blind
             continue
-        if name == "sink_ready":
+        scanned += 1
+        if "s.sink." not in body and "sink_ready()" not in body and "send_attribute(" not in body:
+            continue
+        if name in ("sink_ready", "send_attribute"):
             continue
         if "xSemaphoreTake(s.send_lock" not in body:
             bad.append(name)
-    assert_test(not bad, "every user of s.sink. / sink_ready holds send_lock", ", ".join(bad))
+    assert_test(not empty and scanned >= 8, "the s.sink. scan parsed every function body", ", ".join(empty))
+    assert_test(not bad, "every user of s.sink. / sink_ready / send_attribute holds send_lock", ", ".join(bad))
+    attrs = function_body(up, "do_attributes")
+    assert_test("send_attribute(" in attrs and "xSemaphoreTake(s.send_lock" in attrs,
+                "do_attributes (the send_attribute caller) holds send_lock")
+    prev = function_body(up, "uplink_preview_json", r"char\s*\*\s*")
+    assert_test(prev != "" and "send_lock" not in prev and "sink_ready" not in prev,
+                "the preview neither takes send_lock nor calls sink_ready")
+    assert_test("connected_cache" in prev and "s.connected_cache = connected" in attrs,
+                "the preview reads connected_cache, which the task refreshes")
+    assert_test("UPLINK_CLOCK_HOLD_MAX_MS" in fmt, "the clock hold has a time cap")
     assert_test("UPLINK_CLOCK_HOLD_MARGIN" in fmt and "uplink_forward_hold_for_clock" in fmt,
                 "uplink_forward_hold_for_clock is declared")
     assert_test("uplink_forward_hold_for_clock(" in function_body(up, "do_events"),

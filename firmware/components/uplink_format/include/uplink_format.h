@@ -52,10 +52,12 @@ typedef struct {
  * to oldest_seq - 1. oldest_seq 0 means an empty ring. Returns the gap. */
 uint32_t uplink_forward_account_gap(uplink_forward_t *f, uint32_t oldest_seq);
 
-/* Events wait for the wall clock (so they carry a ts) unless that would let the ring overwrite them:
- * hold while the clock is unset and pending + UPLINK_CLOCK_HOLD_MARGIN < ring_len. */
+/* Events wait for the wall clock (so they carry a ts) unless that would let the ring overwrite them, or
+ * the wait has lasted too long: hold while the clock is unset, pending + UPLINK_CLOCK_HOLD_MARGIN < ring_len
+ * and held_ms (time since the hold started) < UPLINK_CLOCK_HOLD_MAX_MS. */
 #define UPLINK_CLOCK_HOLD_MARGIN 8u
-bool uplink_forward_hold_for_clock(bool clock_set, uint32_t pending, uint32_t ring_len);
+#define UPLINK_CLOCK_HOLD_MAX_MS 120000u
+bool uplink_forward_hold_for_clock(bool clock_set, uint32_t pending, uint32_t ring_len, uint32_t held_ms);
 
 #ifdef __cplusplus
 }

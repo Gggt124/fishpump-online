@@ -34,7 +34,10 @@ typedef struct {
 
 esp_err_t uplink_init(void);
 /* NULL = none; copied. Waits for any send in flight; once it returns, the previous sink's ctx is never
- * called again (so the caller may free it). Must not be called from inside a sink callback. */
+ * called again (so the caller may free it). Must not be called from a sink callback or any context holding
+ * a lock the sink's send/is_connected may take (e.g. the MQTT event handler). Transports report link state
+ * via is_connected and call set_sink only at setup/teardown. The sink's send should not block
+ * (e.g. esp_mqtt_client_enqueue). */
 esp_err_t uplink_set_sink(const uplink_sink_t *sink);
 void uplink_set_wall_clock(int64_t (*now_unix_ms)(void));      /* NULL = none */
 
