@@ -75,11 +75,12 @@ def test_task2():
     assert_test(re.search(r"#define\s+ALARM_BLOB_VERSION\s+2$", hdr, re.M) is not None, "ALARM_BLOB_VERSION is 2")
     assert_test("ALARM_BLOB_READ_MAX_BYTES" in hdr, "ALARM_BLOB_READ_MAX_BYTES is defined")
     dec = function_body(blob, "alarm_blob_decode", r"bool\s+")
-    assert_test("ALARM_BLOB_V1" in dec, "alarm_blob_decode still reads v1 blobs")
     assert_test(re.search(r"#define\s+ALARM_BLOB_V1_REC_SIZE\s+\d+u?\b", hdr) is not None
                 and "_Static_assert(sizeof(alarm_rule_t) >= ALARM_BLOB_V1_REC_SIZE" in hdr,
                 "ALARM_BLOB_V1_REC_SIZE is a literal with a size guard")
     assert_test("ALARM_BLOB_V1_REC_SIZE" in dec, "v1 decode uses ALARM_BLOB_V1_REC_SIZE")
+    assert_test("count x ALARM_BLOB_V1_REC_SIZE" in hdr and "count x sizeof(alarm_rule_t)" not in hdr,
+                "the v1 layout comment names ALARM_BLOB_V1_REC_SIZE, not sizeof(alarm_rule_t)")
     assert_test("ALARM_BLOB_READ_MAX_BYTES" in nvs, "nvs_store.c loads with ALARM_BLOB_READ_MAX_BYTES")
 
 
@@ -154,6 +155,12 @@ def test_task4():
     assert_test(0 <= stg < alm, "the staging branch comes before the alarm branch in the LED loop")
     assert_test(app.find("LED_STATE_BTN_HOLD_SHORT;") < alm and app.find("LED_STATE_FACTORY_RESET;") < alm,
                 "button hold and factory reset come before the alarm branch")
+    ext = r"update_status_leds\(s_led_state,\s*1,\s*wifi_manager_is_ap_active\(\)\s*\?\s*1\s*:\s*0\)"
+    assert_test(re.search(r"ALARM_LED_WARNING\)\s*\{[^}]*" + ext, app) is not None
+                and re.search(r"ALARM_LED_INFO\)\s*\{[^}]*" + ext, app) is not None,
+                "warning and info leave the external LED following the AP (spec 2.4)")
+    assert_test(re.search(r"ALARM_LED_CRITICAL\)\s*\{[^}]*update_status_leds\(s_led_state,\s*blink,\s*blink\)", app) is not None,
+                "critical keeps blinking both LEDs as in the base")
     counts = function_body(web, "alarms_add_counts")
     assert_test('"warning_unacked"' in counts and '"info_unacked"' in counts,
                 "alarms_add_counts emits warning_unacked and info_unacked")
@@ -219,8 +226,13 @@ def test_task6():
                 "web handler maps ESP_ERR_NOT_FOUND to 503 flow_unavailable")
     assert_test("flow_already_on" in h and "409" in h and "measure_unavailable" in h,
                 "web handler keeps the 409 flow_already_on / measure_unavailable mapping")
-    assert_test(re.search(r"is_start\s*\?\s*send_api_error\(req,\s*\"measure_unavailable\"", h) is None
-                or "ESP_ERR_INVALID_STATE" in h, "unknown start errors are not mapped to measure_unavailable")
+    assert_test(re.search(r"is_start\s*&&\s*err\s*==\s*ESP_ERR_INVALID_STATE\)\s*\{\s*return send_api_error\(req,\s*"
+                          r"\"measure_unavailable\"[^;]*409", h, re.S) is not None,
+                "ESP_ERR_INVALID_STATE on start maps to 409 measure_unavailable")
+    ghdr = read(COMP_DIR / "dry_run_guard" / "include" / "dry_run_guard.h")
+    mc = re.search(r"/\*(?:(?!\*/).)*\*/\s*esp_err_t dry_run_guard_measure_start\(void\);", ghdr, re.S)
+    assert_test(mc is not None and "ESP_ERR_NOT_FOUND" in mc.group(0),
+                "the measure_start contract comment lists ESP_ERR_NOT_FOUND")
     assert_test(re.search(r"\"unavailable\"[^;]*503", h, re.S) is not None, "other start errors map to 503 unavailable")
     assert_test("flow_unavailable" in js and "อ่านสถานะ flow switch ไม่ได้ ตรวจสายแล้วลองใหม่" in js,
                 "app.js shows the Thai flow_unavailable message")
@@ -294,6 +306,8 @@ def test_task7():
     ld = js_function_body(js, "dryRunLoad")
     assert_test("wasUnavailable" in ld and "dryRunFillForm" in ld,
                 "dryRunLoad re-fills the form after a 503 clears")
+    assert_test("dryRunMeasureGaveUp = true" in mp and "dryRunMeasureGaveUp" in ld and "dryRunResumeMeasure()" in ld,
+                "after the measure poll gives up, the next good status poll re-syncs through dryRunResumeMeasure")
     rf = js_function_body(js, "dryRunReadForm")
     assert_test("DRY_RUN_RANGE" in rf and "65535" not in rf, "dryRunReadForm validates the real ranges")
 
@@ -332,14 +346,26 @@ def test_task8():
     dm = js_function_body(js, "alarmDismissCritical")
     assert_test("alarmWriteDismissed" in dm and "last_critical_seq" in dm, "dismiss stores {boot_id, last_critical_seq}")
     ak = js_function_body(js, "alarmCriticalAck")
-    assert_test("all: true" in ak and "alarmWriteDismissed" in ak and "ok" in ak,
-                "overlay ack sends all:true and dismisses only on success")
+    assert_test("all: true" in ak and re.search(r"if \(!ok\) return;[^}]*alarmWriteDismissed", ak) is not None
+                and ak.find("alarmAck(") < ak.find("alarmWriteDismissed"),
+                "overlay ack sends all:true and writes the dismiss record only inside the success branch")
+    assert_test("showConfirmModal(" in ak and ak.find("showConfirmModal(") < ak.find("alarmAck("),
+                "overlay ack asks for confirmation before sending the ack")
+    assert_test("/api/alarms/status" in ak and "65001" in js and "rule_id" in ak and "acked" in ak
+                and re.search(r"dryRunActive\s*=\s*true", ak) is not None,
+                "overlay ack checks for an active unacked dry-run alarm and warns when the status is unreadable")
+    assert_test("การรับทราบจะปลดล็อกระบบป้องกันเดินแห้ง และปั๊มน้ำอาจเริ่มทำงานอีกครั้ง" in js,
+                "the dry-run ack warning text is present")
+    assert_test(re.search(r"alarmEl\('alarm-critical-dismiss'\);\s*if \(\w+\) \w+\.focus\(\)", ro) is not None
+                and "alarm-critical-ack" not in ro,
+                "the overlay opens with focus on the dismiss button, not the ack button")
     assert_test("onDone" in js_function_body(js, "alarmAck"), "alarmAck reports completion to its caller")
     audio = js_function_body(js, "alarmEnsureAudio")
     assert_test("AudioContext" in audio and "try" in audio and "catch" in audio and "resume" in audio,
                 "AudioContext is created/resumed inside a try block")
     beep = js_function_body(js, "alarmBeepBurst")
     assert_test("try" in beep and "880" in beep and "0.15" in beep, "beep burst: 880 Hz, 150 ms, in try/catch")
+    assert_test("document.hidden" in beep, "a hidden tab does not beep")
     assert_test("ALARM_BEEP_EVERY_MS = 5000;" in js and "ALARM_BEEP_EVERY_MS" in js_function_body(js, "alarmStartBeeping")
                 and "setInterval" in js_function_body(js, "alarmStartBeeping")
                 and "clearInterval" in js_function_body(js, "alarmStopBeeping"),
@@ -356,6 +382,8 @@ def test_task8():
     op = js_function_body(js, "alarmOpenBellPanel")
     assert_test("/api/alarms/status" in op and "alarmWriteSeen" in op, "opening the panel fetches status and marks seen")
     rp = js_function_body(js, "alarmRenderBellList")
+    assert_test("slice(0, 5)" in rp and "reverse" not in rp and "slice(-5)" not in rp,
+                "bell list takes the first five events (history is newest-first) without reversing")
     assert_test("slice" in rp and "alarmFormatEventValue" in rp and "ALARM_TYPE_TEXT" in rp and "innerHTML" not in rp,
                 "bell list shows newest events with formatted values via textContent")
     assert_test("Escape" in js and "syncAlarmSummary(true)" in js_function_body(js, "alarmOnVisibility"),

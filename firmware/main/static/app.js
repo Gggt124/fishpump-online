@@ -606,6 +606,7 @@ var dryRunSaving = false;
 var dryRunMeasureRunning = false;
 var dryRunSuggested = 0;
 var dryRunMeasureFails = 0;
+var dryRunMeasureGaveUp = false; /* poll stopped after repeated failures; re-sync on next good status */
 var DRY_RUN_RANGE = {
     prime_sec: [1, 600],
     dry_trip_sec: [3, 120],
@@ -730,7 +731,10 @@ function dryRunLoad(fillForm) {
         if ((fillForm || wasUnavailable) && data.pump) dryRunFillForm(data.pump);
         dryRunApplyStatus(data.pump_status);
         dryRunUpdateButtons();
-        if (fillForm) dryRunResumeMeasure();
+        if (fillForm || dryRunMeasureGaveUp) {
+            dryRunMeasureGaveUp = false;
+            dryRunResumeMeasure();
+        }
     });
 }
 
@@ -883,6 +887,7 @@ function dryRunMeasurePoll() {
             if (dryRunMeasureFails >= 5) {
                 if (dryRunMeasureTimer) { clearInterval(dryRunMeasureTimer); dryRunMeasureTimer = null; }
                 dryRunMeasureRunning = false;
+                dryRunMeasureGaveUp = true;
                 dryRunSetMeasureText('ติดต่อบอร์ดไม่ได้ ลองกดวัดใหม่อีกครั้ง', false, false);
                 dryRunUpdateButtons();
             }
@@ -5448,7 +5453,8 @@ function alarmCloseBellPanel() {
 function alarmRenderBellList(st) {
     var list = alarmEl('alarm-bell-list');
     alarmClear(list);
-    var events = (st.history || []).slice(-5).reverse();
+    /* Firmware sends history newest-first: take the first five as they are. */
+    var events = (st.history || []).slice(0, 5);
     events.forEach(function (h) {
         var row = alarmMake('div', 'alarm-row');
         var main = alarmMake('div', 'alarm-main');
@@ -5530,8 +5536,9 @@ function renderAlarmOverlay(sum) {
         setText('alarm-critical-text', 'มีเหตุวิกฤตที่ยังไม่รับทราบ ' + sum.summary.critical_unacked + ' รายการ');
         ov.classList.remove('hidden');
         if (wasHidden) {
-            var ack = alarmEl('alarm-critical-ack');
-            if (ack) ack.focus();
+            /* Focus the safe button: one Enter/Space must never ack (and possibly restart the pump). */
+            var safe = alarmEl('alarm-critical-dismiss');
+            if (safe) safe.focus();
         }
         alarmStartBeeping();
     } else {
@@ -5547,14 +5554,30 @@ function alarmDismissCritical() {
     renderAlarmOverlay(sum);
 }
 
+var ALARM_DRY_RUN_RULE_ID = 65001; /* ALARM_SYSTEM_ID_BASE + 1 */
+var ALARM_DRY_RUN_ACK_WARNING = 'การรับทราบจะปลดล็อกระบบป้องกันเดินแห้ง และปั๊มน้ำอาจเริ่มทำงานอีกครั้ง';
+
 function alarmCriticalAck() {
     var sum = alarmLastSummary;
-    alarmAck({ all: true }, alarmEl('alarm-critical-ack'), function (ok) {
-        if (!ok) return; /* overlay stays; alarmAck already showed the error toast */
-        if (sum) {
-            alarmWriteDismissed(sum.boot_id, sum.last_critical_seq);
-            renderAlarmOverlay(sum);
+    /* Acking the dry-run alarm can release the lock and restart the pump, so ask first. */
+    apiGet('/api/alarms/status', function (err, data) {
+        var dryRunActive = true; /* fail safe: warn if the status cannot be read */
+        if (!err && data && data.ok === true) {
+            dryRunActive = (data.active || []).some(function (a) {
+                return a.rule_id === ALARM_DRY_RUN_RULE_ID && !a.acked;
+            });
         }
+        var msg = 'รับทราบการแจ้งเตือนทั้งหมดที่กำลังเกิดอยู่?';
+        if (dryRunActive) msg += ' ' + ALARM_DRY_RUN_ACK_WARNING;
+        showConfirmModal('รับทราบทั้งหมด', msg, function () {
+            alarmAck({ all: true }, alarmEl('alarm-critical-ack'), function (ok) {
+                if (!ok) return; /* overlay stays; alarmAck already showed the error toast */
+                if (sum) {
+                    alarmWriteDismissed(sum.boot_id, sum.last_critical_seq);
+                    renderAlarmOverlay(sum);
+                }
+            });
+        }, dryRunActive);
     });
 }
 
@@ -5590,6 +5613,7 @@ function alarmEnsureAudio() {
 /* Three 150 ms beeps at 880 Hz with 150 ms gaps. Silent if the browser has not unlocked audio. */
 function alarmBeepBurst() {
     if (!alarmSoundOn()) return;
+    if (document.hidden) return; /* summary poll is paused while hidden, so the alarm may already be acked */
     try {
         var ctx = alarmAudioCtx;
         if (!ctx || ctx.state !== 'running') return;

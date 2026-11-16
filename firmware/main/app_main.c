@@ -782,10 +782,11 @@ static void hardware_ui_task(void *pvParameters) {
           update_status_leds(s_led_state, blink, blink);
         } else if (cached_alarm_level == ALARM_LED_WARNING) {
           s_led_state = LED_STATE_ALARM_WARNING;
-          update_status_leds(s_led_state, 1, 1);
+          /* External LED unchanged by warning/info: it follows the AP as before. */
+          update_status_leds(s_led_state, 1, wifi_manager_is_ap_active() ? 1 : 0);
         } else if (cached_alarm_level == ALARM_LED_INFO) {
           s_led_state = LED_STATE_ALARM_INFO;
-          update_status_leds(s_led_state, 1, 1);
+          update_status_leds(s_led_state, 1, wifi_manager_is_ap_active() ? 1 : 0);
         } else if (wifi_manager_is_ap_active()) {
           s_led_state = LED_STATE_ON;
           update_status_leds(s_led_state, 1, 1);

@@ -138,7 +138,7 @@ _Static_assert(sizeof(alarm_rule_t) >= ALARM_BLOB_V1_REC_SIZE,
 /* Read limit: leaves room for a future, larger record so it still loads. */
 #define ALARM_BLOB_READ_MAX_BYTES (ALARM_BLOB_HEADER_BYTES + ALARM_MAX_RULES * (sizeof(alarm_rule_t) + 64))
 /* v2 layout: [2][count][next_id u16 LE][rec_size u16 LE][count x rec_size].
- * v1 (read only): [1][count][next_id u16 LE][count x sizeof(alarm_rule_t)].
+ * v1 (read only): [1][count][next_id u16 LE][count x ALARM_BLOB_V1_REC_SIZE].
  * Encode returns 0 if it does not fit. */
 size_t alarm_blob_encode(const alarm_rule_set_t *set, uint8_t *buf, size_t size);
 /* false = blob unusable (wrong version, bad length, count > max). A rule that fails
