@@ -72,6 +72,7 @@ static struct {
     bool want_identity;
     bool want_rules;
     uint32_t rules_sent_rev;
+    TaskHandle_t task;
 } s;
 
 static uint32_t now_ms(void)
@@ -350,7 +351,7 @@ esp_err_t uplink_init(void)
     s.want_identity = true;
     s.want_rules = true;
     s.initialized = true; /* before the task starts: the preview may be asked at once */
-    if (xTaskCreatePinnedToCore(uplink_task, "uplink", UPLINK_TASK_STACK, NULL, UPLINK_TASK_PRIORITY, NULL,
+    if (xTaskCreatePinnedToCore(uplink_task, "uplink", UPLINK_TASK_STACK, NULL, UPLINK_TASK_PRIORITY, &s.task,
                                 UPLINK_TASK_CORE) != pdPASS) {
         s.initialized = false;
         goto fail;
@@ -440,4 +441,13 @@ char *uplink_preview_json(void)
         return NULL;
     }
     return out;
+}
+
+int32_t uplink_stack_hwm(void)
+{
+    TaskHandle_t t = s.task;
+    if (t == NULL) {
+        return -1;
+    }
+    return (int32_t)(uxTaskGetStackHighWaterMark(t) * sizeof(StackType_t));
 }

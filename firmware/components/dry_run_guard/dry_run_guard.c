@@ -47,6 +47,7 @@ static SemaphoreHandle_t s_lock;
 static bool s_initialized;
 static dry_run_config_t s_cfg;
 static dry_run_rt_t s_rt;
+static TaskHandle_t s_task;
 static measure_t s_meas;
 
 static uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
@@ -300,7 +301,7 @@ esp_err_t dry_run_guard_init(void) {
         (void)alarm_engine_system_raise(ALARM_SYSTEM_ID_DRY_RUN, (float)s_rt.trips);
     }
 
-    if (xTaskCreatePinnedToCore(guard_task, "dry_run", GUARD_TASK_STACK, NULL, GUARD_TASK_PRIORITY, NULL,
+    if (xTaskCreatePinnedToCore(guard_task, "dry_run", GUARD_TASK_STACK, NULL, GUARD_TASK_PRIORITY, &s_task,
                                 GUARD_TASK_CORE) != pdPASS) {
         ESP_LOGE(TAG, "task create failed");
         err = ESP_ERR_NO_MEM;
@@ -452,4 +453,13 @@ bool dry_run_guard_get_measure(dry_run_measure_status_t *out) {
     out->suggested_prime_sec = (s_meas.state == DRY_RUN_MEASURE_DONE) ? s_meas.suggested_prime_sec : 0;
     xSemaphoreGive(s_lock);
     return true;
+}
+
+int32_t dry_run_guard_stack_hwm(void)
+{
+    TaskHandle_t t = s_task;
+    if (t == NULL) {
+        return -1;
+    }
+    return (int32_t)(uxTaskGetStackHighWaterMark(t) * sizeof(StackType_t));
 }

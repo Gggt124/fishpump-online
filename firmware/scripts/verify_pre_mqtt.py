@@ -162,11 +162,49 @@ def test_task4():
                 "alarm_engine_get_summary copies last_critical_seq")
 
 
+def test_task5():
+    print("\n--- Task 5: logs and diagnostics ---")
+    cool = read(COMP_DIR / "cooling_control" / "cooling_control.c")
+    app = read(MAIN_DIR / "app_main.c")
+    m = re.search(r"(.{0,300})ESP_LOGW\(TAG,\s*\"PT100 sensor fault:", cool, re.S)
+    ctx = m.group(1) if m else ""
+    guarded = re.search(r"if\s*\(\s*(?:!s_fault|entering_fault|s_failed_reads\s*==[^)]*)\)\s*\{\s*$", ctx)
+    entering = "entering_fault" not in ctx or "entering_fault = !s_fault" in cool
+    assert_test(m is not None and guarded is not None and entering,
+                "the PT100 sensor fault warning is guarded to the transition into fault")
+    assert_test("PT100 sensor fault cleared" in cool, "the fault cleared log stays")
+    i = app.find("#if CONFIG_ESP_TASK_WDT_INIT")
+    j = app.find("#else", i) if i >= 0 else -1
+    k = app.find("#endif", j) if j >= 0 else -1
+    assert_test(i >= 0 and j > i and k > j, "app_main has #if CONFIG_ESP_TASK_WDT_INIT ... #else ... #endif")
+    if i >= 0 and j > i:
+        cfg_part = app[i:j]
+        assert_test("esp_task_wdt_reconfigure" in cfg_part and "esp_task_wdt_init" not in cfg_part,
+                    "the configured-TWDT path reconfigures and never calls esp_task_wdt_init")
+        assert_test("esp_task_wdt_init" in app[j:k], "the #else fallback still initialises TWDT")
+    assert_test('"TWDT reconfigured (' in app, "the TWDT reconfigured INFO line exists")
+    for f in ("hwm_alarm=", "hwm_uplink=", "hwm_dry_run="):
+        assert_test(f in app, f"BOARD_DIAG contains {f}")
+    for comp, fn in (("alarm_engine", "alarm_engine_stack_hwm"), ("uplink", "uplink_stack_hwm"),
+                     ("dry_run_guard", "dry_run_guard_stack_hwm")):
+        hdr = read(COMP_DIR / comp / "include" / f"{comp}.h")
+        src = read(COMP_DIR / comp / f"{comp}.c")
+        assert_test(f"int32_t {fn}(void);" in hdr, f"{comp}.h declares {fn}")
+        body = function_body(src, fn, r"int32_t\s+")
+        assert_test("uxTaskGetStackHighWaterMark" in body and "-1" in body,
+                    f"{fn} reads the stored handle and returns -1 when absent")
+        assert_test(re.search(r"xTaskCreatePinnedToCore\([^;]*,\s*&\w+(\.\w+)?,\s*\w+\)", src, re.S) is not None,
+                    f"{comp} stores the task handle at creation")
+    assert_test("alarm_engine_stack_hwm()" in app and "uplink_stack_hwm()" in app
+                and "dry_run_guard_stack_hwm()" in app, "BOARD_DIAG calls all three getters")
+
+
 def main():
     test_task1()
     test_task2()
     test_task3()
     test_task4()
+    test_task5()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

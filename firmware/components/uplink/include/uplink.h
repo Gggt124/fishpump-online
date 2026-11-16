@@ -44,6 +44,10 @@ void uplink_set_wall_clock(int64_t (*now_unix_ms)(void));      /* NULL = none */
 /* Whole preview as a malloc'd JSON string (caller frees), NULL on OOM or before init. */
 char *uplink_preview_json(void);
 
+/* Minimum free stack of the uplink task in bytes since it started (ESP-IDF counts stack in bytes),
+ * or -1 when the task was not created. */
+int32_t uplink_stack_hwm(void);
+
 #ifdef __cplusplus
 }
 #endif

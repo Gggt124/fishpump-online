@@ -78,6 +78,10 @@ esp_err_t alarm_engine_system_raise(uint16_t id, float value);
  * Same error codes as raise. */
 esp_err_t alarm_engine_system_clear(uint16_t id, uint8_t reason, float value);
 
+/* Minimum free stack of the alarm_engine task in bytes since it started (ESP-IDF counts stack in bytes),
+ * or -1 when the task was not created. */
+int32_t alarm_engine_stack_hwm(void);
+
 #ifdef __cplusplus
 }
 #endif

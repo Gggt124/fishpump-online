@@ -330,6 +330,7 @@ static void log_board_and_hardware_diagnostics(void) {
       "cpu_load_pct=%lu.%lu core0_pct=%lu.%lu core1_pct=%lu.%lu tasks=%lu "
       "twdt_main=%s reset=%s heap_free=%lu heap_min=%lu heap_largest=%lu "
       "heap_alloc_blocks=%lu heap_free_blocks=%lu main_stack_hwm=%lu "
+      "hwm_alarm=%ld hwm_uplink=%ld hwm_dry_run=%ld "
       "die_temp=unsupported external_temp_source=ds18b20",
       (unsigned long long)(now_us / 1000), CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
       !cpu_stats_available ? "unsupported"
@@ -347,7 +348,9 @@ static void log_board_and_hardware_diagnostics(void) {
       (unsigned long)heap_info.largest_free_block,
       (unsigned long)heap_info.allocated_blocks,
       (unsigned long)heap_info.free_blocks,
-      (unsigned long)uxTaskGetStackHighWaterMark(NULL));
+      (unsigned long)uxTaskGetStackHighWaterMark(NULL),
+      (long)alarm_engine_stack_hwm(), (long)uplink_stack_hwm(),
+      (long)dry_run_guard_stack_hwm());
 
   pump_control_status_t pump = {0};
   if (pump_control_get_status(&pump)) {
@@ -1015,24 +1018,28 @@ void app_main(void) {
       .idle_core_mask = idle_mask,
       .trigger_panic = true,
   };
+#if CONFIG_ESP_TASK_WDT_INIT
+  /* The IDF already initialised TWDT before app_main (initialising it again would log an error line
+   * and fail), so apply our timeout directly. */
+  esp_err_t reconf_ret = esp_task_wdt_reconfigure(&wdt_config);
+  if (reconf_ret == ESP_OK) {
+    ESP_LOGI(TAG, "TWDT reconfigured (%d ms timeout, panic on trigger)",
+             APP_TEMPLATE_MAIN_WDT_TIMEOUT_MS);
+  } else {
+    ESP_LOGW(TAG, "TWDT reconfigure failed: %s", esp_err_to_name(reconf_ret));
+  }
+  esp_task_wdt_add(NULL);
+#else
   esp_err_t wdt_ret = esp_task_wdt_init(&wdt_config);
   if (wdt_ret == ESP_OK) {
     esp_task_wdt_add(NULL);
     ESP_LOGI(TAG, "TWDT initialized (%d ms timeout, panic on trigger)",
              APP_TEMPLATE_MAIN_WDT_TIMEOUT_MS);
-  } else if (wdt_ret == ESP_ERR_INVALID_STATE) {
-    esp_err_t reconf_ret = esp_task_wdt_reconfigure(&wdt_config);
-    if (reconf_ret == ESP_OK) {
-      ESP_LOGI(TAG, "TWDT reconfigured (%d ms timeout, panic on trigger)",
-               APP_TEMPLATE_MAIN_WDT_TIMEOUT_MS);
-    } else {
-      ESP_LOGW(TAG, "TWDT reconfigure failed: %s", esp_err_to_name(reconf_ret));
-    }
-    esp_task_wdt_add(NULL);
   } else {
     ESP_LOGE(TAG, "TWDT init failed: %s (continuing without watchdog)",
              esp_err_to_name(wdt_ret));
   }
+#endif
 
   /* Configure pump relay outputs safely with active map and polarities
    * (cooling is inverter PWM on GPIO 8, initialized by cooling_control) */

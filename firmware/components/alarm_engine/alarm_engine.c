@@ -46,6 +46,7 @@ static struct {
     uint32_t rules_revision;
     uint32_t last_critical_seq; /* newest raised critical event this boot, 0 if none */
     nvs_store_alarm_rules_load_status_t storage;
+    TaskHandle_t task;
     bool running;
     bool initialized;
 } s;
@@ -217,7 +218,7 @@ esp_err_t alarm_engine_init(void)
              : s.storage == NVS_STORE_ALARM_RULES_DEFAULTS_INVALID ? "defaults-invalid"
                                                                     : "defaults-error");
 
-    if (xTaskCreatePinnedToCore(engine_task, "alarm_eng", ENGINE_TASK_STACK, NULL, ENGINE_TASK_PRIORITY, NULL,
+    if (xTaskCreatePinnedToCore(engine_task, "alarm_eng", ENGINE_TASK_STACK, NULL, ENGINE_TASK_PRIORITY, &s.task,
                                 ENGINE_TASK_CORE) != pdPASS) {
         vSemaphoreDelete(s.write_lock);
         vSemaphoreDelete(s.lock);
@@ -632,4 +633,13 @@ esp_err_t alarm_engine_system_clear(uint16_t id, uint8_t reason, float value)
     publish_pending(pending);
     free(pending);
     return err;
+}
+
+int32_t alarm_engine_stack_hwm(void)
+{
+    TaskHandle_t t = s.task;
+    if (t == NULL) {
+        return -1;
+    }
+    return (int32_t)(uxTaskGetStackHighWaterMark(t) * sizeof(StackType_t));
 }

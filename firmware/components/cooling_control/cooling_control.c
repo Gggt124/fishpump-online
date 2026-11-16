@@ -254,13 +254,16 @@ static void cooling_task(void *arg) {
         s_failed_reads++;
         s_successful_reads = 0;
         if (s_failed_reads >= COOLING_CONTROL_FAILED_READS_TO_FAULT) {
+          const bool entering_fault = !s_fault; /* log once per fault onset, not every second */
           s_fault = true;
           s_temperature_valid = false;
           s_sensor_state = COOLING_CONTROL_SENSOR_FAULT;
           s_fault_code = (ret == ESP_OK) ? COOLING_CONTROL_FAULT_OUT_OF_RANGE
                                          : COOLING_CONTROL_FAULT_READ_FAILED;
-          ESP_LOGW(TAG, "PT100 sensor fault: %u consecutive failures (code=%d)",
-                   (unsigned int)s_failed_reads, s_fault_code);
+          if (entering_fault) {
+            ESP_LOGW(TAG, "PT100 sensor fault: %u consecutive failures (code=%d)",
+                     (unsigned int)s_failed_reads, s_fault_code);
+          }
         }
       }
 

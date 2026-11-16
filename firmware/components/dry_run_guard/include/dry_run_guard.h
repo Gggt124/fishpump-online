@@ -64,6 +64,10 @@ esp_err_t dry_run_guard_measure_stop(void);
 /* false before init. */
 bool dry_run_guard_get_measure(dry_run_measure_status_t *out);
 
+/* Minimum free stack of the dry_run_guard task in bytes since it started (ESP-IDF counts stack in bytes),
+ * or -1 when the task was not created. */
+int32_t dry_run_guard_stack_hwm(void);
+
 #ifdef __cplusplus
 }
 #endif
