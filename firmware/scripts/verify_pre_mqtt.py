@@ -67,8 +67,21 @@ def test_task1():
     assert_test("ALARM_HOLD_RESET_MS" in step, "alarm_rule_step applies ALARM_HOLD_RESET_MS on hold")
 
 
+def test_task2():
+    print("\n--- Task 2: rule blob v2 with record size ---")
+    hdr = read(COMP_DIR / "alarm_rules" / "include" / "alarm_rules.h")
+    blob = read(COMP_DIR / "alarm_rules" / "alarm_blob.c")
+    nvs = read(COMP_DIR / "nvs_store" / "nvs_store.c")
+    assert_test(re.search(r"#define\s+ALARM_BLOB_VERSION\s+2$", hdr, re.M) is not None, "ALARM_BLOB_VERSION is 2")
+    assert_test("ALARM_BLOB_READ_MAX_BYTES" in hdr, "ALARM_BLOB_READ_MAX_BYTES is defined")
+    dec = function_body(blob, "alarm_blob_decode", r"bool\s+")
+    assert_test("ALARM_BLOB_V1" in dec, "alarm_blob_decode still reads v1 blobs")
+    assert_test("ALARM_BLOB_READ_MAX_BYTES" in nvs, "nvs_store.c loads with ALARM_BLOB_READ_MAX_BYTES")
+
+
 def main():
     test_task1()
+    test_task2()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

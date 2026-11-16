@@ -1874,7 +1874,7 @@ nvs_store_load_alarm_rules(alarm_rule_set_t *out) {
     nvs_close(handle);
     return NVS_STORE_ALARM_RULES_DEFAULTS_ERROR;
   }
-  if (len == 0 || len > ALARM_BLOB_MAX_BYTES) {
+  if (len == 0 || len > ALARM_BLOB_READ_MAX_BYTES) {
     ESP_LOGW(TAG, "Alarm rules blob has unusable size %u; using presets",
              (unsigned)len);
     nvs_close(handle);

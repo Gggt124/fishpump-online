@@ -47,6 +47,8 @@ typedef enum {
     ALARM_GATE_WHEN_FALSE
 } alarm_gate_mode_t;
 
+/* Saved to NVS as a raw record. Fields are append-only (never reorder or
+ * resize), and 0 must mean the default, so an older, shorter record loads. */
 typedef struct {
     uint16_t id;
     bool enabled;
@@ -123,9 +125,16 @@ size_t alarm_ring_since(const alarm_ring_t *ring, uint32_t after_seq, alarm_even
 /* 12 rules, ids 1..12, all enabled=false, next_id=13. */
 void alarm_presets_fill(alarm_rule_set_t *out);
 
-#define ALARM_BLOB_VERSION 1
-#define ALARM_BLOB_MAX_BYTES (4 + ALARM_MAX_RULES * sizeof(alarm_rule_t))
-/* Layout: [version u8][count u8][next_id u16 LE][count x alarm_rule_t]. 0 if it does not fit. */
+#define ALARM_BLOB_VERSION 2
+#define ALARM_BLOB_V1 1
+#define ALARM_BLOB_HEADER_BYTES 6
+/* Write size. */
+#define ALARM_BLOB_MAX_BYTES (ALARM_BLOB_HEADER_BYTES + ALARM_MAX_RULES * sizeof(alarm_rule_t))
+/* Read limit: leaves room for a future, larger record so it still loads. */
+#define ALARM_BLOB_READ_MAX_BYTES (ALARM_BLOB_HEADER_BYTES + ALARM_MAX_RULES * (sizeof(alarm_rule_t) + 64))
+/* v2 layout: [2][count][next_id u16 LE][rec_size u16 LE][count x rec_size].
+ * v1 (read only): [1][count][next_id u16 LE][count x sizeof(alarm_rule_t)].
+ * Encode returns 0 if it does not fit. */
 size_t alarm_blob_encode(const alarm_rule_set_t *set, uint8_t *buf, size_t size);
 /* false = blob unusable (wrong version, bad length, count > max). A rule that fails
  * alarm_rule_validate() is dropped and counted in *dropped; the rest are kept. */
