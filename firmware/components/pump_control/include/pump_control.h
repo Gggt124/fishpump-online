@@ -117,7 +117,8 @@ bool pump_control_update_config(const pump_control_config_update_t *update);
  * Leaving WAIT/LOCKED with resume_from_on && running: restart the water schedule in its ON phase. */
 bool pump_control_set_water_guard(pump_control_water_guard_t guard, bool resume_from_on);
 /* Measure button: energise/de-energise relay 1 directly. Refused (false) when water running,
- * guard WAIT/LOCKED, or not initialised. While active, pump_control_start_water() returns false. */
+ * guard WAIT/LOCKED, or not initialised. While active, pump_control_start_water() returns false.
+ * Backstop: pump_control switches relay 1 off by itself 130 s after the test started. */
 bool pump_control_water_test(bool on);
 
 /** Optional callback invoked after water/wash runtime state changes. */

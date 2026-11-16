@@ -69,6 +69,11 @@ static water_runtime_state_t s_water_state;
  * Both are protected by s_pump_mutex like the rest of the state. */
 static pump_control_water_guard_t s_guard = PUMP_CONTROL_GUARD_OFF;
 static bool s_test_active = false;
+static uint32_t s_test_started_ms = 0;
+
+/* Backstop for the measure-button test: 120 s measurement timeout + 10 s margin.
+ * Keeps relay 1 from staying on if the caller never sends water_test(false). */
+#define PUMP_WATER_TEST_MAX_MS 130000u
 
 /* True when relay 1 must stay off from the timer: guard WAIT/LOCKED, or the
  * measure-button test owns relay 1. Caller holds s_pump_mutex. */
@@ -423,6 +428,17 @@ static void pump_tick_cb(void *arg) {
 
   int64_t now_ms = esp_timer_get_time() / 1000;
   bool float_changed = update_float_debounce(now_ms);
+
+  if (s_test_active &&
+      (uint32_t)((uint32_t)now_ms - s_test_started_ms) >= PUMP_WATER_TEST_MAX_MS) {
+    ESP_LOGW(TAG, "Relay-1 test exceeded %u ms cap, switching relay 1 off",
+             (unsigned)PUMP_WATER_TEST_MAX_MS);
+    s_test_active = false;
+    if (!set_relay1_energized(false)) {
+      goto exit_tick;
+    }
+    notify_state_changed();
+  }
 
   /* Process Water System */
   if (s_water_state.running && water_inhibited_locked()) {
@@ -1013,6 +1029,7 @@ bool pump_control_water_test(bool on) {
     if (!s_test_active) {
       ok = set_relay1_energized(true);
       s_test_active = ok;
+      s_test_started_ms = (uint32_t)now_ms;
       changed = ok;
     }
   } else if (s_test_active) {

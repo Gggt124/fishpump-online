@@ -87,6 +87,8 @@ def test_pump_control():
     water = tick.split("/* Process Water System */")[-1].split("/* Process Wash System */")[0]
     assert_test(tick != "" and "water_inhibited_locked" in water,
                 "pump_tick_cb water branch references the guard")
+    assert_test("PUMP_WATER_TEST_MAX_MS" in tick and "s_test_active" in tick,
+                "pump_tick_cb caps relay-1 test mode with PUMP_WATER_TEST_MAX_MS")
     start = function_body(src, "pump_control_start_water", r"bool\s+")
     assert_test(start != "" and re.search(r"water_inhibited_locked\(\)[\s\S]*return false", start) is not None,
                 "pump_control_start_water returns false when inhibited or testing")
