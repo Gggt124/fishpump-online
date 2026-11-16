@@ -213,3 +213,48 @@ bool uplink_forward_hold_for_clock(bool clock_set, uint32_t pending, uint32_t ri
 {
     return !clock_set && pending + UPLINK_CLOCK_HOLD_MARGIN < ring_len && held_ms < UPLINK_CLOCK_HOLD_MAX_MS;
 }
+
+uplink_clock_decision_t uplink_clock_hold_step(uplink_clock_hold_t *st, bool clock_set, bool sink_ready,
+                                               uint32_t pending, uint32_t ring_len, uint32_t now_ms,
+                                               uplink_clock_hold_event_t *event)
+{
+    uplink_clock_hold_event_t ev = UPLINK_CLOCK_EV_NONE;
+    uplink_clock_decision_t d;
+    if (clock_set) {
+        if (st->active) {
+            ev = UPLINK_CLOCK_EV_ENDED_CLOCK;
+        }
+        st->active = false;
+        st->released = false;
+        d = sink_ready && pending > 0 ? UPLINK_CLOCK_SEND_TS : UPLINK_CLOCK_IDLE;
+    } else if (!sink_ready) {
+        d = UPLINK_CLOCK_IDLE; /* state is kept across drops */
+    } else if (pending == 0) {
+        if (st->active) {
+            ev = UPLINK_CLOCK_EV_ENDED_EMPTY;
+        }
+        st->active = false;
+        d = UPLINK_CLOCK_IDLE;
+    } else if (st->released) {
+        d = UPLINK_CLOCK_SEND_NO_TS;
+    } else {
+        uint32_t held_ms = st->active ? (uint32_t)(now_ms - st->start_ms) : 0;
+        if (uplink_forward_hold_for_clock(false, pending, ring_len, held_ms)) {
+            if (!st->active) {
+                st->active = true;
+                st->start_ms = now_ms;
+                ev = UPLINK_CLOCK_EV_HOLD_STARTED;
+            }
+            d = UPLINK_CLOCK_HOLD;
+        } else {
+            ev = held_ms >= UPLINK_CLOCK_HOLD_MAX_MS ? UPLINK_CLOCK_EV_RELEASED_CAP : UPLINK_CLOCK_EV_RELEASED_MARGIN;
+            st->active = false;
+            st->released = true;
+            d = UPLINK_CLOCK_SEND_NO_TS;
+        }
+    }
+    if (event != NULL) {
+        *event = ev;
+    }
+    return d;
+}

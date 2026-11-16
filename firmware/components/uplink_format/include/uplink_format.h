@@ -59,6 +59,38 @@ uint32_t uplink_forward_account_gap(uplink_forward_t *f, uint32_t oldest_seq);
 #define UPLINK_CLOCK_HOLD_MAX_MS 120000u
 bool uplink_forward_hold_for_clock(bool clock_set, uint32_t pending, uint32_t ring_len, uint32_t held_ms);
 
+/* Hold/latch state, owned by the uplink task. active: events are being held, started at start_ms.
+ * released: the hold ended with the clock still unset (ring margin or time cap), so events go out without
+ * ts until the clock is set. Both survive sink drops: the time a sink is down counts toward the cap, so a
+ * flapping link cannot restart the 120 s hold. Only the clock arriving resets them. */
+typedef struct {
+    bool active;
+    bool released;
+    uint32_t start_ms;
+} uplink_clock_hold_t;
+
+typedef enum {
+    UPLINK_CLOCK_IDLE = 0,    /* nothing to send now (sink not ready, or nothing pending) */
+    UPLINK_CLOCK_HOLD,        /* keep the events in the ring */
+    UPLINK_CLOCK_SEND_TS,     /* send; the clock is set */
+    UPLINK_CLOCK_SEND_NO_TS   /* send without ts: the hold is over and the clock is still unset */
+} uplink_clock_decision_t;
+
+typedef enum {
+    UPLINK_CLOCK_EV_NONE = 0,
+    UPLINK_CLOCK_EV_HOLD_STARTED,
+    UPLINK_CLOCK_EV_ENDED_CLOCK,   /* the clock was set while holding */
+    UPLINK_CLOCK_EV_ENDED_EMPTY,   /* nothing pending any more while holding */
+    UPLINK_CLOCK_EV_RELEASED_MARGIN,
+    UPLINK_CLOCK_EV_RELEASED_CAP
+} uplink_clock_hold_event_t;
+
+/* pending: events waiting (0 = none). now_ms is uptime; elapsed time uses unsigned subtraction.
+ * *event reports a state transition for the caller to log once (may be NULL). */
+uplink_clock_decision_t uplink_clock_hold_step(uplink_clock_hold_t *st, bool clock_set, bool sink_ready,
+                                               uint32_t pending, uint32_t ring_len, uint32_t now_ms,
+                                               uplink_clock_hold_event_t *event);
+
 #ifdef __cplusplus
 }
 #endif

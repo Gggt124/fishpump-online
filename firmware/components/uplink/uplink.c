@@ -58,11 +58,7 @@ static struct {
     uint32_t pending_events;
     bool waiting_for_clock; /* under lock: events are held until the wall clock is set */
     bool connected_cache;   /* under lock: sink_ready() as of the last tick, for the preview */
-    /* uplink task only: clock-hold state. released latches once the hold ends with the clock still unset
-     * (ring margin or time cap) so events go out without ts until the clock is set or the sink drops. */
-    bool hold_active;
-    bool hold_released;
-    uint32_t hold_start_ms;
+    uplink_clock_hold_t clock_hold; /* uplink task only; survives sink drops, reset when the clock is set */
 
     watched_t last_watched;
     uint32_t last_tel_ms;
@@ -171,26 +167,28 @@ static void do_events(const alarm_engine_summary_t *sm, uint32_t now)
     xSemaphoreTake(s.send_lock, portMAX_DELAY);
     bool ready = sink_ready();
     bool clock_set = unix_now != 0;
-    bool hold = false;
-    if (!ready || clock_set) {
-        if (s.hold_active) {
-            ESP_LOGI(TAG, "alarm events no longer held for the clock (%s)", clock_set ? "clock set" : "sink gone");
-        }
-        s.hold_active = false;
-        s.hold_released = false;
-    } else if (n > 0 && !s.hold_released) {
-        uint32_t held_ms = s.hold_active ? (uint32_t)(now - s.hold_start_ms) : 0;
-        hold = uplink_forward_hold_for_clock(false, pending, ALARM_HISTORY_LEN, held_ms);
-        if (hold && !s.hold_active) {
-            s.hold_active = true;
-            s.hold_start_ms = now;
-            ESP_LOGI(TAG, "holding alarm events until the wall clock is set");
-        } else if (!hold) {
-            ESP_LOGI(TAG, "sending alarm events without ts (%s)",
-                     held_ms >= UPLINK_CLOCK_HOLD_MAX_MS ? "time cap" : "ring margin");
-            s.hold_active = false;
-            s.hold_released = true;
-        }
+    uplink_clock_hold_event_t hev;
+    uplink_clock_decision_t dec = uplink_clock_hold_step(&s.clock_hold, clock_set, ready, n > 0 ? pending : 0,
+                                                         ALARM_HISTORY_LEN, now, &hev);
+    bool hold = dec == UPLINK_CLOCK_HOLD;
+    switch (hev) {
+    case UPLINK_CLOCK_EV_HOLD_STARTED:
+        ESP_LOGI(TAG, "holding alarm events until the wall clock is set");
+        break;
+    case UPLINK_CLOCK_EV_ENDED_CLOCK:
+        ESP_LOGI(TAG, "alarm events no longer held (clock set)");
+        break;
+    case UPLINK_CLOCK_EV_ENDED_EMPTY:
+        ESP_LOGI(TAG, "alarm events no longer held (nothing pending)");
+        break;
+    case UPLINK_CLOCK_EV_RELEASED_MARGIN:
+        ESP_LOGI(TAG, "sending alarm events without ts (ring margin)");
+        break;
+    case UPLINK_CLOCK_EV_RELEASED_CAP:
+        ESP_LOGI(TAG, "sending alarm events without ts (time cap)");
+        break;
+    default:
+        break;
     }
     xSemaphoreTake(s.lock, portMAX_DELAY);
     s.waiting_for_clock = hold;

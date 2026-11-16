@@ -190,4 +190,60 @@ void test_uplink_format(void)
     CHECK(uplink_forward_hold_for_clock(false, 0, 32, 119999u));
     CHECK(!uplink_forward_hold_for_clock(false, 0, 32, 120000u)); /* time cap */
     CHECK(UPLINK_CLOCK_HOLD_MAX_MS == 120000u);
+
+    /* ---- hold/latch step ---- */
+    {
+        uplink_clock_hold_t h = {0};
+        uplink_clock_hold_event_t ev;
+        /* hold starts, stays, releases at the cap, and the release persists across later sends */
+        CHECK(uplink_clock_hold_step(&h, false, true, 1, 32, 1000, &ev) == UPLINK_CLOCK_HOLD && ev == UPLINK_CLOCK_EV_HOLD_STARTED);
+        CHECK(uplink_clock_hold_step(&h, false, true, 2, 32, 60000, &ev) == UPLINK_CLOCK_HOLD && ev == UPLINK_CLOCK_EV_NONE);
+        CHECK(uplink_clock_hold_step(&h, false, true, 2, 32, 1000 + 119999u, &ev) == UPLINK_CLOCK_HOLD);
+        CHECK(uplink_clock_hold_step(&h, false, true, 2, 32, 1000 + 120000u, &ev) == UPLINK_CLOCK_SEND_NO_TS &&
+              ev == UPLINK_CLOCK_EV_RELEASED_CAP);
+        CHECK(uplink_clock_hold_step(&h, false, true, 1, 32, 1000 + 130000u, &ev) == UPLINK_CLOCK_SEND_NO_TS &&
+              ev == UPLINK_CLOCK_EV_NONE); /* latched: no new hold */
+        /* the sink dropping and coming back does not restart the hold */
+        CHECK(uplink_clock_hold_step(&h, false, false, 1, 32, 1000 + 131000u, &ev) == UPLINK_CLOCK_IDLE);
+        CHECK(uplink_clock_hold_step(&h, false, true, 1, 32, 1000 + 132000u, &ev) == UPLINK_CLOCK_SEND_NO_TS &&
+              ev == UPLINK_CLOCK_EV_NONE);
+        /* the clock arriving resets everything and sends with ts */
+        CHECK(uplink_clock_hold_step(&h, true, true, 1, 32, 1000 + 133000u, &ev) == UPLINK_CLOCK_SEND_TS);
+        CHECK(!h.active && !h.released);
+        CHECK(uplink_clock_hold_step(&h, false, true, 1, 32, 1000 + 134000u, &ev) == UPLINK_CLOCK_HOLD &&
+              ev == UPLINK_CLOCK_EV_HOLD_STARTED); /* a later clock loss holds afresh */
+    }
+    {
+        uplink_clock_hold_t h = {0};
+        uplink_clock_hold_event_t ev;
+        /* a drop while holding keeps the start time: the cap still fires after the reconnect */
+        CHECK(uplink_clock_hold_step(&h, false, true, 1, 32, 5000, &ev) == UPLINK_CLOCK_HOLD);
+        CHECK(uplink_clock_hold_step(&h, false, false, 1, 32, 50000, &ev) == UPLINK_CLOCK_IDLE && h.active);
+        CHECK(uplink_clock_hold_step(&h, false, true, 1, 32, 5000 + 120000u, &ev) == UPLINK_CLOCK_SEND_NO_TS &&
+              ev == UPLINK_CLOCK_EV_RELEASED_CAP);
+        /* clock set while holding logs the end */
+        uplink_clock_hold_t h2 = {0};
+        CHECK(uplink_clock_hold_step(&h2, false, true, 1, 32, 10, &ev) == UPLINK_CLOCK_HOLD);
+        CHECK(uplink_clock_hold_step(&h2, true, true, 1, 32, 20, &ev) == UPLINK_CLOCK_SEND_TS &&
+              ev == UPLINK_CLOCK_EV_ENDED_CLOCK);
+        /* nothing pending ends the hold; the next event starts a fresh timer */
+        uplink_clock_hold_t h3 = {0};
+        CHECK(uplink_clock_hold_step(&h3, false, true, 1, 32, 100, &ev) == UPLINK_CLOCK_HOLD);
+        CHECK(uplink_clock_hold_step(&h3, false, true, 0, 32, 200, &ev) == UPLINK_CLOCK_IDLE &&
+              ev == UPLINK_CLOCK_EV_ENDED_EMPTY && !h3.active);
+        CHECK(uplink_clock_hold_step(&h3, false, true, 1, 32, 119000, &ev) == UPLINK_CLOCK_HOLD &&
+              ev == UPLINK_CLOCK_EV_HOLD_STARTED);
+        CHECK(uplink_clock_hold_step(&h3, false, true, 1, 32, 119000 + 119999u, &ev) == UPLINK_CLOCK_HOLD);
+        /* the 24-pending ring margin releases at once, and latches */
+        uplink_clock_hold_t h4 = {0};
+        CHECK(uplink_clock_hold_step(&h4, false, true, 23, 32, 0, &ev) == UPLINK_CLOCK_HOLD);
+        CHECK(uplink_clock_hold_step(&h4, false, true, 24, 32, 1000, &ev) == UPLINK_CLOCK_SEND_NO_TS &&
+              ev == UPLINK_CLOCK_EV_RELEASED_MARGIN);
+        CHECK(uplink_clock_hold_step(&h4, false, true, 1, 32, 2000, &ev) == UPLINK_CLOCK_SEND_NO_TS);
+        /* wrap-safe: the hold starts just before the uptime wraps */
+        uplink_clock_hold_t h5 = {0};
+        CHECK(uplink_clock_hold_step(&h5, false, true, 1, 32, 0xFFFFFFF0u, &ev) == UPLINK_CLOCK_HOLD);
+        CHECK(uplink_clock_hold_step(&h5, false, true, 1, 32, 0xFFFFFFF0u + 119999u, &ev) == UPLINK_CLOCK_HOLD);
+        CHECK(uplink_clock_hold_step(&h5, false, true, 1, 32, 0xFFFFFFF0u + 120000u, &ev) == UPLINK_CLOCK_SEND_NO_TS);
+    }
 }

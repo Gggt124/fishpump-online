@@ -121,8 +121,13 @@ def test_task3():
     assert_test("UPLINK_CLOCK_HOLD_MAX_MS" in fmt, "the clock hold has a time cap")
     assert_test("UPLINK_CLOCK_HOLD_MARGIN" in fmt and "uplink_forward_hold_for_clock" in fmt,
                 "uplink_forward_hold_for_clock is declared")
-    assert_test("uplink_forward_hold_for_clock(" in function_body(up, "do_events"),
-                "do_events calls uplink_forward_hold_for_clock")
+    assert_test("uplink_clock_hold_step(" in function_body(up, "do_events"),
+                "do_events calls uplink_clock_hold_step")
+    fmtc = read(COMP_DIR / "uplink_format" / "uplink_format.c")
+    assert_test("uplink_forward_hold_for_clock(" in function_body(fmtc, "uplink_clock_hold_step", r"uplink_clock_decision_t\s+"),
+                "the hold step uses uplink_forward_hold_for_clock")
+    assert_test("released = false" not in up and "active = false" not in up,
+                "uplink.c does not touch the hold latch (it survives sink drops)")
     assert_test("waiting_for_clock" in function_body(up, "uplink_preview_json", r"char\s*\*\s*"),
                 "the status JSON contains waiting_for_clock")
     init = function_body(up, "uplink_init", r"esp_err_t\s+")
