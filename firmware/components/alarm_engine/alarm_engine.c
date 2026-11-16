@@ -236,7 +236,7 @@ esp_err_t alarm_engine_upsert_rule(const alarm_rule_t *rule, bool has_id, alarm_
             err = ESP_ERR_NOT_FOUND;
         }
     } else if (next->count >= ALARM_MAX_RULES || next->next_id == 0) {
-        err = ESP_ERR_NO_MEM;
+        err = ESP_ERR_INVALID_SIZE;
     } else {
         r.id = next->next_id++;
         idx = next->count++;

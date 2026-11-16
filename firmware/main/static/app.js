@@ -5497,6 +5497,7 @@ function alarmSubmitDialog() {
         var code = data && data.error;
         var msg = data && data.message;
         if (code === 'rules_full') alarmShowError('', 'มีกฎครบ ' + alarmRulesMax + ' ข้อแล้ว ลบกฎเก่าก่อน');
+        else if (code === 'out_of_memory') alarmShowError('', 'หน่วยความจำไม่พอ ลองใหม่อีกครั้ง');
         else if (code === 'not_found') alarmShowError('', 'ไม่พบกฎนี้ (อาจถูกลบไปแล้ว)');
         else if (code === 'storage_failed') alarmShowError('', 'บันทึกลงหน่วยความจำไม่สำเร็จ');
         else if (ALARM_FIELD_INPUT[msg]) alarmShowError(msg);

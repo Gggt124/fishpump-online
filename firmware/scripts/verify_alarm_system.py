@@ -206,11 +206,27 @@ def test_uplink():
     assert_test("MALLOC_CAP_SPIRAM" in uc, "uplink.c keeps its buffers in PSRAM")
 
 
+def test_review_fixes():
+    print("\n--- Review fixes: findings 5, 6, 8 ---")
+    eng = read(COMP_DIR / "alarm_engine" / "alarm_engine.c")
+    assert_test(re.search(r"ALARM_MAX_RULES\s*\|\|\s*next->next_id\s*==\s*0\)\s*\{\s*err\s*=\s*ESP_ERR_INVALID_SIZE", eng) is not None,
+                "upsert: rules full returns ESP_ERR_INVALID_SIZE")
+    ws = read(MAIN_DIR / "web_server.c")
+    post = function_body(ws, "handle_api_alarms_rules_post")
+    assert_test(re.search(r'case ESP_ERR_INVALID_SIZE:\s*return send_api_error\(req, "rules_full"', post) is not None,
+                "rules POST maps INVALID_SIZE to rules_full")
+    assert_test(re.search(r'case ESP_ERR_NO_MEM:\s*return send_api_error\(req, "out_of_memory"[^;]*"503 Service Unavailable"\)', post) is not None,
+                "rules POST maps NO_MEM to 503 out_of_memory")
+    js = read(MAIN_DIR / "static" / "app.js")
+    assert_test("code === 'out_of_memory'" in js, "app.js shows a message for out_of_memory")
+
+
 def main():
     test_flow_and_rename()
     test_alarm_api()
     test_alarm_ui()
     test_uplink()
+    test_review_fixes()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

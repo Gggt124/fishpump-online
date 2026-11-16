@@ -44,7 +44,8 @@ esp_err_t alarm_engine_init(void);
 bool alarm_engine_get_summary(alarm_engine_summary_t *out); /* false before init */
 bool alarm_engine_get_rules(alarm_rule_set_t *out, nvs_store_alarm_rules_load_status_t *storage);
 /* ESP_OK | ESP_ERR_INVALID_ARG (validation; *bad_field set) | ESP_ERR_NOT_FOUND (has_id, unknown id)
- * | ESP_ERR_NO_MEM (24 rules already) | ESP_FAIL (NVS write failed; RAM state rolled back) */
+ * | ESP_ERR_INVALID_SIZE (rule set full: ALARM_MAX_RULES rules, or ids exhausted)
+ * | ESP_ERR_NO_MEM (allocation failed) | ESP_ERR_INVALID_STATE (engine not initialised) | ESP_FAIL (NVS write failed; RAM state rolled back) */
 esp_err_t alarm_engine_upsert_rule(const alarm_rule_t *rule, bool has_id, alarm_rule_t *stored,
                                    const char **bad_field);
 esp_err_t alarm_engine_delete_rule(uint16_t id);         /* ESP_OK | ESP_ERR_NOT_FOUND | ESP_FAIL */

@@ -5599,8 +5599,11 @@ static esp_err_t handle_api_alarms_rules_post(httpd_req_t *req) {
     return send_api_error(req, "value_out_of_range", field, "400 Bad Request");
   case ESP_ERR_NOT_FOUND:
     return send_api_error(req, "not_found", "id", "404 Not Found");
-  case ESP_ERR_NO_MEM:
+  case ESP_ERR_INVALID_SIZE:
     return send_api_error(req, "rules_full", "rules", "409 Conflict");
+  case ESP_ERR_NO_MEM:
+    return send_api_error(req, "out_of_memory", "Not enough memory, try again",
+                          "503 Service Unavailable");
   case ESP_ERR_INVALID_STATE:
     return send_api_error(req, "unavailable", "Alarm engine not running",
                           "503 Service Unavailable");
