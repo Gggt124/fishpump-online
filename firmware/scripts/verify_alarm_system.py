@@ -231,6 +231,12 @@ def test_review_fixes():
     assert_test(not re.search(r"alarm_engine_ack\(id\)\s*!=\s*ESP_OK\)\s*\{\s*return send_api_error\(req, \"not_found\"", ack),
                 "ack no longer reports every failure as not_found")
 
+    pm = read(COMP_DIR / "power_monitor" / "power_monitor.c")
+    assert_test(bool(pm) and re.search(r'"pump %u', pm) is None, "power_monitor logs do not number pumps")
+    assert_test(re.search(r'"ปั๊ม %u', pm) is None, "power_monitor notices do not number pumps")
+    assert_test("pump 1" not in pm, "power_monitor has no 'pump 1' text")
+    assert_test('"chiller"' in pm and '"Chiller"' in pm, "power_monitor names the chiller channel")
+
 
 def main():
     test_flow_and_rename()

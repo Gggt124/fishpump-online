@@ -5,10 +5,10 @@
 
 #include "sdkconfig.h"
 
-/* PZEM pump 1 owns UART0 (GPIO4/42). A console left on UART0 by a stale
+/* The water-pump PZEM owns UART0 (GPIO4/42). A console left on UART0 by a stale
  * sdkconfig would be silently rerouted into the meter, so refuse to build. */
 #if CONFIG_ESP_CONSOLE_UART && (CONFIG_ESP_CONSOLE_UART_NUM == 0)
-#error "Console is on UART0, which PZEM pump 1 uses: delete firmware/sdkconfig and rebuild (console must be USB-Serial-JTAG)"
+#error "Console is on UART0, which the water-pump PZEM uses: delete firmware/sdkconfig and rebuild (console must be USB-Serial-JTAG)"
 #endif
 
 #include "esp_log.h"
@@ -35,6 +35,12 @@ _Static_assert(POWER_MONITOR_CHANNELS == TELEMETRY_POWER_CHANNELS,
 
 static const uint8_t s_bus_index[POWER_MONITOR_CHANNELS] = {
     HARDWARE_BUS_PZEM_PUMP, HARDWARE_BUS_PZEM_CHILLER};
+
+/* Channel 0 is the water pump, channel 1 the chiller. */
+static const char *const s_log_name[POWER_MONITOR_CHANNELS] = {"water pump",
+                                                               "chiller"};
+static const char *const s_ui_name[POWER_MONITOR_CHANNELS] = {"ปั๊มน้ำ",
+                                                              "Chiller"};
 
 static pzem004t_handle_t s_handles[POWER_MONITOR_CHANNELS];
 static sensor_health_t s_health[POWER_MONITOR_CHANNELS];
@@ -76,7 +82,8 @@ static void poll_channel(uint8_t ch) {
     esp_err_t err = pzem004t_read(s_handles[ch], &r);
     ok = (err == ESP_OK);
     if (!ok) {
-      ESP_LOGD(TAG, "pump %u read failed: %s", ch + 1, esp_err_to_name(err));
+      ESP_LOGD(TAG, "%s read failed: %s", s_log_name[ch],
+               esp_err_to_name(err));
     }
     sensor_health_record(&s_health[ch], ok);
   }
@@ -98,7 +105,7 @@ static void poll_channel(uint8_t ch) {
   xSemaphoreGive(s_lock);
 
   if (s_health[ch].fault != was_fault) {
-    ESP_LOGW(TAG, "pump %u PZEM %s", ch + 1,
+    ESP_LOGW(TAG, "%s PZEM %s", s_log_name[ch],
              s_health[ch].fault ? "FAULT (no reply)" : "recovered");
   }
   publish_channel(ch);
@@ -114,19 +121,19 @@ static void set_notice(const char *text, bool ok) {
 static void handle_reset(uint8_t ch) {
   char text[128];
   if (s_handles[ch] == NULL || s_health[ch].fault) {
-    snprintf(text, sizeof(text), "ปั๊ม %u: เซนเซอร์ไม่ตอบ รีเซ็ต kWh ไม่ได้",
-             ch + 1);
+    snprintf(text, sizeof(text), "%s: เซนเซอร์ไม่ตอบ รีเซ็ต kWh ไม่ได้",
+             s_ui_name[ch]);
     set_notice(text, false);
     return;
   }
   esp_err_t err = pzem004t_reset_energy(s_handles[ch]);
   if (err == ESP_OK) {
-    snprintf(text, sizeof(text), "ปั๊ม %u: รีเซ็ต kWh แล้ว", ch + 1);
+    snprintf(text, sizeof(text), "%s: รีเซ็ต kWh แล้ว", s_ui_name[ch]);
     set_notice(text, true);
   } else {
-    ESP_LOGW(TAG, "pump %u energy reset failed: %s", ch + 1,
+    ESP_LOGW(TAG, "%s energy reset failed: %s", s_log_name[ch],
              esp_err_to_name(err));
-    snprintf(text, sizeof(text), "ปั๊ม %u: รีเซ็ต kWh ล้มเหลว", ch + 1);
+    snprintf(text, sizeof(text), "%s: รีเซ็ต kWh ล้มเหลว", s_ui_name[ch]);
     set_notice(text, false);
   }
 }
@@ -179,7 +186,7 @@ esp_err_t power_monitor_init(void) {
     sensor_health_init(&s_health[ch]);
     esp_err_t err = pzem004t_new(&cfg, &s_handles[ch]);
     if (err != ESP_OK) {
-      ESP_LOGE(TAG, "pump %u: PZEM init on UART%u failed: %s", ch + 1,
+      ESP_LOGE(TAG, "%s: PZEM init on UART%u failed: %s", s_log_name[ch],
                b->uart_port, esp_err_to_name(err));
       s_handles[ch] = NULL;
       sensor_health_mark_init_failed(&s_health[ch]);
