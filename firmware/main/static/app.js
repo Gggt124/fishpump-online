@@ -8,10 +8,13 @@
 var DEFAULT_PASSWORD = 'admin123';
 var dashboardInterval = null;
 var statusInterval = null;
+var tbLinkInterval = null;
 
 function cleanupCurrentView() {
     if (dashboardInterval) { clearInterval(dashboardInterval); dashboardInterval = null; }
     if (statusInterval) { clearInterval(statusInterval); statusInterval = null; }
+    if (tbLinkInterval) { clearInterval(tbLinkInterval); tbLinkInterval = null; }
+    if (typeof tbLinkVisibilityChange === 'function') document.removeEventListener('visibilitychange', tbLinkVisibilityChange);
     if (typeof dryRunStopPolling === 'function') dryRunStopPolling();
     if (typeof pumpPollTimer !== 'undefined' && pumpPollTimer) { clearInterval(pumpPollTimer); pumpPollTimer = null; }
     if (typeof pumpTickTimer !== 'undefined' && pumpTickTimer) { clearInterval(pumpTickTimer); pumpTickTimer = null; }
@@ -4086,9 +4089,154 @@ function initUplinkPreview() {
     btn.addEventListener('click', loadUplinkPreview);
 }
 
+/* ======== ThingsBoard link card (Status page) ======== */
+
+var tbLinkWired = false;
+var tbLinkInFlight = false;
+var tbLinkPollMs = 5000;
+var TB_STATE_TEXT = {
+    off: 'ปิดอยู่ (ยังไม่ได้ตั้งเซิร์ฟเวอร์)',
+    wait_wifi: 'รอ Wi-Fi',
+    provisioning: 'กำลังลงทะเบียนอุปกรณ์',
+    connecting: 'กำลังเชื่อมต่อ'
+};
+
+function tbLinkStatusText(st) {
+    if (st.state === 'connected') return 'เชื่อมต่อแล้ว · ' + st.connected_sec + ' วิ';
+    if (st.state === 'backoff') return 'เชื่อมต่อไม่ได้ · ลองใหม่ใน ' + st.retry_in_sec + ' วิ';
+    return TB_STATE_TEXT[st.state] || String(st.state);
+}
+
+/* Only textContent / .value below: host and last_error come from the network. */
+function tbLinkRender(data, fillForm) {
+    var st = data.status || {};
+    var cfg = data.config || {};
+    setText('tb-link-status', tbLinkStatusText(st));
+    setText('tb-link-error', st.last_error || '');
+    setText('tb-link-counts', 'ส่งแล้ว ' + (st.sent || 0) + ' · ล้มเหลว ' + (st.failed || 0));
+    var secretHint = 'ตั้งไว้แล้ว — เว้นว่างเพื่อคงค่าเดิม';
+    var sec = document.getElementById('tb-prov-secret');
+    var tok = document.getElementById('tb-token');
+    if (sec) sec.placeholder = cfg.has_provision_secret ? secretHint : '';
+    if (tok) tok.placeholder = cfg.has_token ? secretHint : '';
+    if (!fillForm) return;
+    var host = document.getElementById('tb-host');
+    var port = document.getElementById('tb-port');
+    var tls = document.getElementById('tb-tls');
+    var name = document.getElementById('tb-device-name');
+    var key = document.getElementById('tb-prov-key');
+    if (host) host.value = cfg.host || '';
+    if (port) port.value = cfg.port || '';
+    if (tls) tls.checked = !!cfg.tls;
+    if (name) name.value = cfg.device_name || '';
+    if (key) key.value = cfg.provision_key || '';
+}
+
+function tbLinkRefresh(fillForm) {
+    if (tbLinkInFlight) return;
+    tbLinkInFlight = true;
+    apiGet('/api/tb', function (err, data) {
+        tbLinkInFlight = false;
+        if (err || !data || data.ok !== true) {
+            setText('tb-link-status', 'โหลดสถานะไม่สำเร็จ' + (err ? ': ' + err.message : ''));
+            return;
+        }
+        tbLinkRender(data, fillForm);
+    });
+}
+
+function tbLinkPollTick() {
+    if (document.hidden) return;
+    tbLinkRefresh(false);
+}
+
+function tbLinkVisibilityChange() {
+    if (document.hidden) return;
+    if (!document.getElementById('tb-link-card')) return;
+    tbLinkRefresh(false);
+}
+
+function tbLinkSave(ev) {
+    if (ev) ev.preventDefault();
+    var body = {};
+    var errBox = document.getElementById('tb-link-form-error');
+    if (errBox) errBox.textContent = '';
+    body.host = document.getElementById('tb-host').value.trim();
+    var portRaw = document.getElementById('tb-port').value.trim();
+    var port = Number(portRaw);
+    if (portRaw === '' || !isFinite(port) || port < 1 || port > 65535 || Math.floor(port) !== port) {
+        if (errBox) errBox.textContent = 'พอร์ตต้องเป็นเลข 1–65535';
+        return;
+    }
+    body.port = port;
+    body.tls = document.getElementById('tb-tls').checked;
+    body.device_name = document.getElementById('tb-device-name').value.trim();
+    body.provision_key = document.getElementById('tb-prov-key').value.trim();
+    var secret = document.getElementById('tb-prov-secret').value;
+    var token = document.getElementById('tb-token').value;
+    if (secret !== '') body.provision_secret = secret;
+    if (document.getElementById('tb-clear-token').checked) body.token = '';
+    else if (token !== '') body.token = token;
+    var btn = document.getElementById('tb-save');
+    if (btn) setLoading(btn, true);
+    apiPost('/api/tb', body, function (err, data) {
+        if (btn) setLoading(btn, false);
+        if (err || !data || data.ok !== true) {
+            var msg = err ? err.message : (data && data.error === 'invalid_field' ? 'ค่าไม่ถูกต้อง: ' + data.message
+                : (data && (data.message || data.error)) || 'บันทึกไม่สำเร็จ');
+            if (errBox) errBox.textContent = 'บันทึกไม่สำเร็จ: ' + msg;
+            return;
+        }
+        document.getElementById('tb-prov-secret').value = '';
+        document.getElementById('tb-token').value = '';
+        document.getElementById('tb-clear-token').checked = false;
+        tbLinkRender(data, true);
+        showToast('บันทึกการเชื่อมต่อ ThingsBoard แล้ว', 'success');
+    });
+}
+
+function tbLinkReprovision() {
+    if (!window.confirm('ThingsBoard ลงทะเบียนชื่ออุปกรณ์ได้ครั้งเดียว ถ้าอุปกรณ์ชื่อนี้มีอยู่แล้วใน ThingsBoard ต้องลบออกก่อน ไม่อย่างนั้นการลงทะเบียนจะล้มเหลว ดำเนินการต่อ?')) return;
+    var errBox = document.getElementById('tb-link-form-error');
+    if (errBox) errBox.textContent = '';
+    var btn = document.getElementById('tb-reprovision');
+    if (btn) setLoading(btn, true);
+    apiPost('/api/tb/reprovision', {}, function (err, data) {
+        if (btn) setLoading(btn, false);
+        if (err || !data || data.ok !== true) {
+            var msg = err ? err.message : (data && data.error === 'no_provision_credentials'
+                ? 'ต้องตั้ง Provision key และ secret ก่อน' : (data && (data.message || data.error)) || 'ไม่สำเร็จ');
+            if (errBox) errBox.textContent = 'ลงทะเบียนใหม่ไม่สำเร็จ: ' + msg;
+            return;
+        }
+        showToast('เริ่มลงทะเบียนอุปกรณ์ใหม่แล้ว', 'success');
+        tbLinkRefresh(false);
+    });
+}
+
+function initTbLink() {
+    if (tbLinkWired) return;
+    var form = document.getElementById('tb-link-form');
+    var rp = document.getElementById('tb-reprovision');
+    if (!form || !rp) return;
+    tbLinkWired = true;
+    form.addEventListener('submit', tbLinkSave);
+    rp.addEventListener('click', tbLinkReprovision);
+}
+
+/* Status view only (initStatus); cleanupCurrentView stops it. Hidden tab = no requests. */
+function startTbLinkPolling() {
+    initTbLink();
+    if (tbLinkInterval) clearInterval(tbLinkInterval);
+    tbLinkRefresh(true);
+    tbLinkInterval = setInterval(tbLinkPollTick, tbLinkPollMs);
+    document.addEventListener('visibilitychange', tbLinkVisibilityChange);
+}
+
 function initStatus() {
     if (window.location.pathname !== '/status') return;
     initUplinkPreview();
+    startTbLinkPolling();
     refreshFullStatus();
     statusInterval = setInterval(refreshFullStatus, 30000);
 }

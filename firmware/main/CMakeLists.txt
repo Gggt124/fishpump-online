@@ -67,6 +67,7 @@ idf_component_register(
         uplink
         time_sync
         tb_link
+        tb_link_logic
         water_quality
         wifi_manager
         esp_http_server

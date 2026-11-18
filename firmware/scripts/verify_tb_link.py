@@ -170,10 +170,60 @@ def test_tb_link_component():
     assert_test("tb_hwm=%ld" in app and "tb_link_stack_hwm()" in app, "BOARD_DIAG has tb_hwm= fed by tb_link_stack_hwm()")
 
 
+def test_web_card_and_api():
+    print("\n--- Task 6: ThingsBoard card and /api/tb endpoints ---")
+    ws = read(MAIN_DIR / "web_server.c")
+    html = read(MAIN_DIR / "static" / "index.html")
+    js = read(MAIN_DIR / "static" / "app.js")
+
+    def route(uri, method):
+        return re.search(r'\{\s*\.uri\s*=\s*"' + re.escape(uri) + r'"\s*,\s*\.method\s*=\s*' + method
+                         + r'\s*,\s*\.handler\s*=\s*(\w+)\s*\}', ws)
+
+    g, p, r = route("/api/tb", "HTTP_GET"), route("/api/tb", "HTTP_POST"), route("/api/tb/reprovision", "HTTP_POST")
+    assert_test(bool(g) and bool(p) and bool(r), "routes GET /api/tb, POST /api/tb, POST /api/tb/reprovision registered")
+    gb = function_body(ws, g.group(1)) if g else ""
+    if gb:  # the GET handler delegates to these helpers; the secret-free rule covers them too
+        gb += function_body(ws, "tb_link_send_view") + function_body(ws, "tb_link_build_view", rettype=r"static\s+cJSON\s*\*\s*")
+    pb = function_body(ws, p.group(1)) if p else ""
+    rb = function_body(ws, r.group(1)) if r else ""
+    assert_test("api_begin_json_post(" in pb and "tb_link_config_from_json(" in pb and "tb_link_apply_config(" in pb
+                and "invalid_field" in pb and "save_failed" in pb,
+                "POST /api/tb uses api_begin_json_post, from_json, apply_config, invalid_field and save_failed")
+    assert_test("require_auth(" in gb and "tb_link_config_to_json(" in gb and "tb_link_get_status(" in gb,
+                "GET /api/tb requires auth and builds from config_to_json and get_status")
+    assert_test(bool(gb) and not re.search(r"\.token\b|->token\b|provision_secret", gb),
+                "GET /api/tb handler never references the token or provision secret")
+    assert_test("tb_link_reprovision(" in rb and "no_provision_credentials" in rb and "409" in rb
+                and "api_begin_json_post(" in rb,
+                "POST /api/tb/reprovision checks origin/auth, 409 no_provision_credentials, calls tb_link_reprovision")
+    leaks = [m for m in re.findall(r"ESP_LOG[EWIDV]\s*\([^;]*;", pb + gb + rb)
+             if re.search(r"token|secret", m)]
+    assert_test(bool(pb) and not leaks, "no log call in the /api/tb handlers mentions the token or secret", str(leaks))
+    mcm = read(MAIN_DIR / "CMakeLists.txt")
+    assert_test(re.search(r"^\s*tb_link_logic\s*$", mcm, re.M) is not None, "main/CMakeLists.txt REQUIRES tb_link_logic")
+    a, b = html.find('id="tb-link-card"'), html.find('id="uplink-preview-card"')
+    assert_test(a != -1 and b != -1 and a < b, "index.html has tb-link-card before uplink-preview-card")
+    assert_test("ThingsBoard ลงทะเบียนชื่ออุปกรณ์ได้ครั้งเดียว ถ้าอุปกรณ์ชื่อนี้มีอยู่แล้วใน ThingsBoard "
+                "ต้องลบออกก่อน ไม่อย่างนั้นการลงทะเบียนจะล้มเหลว ดำเนินการต่อ?" in js,
+                "app.js has the exact reprovision confirm text")
+    poll = function_body(js, "tbLinkPollTick", rettype=r"")
+    assert_test("document.hidden" in poll and "tbLinkRefresh" in poll, "tb poll function checks document.hidden")
+    cleanup = function_body(js, "cleanupCurrentView", rettype=r"")
+    assert_test("tbLinkInterval" in cleanup, "cleanupCurrentView stops the tb poll timer")
+    tbjs = "\n".join(function_body(js, n, rettype=r"") for n in
+                      ("tbLinkRender", "tbLinkSave", "tbLinkReprovision", "tbLinkRefresh"))
+    assert_test("/api/tb/reprovision" in tbjs and "/api/tb'" in tbjs and "innerHTML" not in tbjs,
+                "tb card JS calls /api/tb and /api/tb/reprovision and never uses innerHTML")
+    assert_test("window.confirm(" in function_body(js, "tbLinkReprovision", rettype=r""),
+                "reprovision asks window.confirm before posting")
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
     test_tb_link_component()
+    test_web_card_and_api()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

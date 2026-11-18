@@ -33,6 +33,7 @@
 #include "dry_run_guard.h"
 #include "alarm_rules.h"
 #include "signal_registry.h"
+#include "tb_link.h"
 #include "uplink.h"
 #include "wifi_manager.h"
 #include <errno.h>
@@ -5855,6 +5856,114 @@ static esp_err_t handle_api_uplink_preview(httpd_req_t *req) {
   return result;
 }
 
+/* GET /api/tb - link config (never the token or provision secret) and live status */
+static cJSON *tb_link_build_view(bool with_ok) {
+  tb_link_config_t cfg;
+  tb_link_status_t st;
+  tb_link_get_config(&cfg);
+  tb_link_get_status(&st);
+  cJSON *root = cJSON_CreateObject();
+  cJSON *config = tb_link_config_to_json(&cfg);
+  cJSON *status = cJSON_CreateObject();
+  memset(&cfg, 0, sizeof(cfg)); /* do not leave the token on the stack */
+  if (!root || !config || !status) {
+    cJSON_Delete(root);
+    cJSON_Delete(config);
+    cJSON_Delete(status);
+    return NULL;
+  }
+  if (with_ok) {
+    cJSON_AddBoolToObject(root, "ok", true);
+  }
+  cJSON_AddItemToObject(root, "config", config);
+  cJSON_AddStringToObject(status, "state", tb_link_state_name(st.state));
+  cJSON_AddStringToObject(status, "last_error", st.last_error);
+  cJSON_AddNumberToObject(status, "connected_sec", st.connected_sec);
+  cJSON_AddNumberToObject(status, "sent", st.sent);
+  cJSON_AddNumberToObject(status, "failed", st.failed);
+  cJSON_AddNumberToObject(status, "retry_in_sec", st.retry_in_sec);
+  cJSON_AddItemToObject(root, "status", status);
+  return root;
+}
+
+static esp_err_t tb_link_send_view(httpd_req_t *req) {
+  cJSON *root = tb_link_build_view(true);
+  char *json = root ? cJSON_PrintUnformatted(root) : NULL;
+  cJSON_Delete(root);
+  if (!json) {
+    return send_api_error(req, "memory", "JSON allocation failed",
+                          "500 Internal Server Error");
+  }
+  esp_err_t result = send_json(req, json, "200 OK");
+  free(json);
+  return result;
+}
+
+static esp_err_t handle_api_tb_get(httpd_req_t *req) {
+  if (!require_auth(req)) {
+    return send_json(req, "{\"ok\":false,\"error\":\"unauthorized\"}",
+                     "401 Unauthorized");
+  }
+  return tb_link_send_view(req);
+}
+
+/* POST /api/tb {host,port,tls,device_name,provision_key,provision_secret,token}: absent key = keep */
+static esp_err_t handle_api_tb_post(httpd_req_t *req) {
+  esp_err_t sent = ESP_OK;
+  char body[512];
+  cJSON *root = api_begin_json_post(req, body, sizeof(body), &sent);
+  if (!root) {
+    memset(body, 0, sizeof(body));
+    return sent;
+  }
+  tb_link_config_t current, next;
+  tb_link_get_config(&current);
+  const char *bad_field = NULL;
+  bool ok = tb_link_config_from_json(root, &current, &next, &bad_field);
+  cJSON_Delete(root);
+  memset(body, 0, sizeof(body));
+  memset(&current, 0, sizeof(current));
+  if (!ok) {
+    memset(&next, 0, sizeof(next));
+    return send_api_error(req, "invalid_field", bad_field ? bad_field : "body",
+                          "400 Bad Request");
+  }
+  esp_err_t err = tb_link_apply_config(&next);
+  memset(&next, 0, sizeof(next));
+  if (err == ESP_ERR_INVALID_ARG) {
+    return send_api_error(req, "invalid_field", "body", "400 Bad Request");
+  }
+  if (err != ESP_OK) {
+    return send_api_error(req, "save_failed", "Could not save the configuration",
+                          "500 Internal Server Error");
+  }
+  return tb_link_send_view(req);
+}
+
+/* POST /api/tb/reprovision - forget the token and register the device again */
+static esp_err_t handle_api_tb_reprovision(httpd_req_t *req) {
+  esp_err_t sent = ESP_OK;
+  char body[64];
+  cJSON *root = api_begin_json_post(req, body, sizeof(body), &sent);
+  if (!root) {
+    return sent;
+  }
+  cJSON_Delete(root);
+  tb_link_config_t cfg;
+  tb_link_get_config(&cfg);
+  bool have = cfg.provision_key[0] != '\0' && cfg.provision_secret[0] != '\0';
+  memset(&cfg, 0, sizeof(cfg));
+  if (!have) {
+    return send_api_error(req, "no_provision_credentials",
+                          "Set the provision key and secret first", "409 Conflict");
+  }
+  if (tb_link_reprovision() != ESP_OK) {
+    return send_api_error(req, "save_failed", "Could not save the configuration",
+                          "500 Internal Server Error");
+  }
+  return send_json(req, "{\"ok\":true}", "200 OK");
+}
+
 /* GET /api/alarms/summary - small enough to poll every 10 s */
 static esp_err_t handle_api_alarms_summary(httpd_req_t *req) {
   if (!require_auth(req)) {
@@ -6479,6 +6588,15 @@ static web_route_diag_t s_routes[] = {
     {.uri = "/api/uplink/preview",
      .method = HTTP_GET,
      .handler = handle_api_uplink_preview},
+    {.uri = "/api/tb",
+     .method = HTTP_GET,
+     .handler = handle_api_tb_get},
+    {.uri = "/api/tb",
+     .method = HTTP_POST,
+     .handler = handle_api_tb_post},
+    {.uri = "/api/tb/reprovision",
+     .method = HTTP_POST,
+     .handler = handle_api_tb_reprovision},
     {.uri = "/api/power/reset-energy",
      .method = HTTP_POST,
      .handler = handle_api_power_reset_energy},

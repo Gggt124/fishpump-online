@@ -1636,6 +1636,53 @@
 
             </div>
 
+            <div class="section-card" id="tb-link-card">
+                <h2 class="text-base">การเชื่อมต่อ ThingsBoard</h2>
+                <p class="text-sm" id="tb-link-status" role="status">กำลังโหลด...</p>
+                <p class="text-sm text-muted" id="tb-link-error"></p>
+                <p class="text-sm text-muted" id="tb-link-counts"></p>
+                <form id="tb-link-form" novalidate class="settings-form" autocomplete="off">
+                    <div class="form-row">
+                        <label for="tb-host">เซิร์ฟเวอร์</label>
+                        <input id="tb-host" class="input-field" type="text" maxlength="63" autocomplete="off" placeholder="192.168.1.51 (เว้นว่าง = ปิด)">
+                    </div>
+                    <div class="form-row">
+                        <label for="tb-port">พอร์ต</label>
+                        <input id="tb-port" class="input-field" type="number" min="1" max="65535" step="1" inputmode="numeric">
+                    </div>
+                    <label class="toggle-row" for="tb-tls">
+                        <div class="toggle-switch">
+                            <input id="tb-tls" type="checkbox" role="switch">
+                            <span class="toggle-slider"></span>
+                        </div>
+                        <span>ใช้ TLS</span>
+                    </label>
+                    <div class="form-row">
+                        <label for="tb-device-name">ชื่ออุปกรณ์</label>
+                        <input id="tb-device-name" class="input-field" type="text" maxlength="47" autocomplete="off">
+                    </div>
+                    <div class="form-row">
+                        <label for="tb-prov-key" lang="en">Provision key</label>
+                        <input id="tb-prov-key" class="input-field" type="text" maxlength="32" autocomplete="off">
+                    </div>
+                    <div class="form-row">
+                        <label for="tb-prov-secret" lang="en">Provision secret</label>
+                        <input id="tb-prov-secret" class="input-field" type="password" maxlength="32" autocomplete="new-password">
+                    </div>
+                    <div class="form-row">
+                        <label for="tb-token" lang="en">Access token</label>
+                        <input id="tb-token" class="input-field" type="password" maxlength="64" autocomplete="new-password">
+                    </div>
+                    <label class="toggle-row" for="tb-clear-token">
+                        <input id="tb-clear-token" type="checkbox">
+                        <span>ล้าง token</span>
+                    </label>
+                    <div class="field-error" id="tb-link-form-error" role="alert"></div>
+                    <button class="btn btn-primary btn-sm" type="submit" id="tb-save">บันทึก</button>
+                    <button class="btn btn-outline btn-sm" type="button" id="tb-reprovision">ลงทะเบียนใหม่</button>
+                </form>
+            </div>
+
             <details class="section-card" id="uplink-preview-card">
                 <summary>ข้อมูลที่จะส่งขึ้น ThingsBoard (ตัวอย่าง)</summary>
                 <p class="text-sm text-muted" id="uplink-preview-summary">กดเปิดเพื่อโหลดตัวอย่าง</p>
