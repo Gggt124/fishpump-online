@@ -59,3 +59,6 @@ scratch/*
 firmware/test/sensor_selftest/build/
 firmware/test/sensor_selftest/sdkconfig
 firmware/test/sensor_selftest/sdkconfig.old
+
+# ThingsBoard local secrets (provision key/secret)
+thingsboard/.local/
