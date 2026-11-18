@@ -66,6 +66,7 @@ typedef struct {
     uint32_t gen;
     int err_type;    /* CMD_ERROR: esp_mqtt_error_type_t */
     int refuse_code; /* CMD_ERROR: esp_mqtt_connect_return_code_t */
+    uint32_t attempt; /* connection attempt of the client that produced it */
     size_t len;      /* CMD_PROV_REPLY: bytes in data; 0 = truncated or empty */
     char data[TB_REPLY_MAX];
 } tb_cmd_t;
@@ -85,8 +86,9 @@ static struct {
     int64_t retry_deadline_ms;   /* lock */
 
     esp_mqtt_client_handle_t client_pub; /* client_lock: token session client, NULL otherwise */
-    atomic_uint gen;
-    atomic_bool token_session;
+    atomic_uint gen;     /* client identity: bumped on every teardown and new client */
+    atomic_uint attempt; /* connection attempt of the current client: bumped on every (re)connect */
+    atomic_bool token_session; /* token client is allowed to raise `connected` (an attempt is running) */
     atomic_bool connected;
     atomic_bool restart_req;
     atomic_uint sent;
@@ -104,6 +106,8 @@ typedef struct {
     bool prov_mode;
     bool prov_connected;
     bool prov_req_sent;
+    uint32_t attempt;        /* mirror of s.attempt for the attempt the task waits on */
+    uint32_t reconnect_fails; /* consecutive esp_mqtt_client_reconnect refusals */
 } task_ctx_t;
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
@@ -160,7 +164,7 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     if (ev == NULL || gen != atomic_load(&s.gen)) {
         return; /* event of a session that was already torn down */
     }
-    tb_cmd_t c = {.gen = gen};
+    tb_cmd_t c = {.gen = gen, .attempt = atomic_load(&s.attempt)};
     switch (id) {
     case MQTT_EVENT_CONNECTED:
         if (atomic_load(&s.token_session)) {
@@ -239,15 +243,24 @@ static void task_teardown(task_ctx_t *tc)
     xSemaphoreGive(s.client_lock);
     esp_mqtt_client_handle_t c = tc->client;
     tc->client = NULL;
+    tc->reconnect_fails = 0;
     if (c != NULL) {
         esp_mqtt_client_destroy(c);
     }
     atomic_store(&s.connected, false); /* a handler that raced the gen bump is gone now */
 }
 
+/* A failed attempt. A token session keeps its client (and so its QoS 1 outbox: alarm events already accepted
+ * by sink_send are resent after the reconnect); only a provisioning session is destroyed. */
 static void task_fail(task_ctx_t *tc, const char *msg, bool at_cap)
 {
-    task_teardown(tc);
+    atomic_store(&s.token_session, false); /* no CONNECTED of this attempt may raise the flag any more */
+    atomic_store(&s.connected, false);
+    if (tc->prov_mode || tc->client == NULL) {
+        task_teardown(tc);
+    } else {
+        esp_mqtt_client_disconnect(tc->client); /* make sure an established connection is dropped */
+    }
     if (msg != NULL) {
         task_set_error(msg);
     }
@@ -255,6 +268,19 @@ static void task_fail(task_ctx_t *tc, const char *msg, bool at_cap)
     tc->deadline_ms = now_ms() + tc->backoff_ms;
     ESP_LOGI(TAG, "retry in %lu s", (unsigned long)(tc->backoff_ms / 1000));
     task_publish_state(tc, TB_STATE_BACKOFF);
+}
+
+/* Wi-Fi went away under a CONNECTING/CONNECTED token link: stop reporting connected at once and wait for Wi-Fi.
+ * The client (and its outbox) stays. */
+static void task_wifi_lost(task_ctx_t *tc)
+{
+    atomic_store(&s.token_session, false);
+    atomic_store(&s.connected, false);
+    if (tc->client != NULL) {
+        esp_mqtt_client_disconnect(tc->client);
+    }
+    tc->next_wifi_check_ms = now_ms() + TB_WIFI_RECHECK_MS;
+    task_publish_state(tc, TB_STATE_WAIT_WIFI);
 }
 
 static void task_start_session(task_ctx_t *tc)
@@ -288,6 +314,7 @@ static void task_start_session(task_ctx_t *tc)
     mc.outbox.limit = TB_OUTBOX_LIMIT;
 
     uint32_t gen = atomic_fetch_add(&s.gen, 1) + 1;
+    tc->attempt = atomic_fetch_add(&s.attempt, 1) + 1;
     atomic_store(&s.token_session, token_mode);
     esp_mqtt_client_handle_t c = esp_mqtt_client_init(&mc); /* copies the strings */
     if (c == NULL) {
@@ -311,6 +338,35 @@ static void task_start_session(task_ctx_t *tc)
         xSemaphoreGive(s.client_lock);
     }
     task_publish_state(tc, token_mode ? TB_STATE_CONNECTING : TB_STATE_PROVISIONING);
+}
+
+/* Wi-Fi is up: reconnect the kept token client, or create a client when there is none. */
+static void task_connect(task_ctx_t *tc)
+{
+    if (tc->client == NULL || tc->prov_mode) {
+        task_start_session(tc);
+        return;
+    }
+    tc->attempt = atomic_fetch_add(&s.attempt, 1) + 1;
+    atomic_store(&s.token_session, true);
+    if (esp_mqtt_client_reconnect(tc->client) == ESP_OK) {
+        tc->reconnect_fails = 0;
+        tc->deadline_ms = now_ms() + TB_CONNECT_TIMEOUT_MS;
+        task_publish_state(tc, TB_STATE_CONNECTING);
+        return;
+    }
+    /* Not waiting for a reconnect yet (the old connection is still being dropped): ask again shortly. After
+     * 30 refusals give the client up and build a new one (its outbox is lost, but the link cannot hang). */
+    atomic_store(&s.token_session, false);
+    esp_mqtt_client_disconnect(tc->client);
+    if (++tc->reconnect_fails >= 30) {
+        ESP_LOGW(TAG, "client does not reconnect, recreating it");
+        task_teardown(tc);
+        task_start_session(tc);
+        return;
+    }
+    tc->next_wifi_check_ms = now_ms() + 1000;
+    task_publish_state(tc, TB_STATE_WAIT_WIFI);
 }
 
 static void task_restart(task_ctx_t *tc)
@@ -380,8 +436,13 @@ static void task_handle_cmd(task_ctx_t *tc, const tb_cmd_t *c)
     if (c->type == CMD_RESTART) {
         return; /* wake-up only */
     }
-    if (tc->client == NULL || c->gen != atomic_load(&s.gen)) {
-        return; /* event of a destroyed session */
+    if (tc->client == NULL || c->gen != atomic_load(&s.gen) || c->attempt != tc->attempt) {
+        return; /* event of a destroyed client or of an earlier connection attempt */
+    }
+    bool attempt_running = tc->state == TB_STATE_CONNECTING || tc->state == TB_STATE_PROVISIONING ||
+                           tc->state == TB_STATE_CONNECTED;
+    if (!attempt_running) {
+        return; /* late event after the task already gave the attempt up */
     }
     switch (c->type) {
     case CMD_CONNECTED:
@@ -447,12 +508,16 @@ static void task_tick(task_ctx_t *tc)
         return;
     }
     int64_t now = now_ms();
+    if ((tc->state == TB_STATE_CONNECTING || tc->state == TB_STATE_CONNECTED) && !wifi_manager_is_sta_connected()) {
+        task_wifi_lost(tc); /* do not wait for the keepalive to notice a dead link */
+        return;
+    }
     switch (tc->state) {
     case TB_STATE_WAIT_WIFI:
         if (now >= tc->next_wifi_check_ms) {
             tc->next_wifi_check_ms = now + TB_WIFI_RECHECK_MS;
             if (wifi_manager_is_sta_connected()) {
-                task_start_session(tc);
+                task_connect(tc);
             }
         }
         break;
@@ -494,6 +559,9 @@ static void tb_link_task(void *arg)
         tb_cmd_t c;
         if (xQueueReceive(s.q, &c, pdMS_TO_TICKS(TB_TICK_MS)) == pdTRUE) {
             task_handle_cmd(&tc, &c);
+            while (xQueueReceive(s.q, &c, 0) == pdTRUE) {
+                task_handle_cmd(&tc, &c); /* drain before the tick decides on timeouts */
+            }
         }
         task_tick(&tc);
     }

@@ -116,6 +116,22 @@ def test_tb_link_component():
         calls_task_side = len(re.findall(r"\b" + h + r"\s*\(", task_side)) - 1
         assert_test(calls >= 1 and calls == calls_task_side, f"{h}() is called only from the task side",
                     f"calls={calls} task_side={calls_task_side}")
+    tick = function_body(src, "task_tick", rettype=r"static\s+void\s+")
+    wifi_fast = re.search(r"CONNECT(ED|ING)[^;{]*(\|\||&&)?[^;{]*!\s*wifi_manager_is_sta_connected\(\)|"
+                          r"!\s*wifi_manager_is_sta_connected\(\)[^;{]*CONNECT(ED|ING)", tick) is not None
+    assert_test(wifi_fast, "task_tick drops a CONNECTING/CONNECTED link at once when Wi-Fi is lost",
+                "no !wifi_manager_is_sta_connected() guard tied to the CONNECTING/CONNECTED states")
+    assert_test(re.search(r"\besp_mqtt_client_reconnect\s*\(", src) is not None,
+                "token client is kept and reconnected with esp_mqtt_client_reconnect")
+    defaults_txt = read(FIRMWARE_DIR / "sdkconfig.defaults")
+    m = re.search(r"^CONFIG_MQTT_OUTBOX_EXPIRED_TIMEOUT_MS=(\d+)\s*$", defaults_txt, re.M)
+    assert_test(m is not None and int(m.group(1)) >= 300000
+                and re.search(r"^CONFIG_MQTT_USE_CUSTOM_CONFIG=y\s*$", defaults_txt, re.M) is not None,
+                "sdkconfig.defaults sets the esp-mqtt outbox expiry >= 300000 ms (custom config enabled)")
+    fail_body = function_body(src, "task_fail", rettype=r"static\s+void\s+")
+    assert_test(re.search(r"if\s*\([^)]*prov_mode[^)]*\)\s*\{\s*task_teardown\(", fail_body) is not None
+                and len(re.findall(r"task_teardown\(", fail_body)) == 1,
+                "task_fail tears the client down only for provisioning sessions (token client is kept)")
     assert_test(bool(handler) and not any(x in handler for x in ("uplink_", "esp_mqtt_client_destroy", "nvs_store_",
                                                                 "esp_mqtt_client_stop", "esp_mqtt_client_start",
                                                                 "esp_mqtt_client_init")),
