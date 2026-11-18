@@ -12,6 +12,7 @@ set(EXTRA_COMPONENT_DIRS
     ../../components/alarm_rules
     ../../components/dry_run_logic
     ../../components/uplink_format
+    ../../components/tb_link_logic
     ../../managed_components/espressif__cjson
 )
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

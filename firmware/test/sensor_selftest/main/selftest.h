@@ -28,3 +28,4 @@ void test_alarm_store(void);
 void test_uplink_format(void);
 void test_dry_run_config(void);
 void test_dry_run_machine(void);
+void test_tb_link(void);
