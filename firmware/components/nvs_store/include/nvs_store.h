@@ -4,6 +4,7 @@
 #include "app_config.h"
 #include "cooling_rule_engine.h"
 #include "dry_run_logic.h"
+#include "tb_link_logic.h"
 #include "hardware_map.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -257,6 +258,14 @@ bool nvs_store_save_alarm_rules(const alarm_rule_set_t *set);
 bool nvs_store_load_dry_run(dry_run_config_t *cfg, bool *locked);
 bool nvs_store_save_dry_run_config(const dry_run_config_t *cfg);
 bool nvs_store_save_dry_run_locked(bool locked);
+
+/**
+ * ThingsBoard link config. Namespace "tb_cfg", key "cfg": blob {uint8_t version=1; tb_link_config_t}.
+ * load: defaults (using sta_mac) when missing, wrong version/length or invalid; returns true only
+ * if a stored blob was used. save: refuses an invalid config. Holds a token/secret: never log it.
+ */
+bool nvs_store_load_tb_link(tb_link_config_t *cfg, const uint8_t sta_mac[6]);
+bool nvs_store_save_tb_link(const tb_link_config_t *cfg);
 
 bool nvs_store_get_staging_type(uint8_t *type);
 bool nvs_store_stage_wifi(const char *ssid, const char *pass);

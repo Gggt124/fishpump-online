@@ -39,6 +39,9 @@ static const char *TAG = "nvs_store";
 #define NVS_DRYRUN_KEY_LOCKED "locked"
 #define NVS_DRYRUN_BLOB_VERSION 1
 #define NVS_DRYRUN_BLOB_LEN 10
+#define NVS_TB_NAMESPACE "tb_cfg"
+#define NVS_TB_KEY_CFG "cfg"
+#define NVS_TB_BLOB_VERSION 1
 
 #define NVS_PUMP_NAMESPACE "pump_cfg"
 #define NVS_PUMP_KEY_T1_ON "t1_on"
@@ -2042,9 +2045,77 @@ bool nvs_store_save_dry_run_locked(bool locked) {
   return ok;
 }
 
+typedef struct {
+  uint8_t version;
+  tb_link_config_t cfg;
+} tb_link_blob_t;
+
+bool nvs_store_load_tb_link(tb_link_config_t *cfg, const uint8_t sta_mac[6]) {
+  if (!cfg) {
+    return false;
+  }
+  static const uint8_t zero_mac[6] = {0};
+  tb_link_config_defaults(cfg, sta_mac ? sta_mac : zero_mac);
+
+  nvs_handle_t handle;
+  esp_err_t err = nvs_open(NVS_TB_NAMESPACE, NVS_READONLY, &handle);
+  if (err != ESP_OK) {
+    if (err != ESP_ERR_NVS_NOT_FOUND) {
+      ESP_LOGE(TAG, "Open %s failed: %s", NVS_TB_NAMESPACE, esp_err_to_name(err));
+    }
+    return false;
+  }
+
+  tb_link_blob_t blob;
+  size_t len = sizeof(blob);
+  err = nvs_get_blob(handle, NVS_TB_KEY_CFG, &blob, &len);
+  nvs_close(handle);
+  if (err != ESP_OK) {
+    if (err != ESP_ERR_NVS_NOT_FOUND) {
+      ESP_LOGW(TAG, "ThingsBoard settings read failed (%s); using defaults", esp_err_to_name(err));
+    }
+    return false;
+  }
+  if (len != sizeof(blob) || blob.version != NVS_TB_BLOB_VERSION) {
+    ESP_LOGW(TAG, "ThingsBoard settings blob has wrong version/length (%u); using defaults",
+             (unsigned)len);
+    return false;
+  }
+  const char *bad = NULL;
+  if (!tb_link_config_valid(&blob.cfg, &bad)) {
+    ESP_LOGW(TAG, "ThingsBoard settings invalid (%s); using defaults", bad ? bad : "?");
+    return false;
+  }
+  *cfg = blob.cfg;
+  return true;
+}
+
+bool nvs_store_save_tb_link(const tb_link_config_t *cfg) {
+  const char *bad = NULL;
+  if (!cfg || !tb_link_config_valid(cfg, &bad)) {
+    ESP_LOGW(TAG, "Refusing to save invalid ThingsBoard settings (%s)", bad ? bad : "?");
+    return false;
+  }
+  tb_link_blob_t blob;
+  memset(&blob, 0, sizeof(blob));
+  blob.version = NVS_TB_BLOB_VERSION;
+  blob.cfg = *cfg;
+  nvs_handle_t handle;
+  if (nvs_open(NVS_TB_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) {
+    return false;
+  }
+  bool ok = (nvs_set_blob(handle, NVS_TB_KEY_CFG, &blob, sizeof(blob)) == ESP_OK) &&
+            (nvs_commit(handle) == ESP_OK);
+  if (!ok) {
+    ESP_LOGE(TAG, "Failed to save ThingsBoard settings to NVS");
+  }
+  nvs_close(handle);
+  return ok;
+}
+
 bool nvs_store_factory_reset(void) {
   /* Wipes ALL namespaces: wifi_cfg, wifi_prof, session, pump_cfg,
-   * hw_cfg, cool_cfg, alarm_cfg, dryrun_cfg. OTA/app partitions are NOT affected.
+   * hw_cfg, cool_cfg, alarm_cfg, dryrun_cfg, tb_cfg. OTA/app partitions are NOT affected.
    * Caller must call esp_restart() after this returns true. */
   ESP_LOGW(TAG, "Factory reset: erasing entire NVS partition...");
   esp_err_t ret = nvs_flash_erase();
