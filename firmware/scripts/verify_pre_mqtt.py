@@ -430,6 +430,11 @@ def test_bench_followups():
     assert_test(g is not None and dim is not None and 0 < int(g.group(1)) < int(dim.group(1)),
                 "orange green level is above 0 and below the staging amber's green (DIM)")
 
+    # Bench 2026-11-18 (dry-run run): the global log floor is WARN, so dry_run_guard's INFO lines
+    # (settings saved, waiting -> monitoring, measure ..., init: protection on ...) never printed.
+    assert_test(re.search(r'esp_log_level_set\(\s*"dry_run_guard"\s*,\s*ESP_LOG_INFO\s*\)', app) is not None,
+                "app_main raises dry_run_guard to INFO so its state-change lines reach the serial log")
+
 
 def main():
     test_bench_followups()
