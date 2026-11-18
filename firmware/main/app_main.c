@@ -29,6 +29,7 @@
 #include "dry_run_logic.h"
 #include "uplink.h"
 #include "time_sync.h"
+#include "tb_link.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "led_strip.h"
@@ -334,7 +335,7 @@ static void log_board_and_hardware_diagnostics(void) {
       "cpu_load_pct=%lu.%lu core0_pct=%lu.%lu core1_pct=%lu.%lu tasks=%lu "
       "twdt_main=%s reset=%s heap_free=%lu heap_min=%lu heap_largest=%lu "
       "heap_alloc_blocks=%lu heap_free_blocks=%lu main_stack_hwm=%lu "
-      "hwm_alarm=%ld hwm_uplink=%ld hwm_dry_run=%ld "
+      "hwm_alarm=%ld hwm_uplink=%ld hwm_dry_run=%ld tb_hwm=%ld "
       "die_temp=unsupported external_temp_source=ds18b20",
       (unsigned long long)(now_us / 1000), CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
       !cpu_stats_available ? "unsupported"
@@ -354,7 +355,7 @@ static void log_board_and_hardware_diagnostics(void) {
       (unsigned long)heap_info.free_blocks,
       (unsigned long)uxTaskGetStackHighWaterMark(NULL),
       (long)alarm_engine_stack_hwm(), (long)uplink_stack_hwm(),
-      (long)dry_run_guard_stack_hwm());
+      (long)dry_run_guard_stack_hwm(), (long)tb_link_stack_hwm());
 
   pump_control_status_t pump = {0};
   if (pump_control_get_status(&pump)) {
@@ -832,6 +833,7 @@ void app_main(void) {
   esp_log_level_set("alarm_engine", ESP_LOG_INFO);
   esp_log_level_set("uplink", ESP_LOG_INFO);
   esp_log_level_set("time_sync", ESP_LOG_INFO);
+  esp_log_level_set("tb_link", ESP_LOG_INFO);
   esp_log_level_set("dns_server",
                     ESP_LOG_WARN); /* DNS very chatty — WARN only */
   esp_log_level_set("session",
@@ -1179,6 +1181,13 @@ void app_main(void) {
     esp_err_t ts_err = time_sync_init();
     if (ts_err != ESP_OK) {
       ESP_LOGW(TAG, "SNTP init failed (%s) — no wall clock", esp_err_to_name(ts_err));
+    }
+  }
+  /* ThingsBoard link: after uplink_init (sink) and Wi-Fi; a failure leaves local functions untouched. */
+  {
+    esp_err_t tb_err = tb_link_init();
+    if (tb_err != ESP_OK) {
+      ESP_LOGE(TAG, "ThingsBoard link init failed: %s — continuing without it", esp_err_to_name(tb_err));
     }
   }
   ESP_LOGI(TAG, "AP SSID: %s, IP: %s", APP_TEMPLATE_AP_SSID,

@@ -66,6 +66,7 @@ idf_component_register(
         telemetry_hub
         uplink
         time_sync
+        tb_link
         water_quality
         wifi_manager
         esp_http_server
