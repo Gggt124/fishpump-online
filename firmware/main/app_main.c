@@ -28,6 +28,7 @@
 #include "dry_run_guard.h"
 #include "dry_run_logic.h"
 #include "uplink.h"
+#include "time_sync.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "led_strip.h"
@@ -830,6 +831,7 @@ void app_main(void) {
   esp_log_level_set("dry_run_guard", ESP_LOG_INFO); /* one line per state change */
   esp_log_level_set("alarm_engine", ESP_LOG_INFO);
   esp_log_level_set("uplink", ESP_LOG_INFO);
+  esp_log_level_set("time_sync", ESP_LOG_INFO);
   esp_log_level_set("dns_server",
                     ESP_LOG_WARN); /* DNS very chatty — WARN only */
   esp_log_level_set("session",
@@ -1172,6 +1174,12 @@ void app_main(void) {
     ESP_LOGE(TAG, "Wi-Fi init failed — continuing in AP-only mode");
   } else {
     ESP_LOGI(TAG, "Wi-Fi initialized");
+  }
+  {
+    esp_err_t ts_err = time_sync_init();
+    if (ts_err != ESP_OK) {
+      ESP_LOGW(TAG, "SNTP init failed (%s) — no wall clock", esp_err_to_name(ts_err));
+    }
   }
   ESP_LOGI(TAG, "AP SSID: %s, IP: %s", APP_TEMPLATE_AP_SSID,
            wifi_manager_get_ap_ip());

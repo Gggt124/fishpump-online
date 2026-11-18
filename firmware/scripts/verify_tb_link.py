@@ -65,8 +65,27 @@ def test_nvs_storage():
     assert_test("tb_link_config_valid(" in save, "nvs_store_save_tb_link calls tb_link_config_valid")
 
 
+def test_time_sync():
+    print("\n--- Task 3: SNTP wall clock ---")
+    defaults = read(FIRMWARE_DIR / "sdkconfig.defaults")
+    assert_test("CONFIG_LWIP_SNTP_MAX_SERVERS=2" in defaults,
+                "sdkconfig.defaults sets CONFIG_LWIP_SNTP_MAX_SERVERS=2")
+    src = read(COMP_DIR / "time_sync" / "time_sync.c")
+    assert_test("pool.ntp.org" in src and "time.google.com" in src,
+                "time_sync.c names both pool.ntp.org and time.google.com")
+    assert_test("uplink_set_wall_clock(" in src, "time_sync.c calls uplink_set_wall_clock")
+    app = read(MAIN_DIR / "app_main.c")
+    w = app.find("wifi_manager_init(")
+    t = app.find("time_sync_init()")
+    assert_test(w != -1 and t != -1 and t > w,
+                "app_main.c calls time_sync_init() after wifi_manager_init(")
+    assert_test(re.search(r'esp_log_level_set\(\s*"time_sync"\s*,\s*ESP_LOG_INFO\s*\)', app) is not None,
+                'app_main.c raises "time_sync" to ESP_LOG_INFO')
+
+
 def main():
     test_nvs_storage()
+    test_time_sync()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 
