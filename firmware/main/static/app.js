@@ -5469,12 +5469,32 @@ function alarmRenderBellList(st) {
     if (!events.length) list.appendChild(alarmMake('p', 'text-sm text-muted', 'ยังไม่มีเหตุการณ์'));
 }
 
+/* Signal list (labels, units, bool kind) that value formatting needs. Fetched once per
+ * page load; cb(true) when it is available (already loaded or just fetched), cb(false)
+ * if it could not be fetched (values then fall back to plain numbers). The bell uses it
+ * on every page, not only on /alarms. */
+function alarmEnsureSignals(cb) {
+    if (alarmSignals) { cb(true); return; }
+    apiGet('/api/alarms/signals', function (err, data) {
+        if (alarmSignals) { cb(true); return; } /* another caller loaded it meanwhile */
+        if (err || !data || data.ok !== true) { cb(false); return; }
+        alarmSignals = data.signals || [];
+        alarmSignalMap = {};
+        alarmSignals.forEach(function (s) { alarmSignalMap[s.key] = s; });
+        cb(true);
+    });
+}
+
 function alarmOpenBellPanel() {
     alarmBellOpen = true;
     var panel = alarmEl('alarm-bell-panel');
     if (panel) panel.classList.remove('hidden');
     var bell = alarmEl('alarm-bell');
     if (bell) bell.setAttribute('aria-expanded', 'true');
+    alarmEnsureSignals(function () { alarmFetchBellList(); });
+}
+
+function alarmFetchBellList() {
     apiGet('/api/alarms/status', function (err, data) {
         if (err || !data || data.ok !== true) {
             var list = alarmEl('alarm-bell-list');
@@ -6207,17 +6227,12 @@ function initAlarmsPage() {
     alarmStatus = null;
     syncAlarmStatus(true);
     alarmLoadRules();
-    if (!alarmSignals) {
-        apiGet('/api/alarms/signals', function (err, data) {
-            if (err || !data || data.ok !== true) return;
-            alarmSignals = data.signals || [];
-            alarmSignalMap = {};
-            alarmSignals.forEach(function (s) { alarmSignalMap[s.key] = s; });
-            alarmFillSignalSelects();
-            alarmLoadRules();
-            if (alarmStatus) renderAlarmStatus(alarmStatus);
-        });
-    }
+    alarmEnsureSignals(function (loaded) {
+        if (!loaded) return;
+        alarmFillSignalSelects();
+        alarmLoadRules();
+        if (alarmStatus) renderAlarmStatus(alarmStatus);
+    });
     initTelemetrySSE();
 }
 

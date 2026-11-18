@@ -85,6 +85,28 @@ void test_alarm_rules(void)
           && r.severity == ALARM_SEV_CRITICAL && r.condition == ALARM_COND_BELOW && r.threshold == 0.3f);
     CHECK(parse(R_IS_FALSE, &r, &f) == ALARM_JSON_OK && r.gate_mode == ALARM_GATE_WHEN_FALSE && r.delay_sec == 15);
 
+    /* float fields print as the decimal that was typed, not the float's double expansion
+     * (0.3f would otherwise print as 0.30000001192092896 in the web page and in ThingsBoard) */
+    CHECK(parse(R_BELOW, &r, &f) == ALARM_JSON_OK);
+    {
+        cJSON *j = alarm_rule_to_json(&r);
+        char *txt = j != NULL ? cJSON_PrintUnformatted(j) : NULL;
+        CHECK(txt != NULL && strstr(txt, "\"threshold\":0.3,") != NULL);
+        cJSON_free(txt);
+        cJSON_Delete(j);
+    }
+    CHECK(parse(R_PH_RANGE, &r, &f) == ALARM_JSON_OK);
+    {
+        cJSON *j = alarm_rule_to_json(&r);
+        char *txt = j != NULL ? cJSON_PrintUnformatted(j) : NULL;
+        CHECK(txt != NULL && strstr(txt, "\"hysteresis\":0.1,") != NULL);
+        cJSON_free(txt);
+        cJSON_Delete(j);
+    }
+    CHECK(alarm_json_number(0.1f) == 0.1 && alarm_json_number(6.5f) == 6.5 && alarm_json_number(-4.0f) == -4.0);
+    CHECK((float)alarm_json_number(1.0f / 3.0f) == 1.0f / 3.0f); /* needs 9 digits; still exact */
+    CHECK((float)alarm_json_number(16777217.0f) == 16777217.0f);
+
     /* ids from ALARM_SYSTEM_ID_BASE up belong to firmware-owned system alarms */
     CHECK(parse("{\"id\":64999,\"name\":\"x\",\"signal\":\"water_ph\",\"condition\":\"above\",\"threshold\":5,\"severity\":\"info\"}", &r, &f) == ALARM_JSON_OK && r.id == 64999);
     CHECK(parse("{\"id\":65000,\"name\":\"x\",\"signal\":\"water_ph\",\"condition\":\"above\",\"threshold\":5,\"severity\":\"info\"}", &r, &f) == ALARM_JSON_INVALID_VALUE && !strcmp(f, "id"));

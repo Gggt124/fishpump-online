@@ -36,6 +36,9 @@
 
 #define STATUS_RGB_BRIGHTNESS_DEFAULT 32
 #define STATUS_RGB_BRIGHTNESS_DIM 16
+/* Green level of the steady orange warning colour (red at DEFAULT). Kept well below DIM so
+ * it reads orange, not yellow (hard to tell from green) and not the staging amber. */
+#define STATUS_RGB_ORANGE_GREEN 6
 
 static led_strip_handle_t s_rgb_led = NULL;
 
@@ -566,8 +569,8 @@ static void update_status_leds(app_led_state_t state, int blink_phase,
     break;
   case LED_STATE_ALARM_WARNING:
     r = STATUS_RGB_BRIGHTNESS_DEFAULT;
-    g = STATUS_RGB_BRIGHTNESS_DEFAULT;
-    b = 0; // Yellow, steady (warning not acknowledged)
+    g = STATUS_RGB_ORANGE_GREEN;
+    b = 0; // Orange, steady (warning not acknowledged)
     break;
   case LED_STATE_ALARM_INFO:
     r = 0;
@@ -763,7 +766,7 @@ static void hardware_ui_task(void *pvParameters) {
         update_status_leds(s_led_state, blink, blink);
       } else {
         /* Unacknowledged alarms: critical blinks red at 1 Hz, warning is steady
-         * yellow, info is steady blue (critical beats warning beats info). The
+         * orange, info is steady blue (critical beats warning beats info). The
          * engine summary is re-read at most once per second, like the staging
          * type above, and only the resulting level is cached. */
         static alarm_led_level_t cached_alarm_level = ALARM_LED_NONE;

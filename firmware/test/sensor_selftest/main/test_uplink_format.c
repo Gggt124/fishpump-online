@@ -88,6 +88,8 @@ void test_uplink_format(void)
     strcpy(ev.name, "pH ผิดช่วง");
     n = uplink_format_event(&ev, 2891734u, 0, s_buf, UPLINK_EVENT_BUF);
     CHECK(n > 0);
+    /* a float value prints as its short decimal, not the double expansion 8.9200000762939453 */
+    CHECK(strstr(s_buf, "\"value\":8.92,") != NULL);
     t = cJSON_Parse(s_buf);
     const cJSON *ae = t ? get(t, "alarm_event") : NULL;
     CHECK(ae != NULL);

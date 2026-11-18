@@ -5520,9 +5520,9 @@ static esp_err_t alarms_unauthorized(httpd_req_t *req) {
 }
 
 /* A finite number never leaves as NaN/Infinity (not valid JSON). */
-static void alarms_add_value(cJSON *obj, const char *key, double v) {
+static void alarms_add_value(cJSON *obj, const char *key, float v) {
   if (isfinite(v)) {
-    cJSON_AddNumberToObject(obj, key, v);
+    cJSON_AddNumberToObject(obj, key, alarm_json_number(v));
   } else {
     cJSON_AddNullToObject(obj, key);
   }

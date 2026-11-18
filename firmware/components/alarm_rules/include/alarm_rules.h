@@ -88,6 +88,10 @@ typedef enum {
 alarm_json_err_t alarm_rule_from_json(const cJSON *obj, alarm_rule_t *out, bool *has_id,
                                       const char **bad_field);
 cJSON *alarm_rule_to_json(const alarm_rule_t *rule); /* caller deletes; NULL on OOM */
+/* A float as the double cJSON should print: the shortest decimal (6..9 significant
+ * digits) that converts back to the same float, so 0.3f prints "0.3" rather than
+ * "0.30000001192092896". Use it for every float that goes into JSON. */
+double alarm_json_number(float v);
 const char *alarm_cond_name(uint8_t cond);           /* "above" ... "stale" */
 const char *alarm_severity_name(uint8_t sev);        /* "info", "warning", "critical" */
 

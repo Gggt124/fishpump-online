@@ -379,7 +379,7 @@ def test_task8():
     assert_test("document.title" in rb and "ALARM_BASE_TITLE" in rb, "tab title gets the (n) prefix and returns to base")
     assert_test("isAuthenticated" in js_function_body(js, "alarmBellVisible") and "/login" in js_function_body(js, "alarmBellVisible"),
                 "bell shows only when authenticated and not on /login")
-    op = js_function_body(js, "alarmOpenBellPanel")
+    op = js_function_body(js, "alarmOpenBellPanel") + js_function_body(js, "alarmFetchBellList")
     assert_test("/api/alarms/status" in op and "alarmWriteSeen" in op, "opening the panel fetches status and marks seen")
     rp = js_function_body(js, "alarmRenderBellList")
     assert_test("slice(0, 5)" in rp and "reverse" not in rp and "slice(-5)" not in rp,
@@ -399,7 +399,40 @@ def test_task8():
                     f"{id_} label has a single parenthesis group with {lo}–{hi}")
 
 
+def test_bench_followups():
+    print("\n--- Bench 2026-11-18 follow-ups: bell bool values, float JSON, orange warning LED ---")
+    js = read(MAIN_DIR / "static" / "app.js")
+    ens = js_function_body(js, "alarmEnsureSignals")
+    assert_test("/api/alarms/signals" in ens and "alarmSignals" in ens,
+                "alarmEnsureSignals loads the signal list once (labels, units, bool kind)")
+    assert_test("alarmEnsureSignals(" in js_function_body(js, "alarmOpenBellPanel"),
+                "the bell panel loads signals first, so bool values read ใช่/ไม่ใช่ on every page")
+    assert_test("alarmEnsureSignals(" in js_function_body(js, "initAlarmsPage"),
+                "the alarms page uses the same loader")
+
+    rj = read(COMP_DIR / "alarm_rules" / "alarm_json.c")
+    to_json = function_body(rj, "alarm_rule_to_json", r"cJSON\s*\*\s*")
+    for field in ("r->threshold)", "r->threshold_hi)", "r->hysteresis)"):
+        assert_test("alarm_json_number(" + field in to_json, f"alarm_rule_to_json prints {field[:-1]} via alarm_json_number")
+    uf = read(COMP_DIR / "uplink_format" / "uplink_format.c")
+    assert_test("alarm_json_number(e->value)" in uf, "uplink event value goes through alarm_json_number")
+    web = read(MAIN_DIR / "web_server.c")
+    av = function_body(web, "alarms_add_value", r"static\s+void\s+")
+    assert_test("alarm_json_number(" in av, "web alarm values go through alarm_json_number")
+
+    app = read(MAIN_DIR / "app_main.c")
+    m = re.search(r"case LED_STATE_ALARM_WARNING:\s*r = (\w+);\s*g = (\w+);\s*b = (\w+);", app)
+    assert_test(m is not None and m.group(1) == "STATUS_RGB_BRIGHTNESS_DEFAULT" and m.group(3) == "0"
+                and m.group(2) == "STATUS_RGB_ORANGE_GREEN",
+                "warning LED is orange: full red, a little green (not yellow, not the staging amber)")
+    g = re.search(r"#define STATUS_RGB_ORANGE_GREEN (\d+)", app)
+    dim = re.search(r"#define STATUS_RGB_BRIGHTNESS_DIM (\d+)", app)
+    assert_test(g is not None and dim is not None and 0 < int(g.group(1)) < int(dim.group(1)),
+                "orange green level is above 0 and below the staging amber's green (DIM)")
+
+
 def main():
+    test_bench_followups()
     test_task1()
     test_task2()
     test_task3()

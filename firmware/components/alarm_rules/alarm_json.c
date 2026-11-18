@@ -1,11 +1,29 @@
 #include <float.h>
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "alarm_rules.h"
 
 static const char *const s_cond_names[ALARM_COND_COUNT] = {
     "above", "below", "outside", "inside", "is_true", "is_false", "stale"};
+
+double alarm_json_number(float v)
+{
+    if (!isfinite(v)) {
+        return (double)v;
+    }
+    char buf[32];
+    for (int digits = 6; digits <= 9; digits++) {
+        snprintf(buf, sizeof(buf), "%.*g", digits, (double)v);
+        double d = strtod(buf, NULL);
+        if ((float)d == v) {
+            return d;
+        }
+    }
+    return (double)v; /* 9 digits always round-trip a float; not reached */
+}
 
 const char *alarm_cond_name(uint8_t cond)
 {
@@ -204,12 +222,12 @@ cJSON *alarm_rule_to_json(const alarm_rule_t *r)
         switch (r->condition) {
         case ALARM_COND_ABOVE:
         case ALARM_COND_BELOW:
-            ok = cJSON_AddNumberToObject(o, "threshold", r->threshold) != NULL;
+            ok = cJSON_AddNumberToObject(o, "threshold", alarm_json_number(r->threshold)) != NULL;
             break;
         case ALARM_COND_OUTSIDE:
         case ALARM_COND_INSIDE:
-            ok = cJSON_AddNumberToObject(o, "lo", r->threshold) != NULL &&
-                 cJSON_AddNumberToObject(o, "hi", r->threshold_hi) != NULL;
+            ok = cJSON_AddNumberToObject(o, "lo", alarm_json_number(r->threshold)) != NULL &&
+                 cJSON_AddNumberToObject(o, "hi", alarm_json_number(r->threshold_hi)) != NULL;
             break;
         case ALARM_COND_STALE:
             ok = cJSON_AddNumberToObject(o, "stale_sec", r->stale_sec) != NULL;
@@ -218,7 +236,7 @@ cJSON *alarm_rule_to_json(const alarm_rule_t *r)
             break;
         }
     }
-    ok = ok && cJSON_AddNumberToObject(o, "hysteresis", r->hysteresis) != NULL &&
+    ok = ok && cJSON_AddNumberToObject(o, "hysteresis", alarm_json_number(r->hysteresis)) != NULL &&
          cJSON_AddNumberToObject(o, "delay_sec", r->delay_sec) != NULL &&
          cJSON_AddStringToObject(o, "severity", alarm_severity_name(r->severity)) != NULL &&
          cJSON_AddBoolToObject(o, "latch", r->latch) != NULL;

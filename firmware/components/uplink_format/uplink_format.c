@@ -94,7 +94,7 @@ static cJSON *event_object(const alarm_event_t *e, uint32_t boot_id)
               cJSON_AddStringToObject(o, "signal", sig != NULL ? sig->key : "") != NULL &&
               cJSON_AddStringToObject(o, "severity", alarm_severity_name(e->severity)) != NULL;
     if (ok) {
-        ok = isfinite(e->value) ? cJSON_AddNumberToObject(o, "value", e->value) != NULL
+        ok = isfinite(e->value) ? cJSON_AddNumberToObject(o, "value", alarm_json_number(e->value)) != NULL
                                 : cJSON_AddNullToObject(o, "value") != NULL;
     }
     if (ok) {
