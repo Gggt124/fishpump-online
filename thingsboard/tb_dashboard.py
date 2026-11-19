@@ -31,8 +31,8 @@ DASHBOARD_TITLE = "Fishpump — ทดสอบ"
 DEFAULT_DEVICE = "fishpump-1de564"
 DEVICE_TYPE = "fishpump"  # device profile name = device type
 
-# actions with no parity case: they move the pump, so their success is a guided bench step (Task 13), never automatic
-NON_PARITY_METHODS = {"pump.start", "pump.stop"}
+# actions with no parity case: they move the pump or touch the pH sensor (calibration cancel), so their success is a guided bench step (Task 13), never automatic
+NON_PARITY_METHODS = {"pump.start", "pump.stop", "water.calibrate.cancel"}
 
 UNSAFE_CHARS = "<>&\"'"  # ThingsBoard NoXss validator rejects these in human-text fields
 

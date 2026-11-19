@@ -281,6 +281,37 @@ def test_cooling_group():
                 "cooling.config.set validates the payload before saving")
 
 
+def test_water_power_group():
+    methods = [
+        ("water.calibrate", r"DAPI_F_WRITE", "SENSORS_BODY_BYTES"),
+        ("water.calibrate.cancel", r"DAPI_F_WRITE", "SENSORS_BODY_BYTES"),
+        ("water.offset", r"DAPI_F_WRITE", "SENSORS_BODY_BYTES"),
+        ("power.reset_energy", r"DAPI_F_WRITE", "SENSORS_BODY_BYTES"),
+    ]
+    handlers = [
+        ("handle_api_water_calibrate", "water.calibrate"),
+        ("handle_api_water_calibrate_cancel", "water.calibrate.cancel"),
+        ("handle_api_water_offset", "water.offset"),
+        ("handle_api_power_reset_energy", "power.reset_energy"),
+    ]
+    forbidden = ["water_quality_", "power_monitor_", "sensors_send_queue_result"]
+    check_group("water and power", "dapi_water_power.c", "dapi_water_power_register", methods, handlers, forbidden)
+    ws = read(MAIN_DIR / "web_server.c")
+    hdr = read(MAIN_DIR / "dapi_water_power.h")
+    assert_test(re.search(r"#define\s+SENSORS_BODY_BYTES\s+256$", hdr, re.M) is not None,
+                "SENSORS_BODY_BYTES is 256")
+    assert_test("char body[SENSORS_BODY_BYTES]" in function_body(ws, "sensors_begin_post", r"static\s+cJSON\s*\*\s*"),
+                "sensors_begin_post sizes its buffer with SENSORS_BODY_BYTES")
+    for h, _ in handlers:
+        body = function_body(ws, h)
+        assert_test("sensors_begin_post(req" in body and "cJSON_Delete(root)" in body,
+                    f"{h} keeps the shared post guard and frees the tree")
+    assert_test("sensors_send_queue_result" not in ws, "web_server.c no longer holds sensors_send_queue_result")
+    src = read(MAIN_DIR / "dapi_water_power.c")
+    assert_test("DAPI_ACCEPTED" in function_body(src, "queue_result") and '"queued"' in function_body(src, "queue_result"),
+                "the queue helper answers DAPI_ACCEPTED with the queued body")
+
+
 if __name__ == "__main__":
     test_component()
     test_logging_and_lock()
@@ -290,5 +321,6 @@ if __name__ == "__main__":
     test_protection_group()
     test_pump_group()
     test_cooling_group()
+    test_water_power_group()
     print(f"\nPassed: {passed_tests}  Failed: {failed_tests}")
     sys.exit(1 if failed_tests else 0)

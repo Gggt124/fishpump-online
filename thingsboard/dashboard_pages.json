@@ -63,5 +63,25 @@
        "edit": true, "load": null, "confirm": null},
       {"label": "cooling.mode.set (โหมดอัตโนมัติ)", "method": "cooling.mode.set", "params": {"mode": "auto"}, "edit": true, "load": null, "confirm": null}
     ]
+  },
+  {
+    "id": "water_power",
+    "title": "น้ำและไฟฟ้า (Water / Power)",
+    "telemetry": ["water_ph", "water_temp_c", "water_ph_stable", "water_sensor_fault", "pump_power_w", "pump_energy_wh", "chiller_power_w", "chiller_energy_wh"],
+    "actions": [
+      {"label": "water.calibrate (จุดที่ 1, pH 4.01)", "method": "water.calibrate", "params": {"point": 1, "buffer_ph": 4.01}, "edit": false, "load": null,
+       "confirm": "เขียนค่าคาลิเบรตจุดที่ 1 = 4.01 ลงเซนเซอร์?"},
+      {"label": "water.calibrate (จุดที่ 2, pH 9.18)", "method": "water.calibrate", "params": {"point": 2, "buffer_ph": 9.18}, "edit": false, "load": null,
+       "confirm": "เขียนค่าคาลิเบรตจุดที่ 2 = 9.18 ลงเซนเซอร์?"},
+      {"label": "water.calibrate.cancel", "method": "water.calibrate.cancel", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "water.offset (รีเซ็ต pH offset เป็น 0)", "method": "water.offset", "params": {"ph_offset": 0}, "edit": false, "load": null,
+       "confirm": "ตั้ง pH offset และ offset อุณหภูมิ เป็น 0?"},
+      {"label": "water.offset (รีเซ็ต offset อุณหภูมิเป็น 0)", "method": "water.offset", "params": {"temp_offset": 0}, "edit": false, "load": null,
+       "confirm": "ตั้ง pH offset และ offset อุณหภูมิ เป็น 0?"},
+      {"label": "power.reset_energy (ช่อง 0)", "method": "power.reset_energy", "params": {"channel": 0}, "edit": false, "load": null,
+       "confirm": "รีเซ็ต kWh ของปั๊ม 1 เป็น 0? ย้อนกลับไม่ได้"},
+      {"label": "power.reset_energy (ช่อง 1)", "method": "power.reset_energy", "params": {"channel": 1}, "edit": false, "load": null,
+       "confirm": "รีเซ็ต kWh ของปั๊ม 2 เป็น 0? ย้อนกลับไม่ได้"}
+    ]
   }
 ]

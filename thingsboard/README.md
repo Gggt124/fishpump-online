@@ -96,6 +96,8 @@ python thingsboard/parity_test.py --user <อีเมล> --device fishpump-1de
   - `path` จุดที่แก้ (แบบจุด เช่น `delay_sec`) ภายใน `rule_path`; `change` เป็น `{"add":n}` หรือ `{"value":v}`
   - ลำดับ: อ่านทาง TB, เขียนทาง TB, อ่านกลับทาง HTTP (ต้องเห็นค่าใหม่), คืนค่าทาง HTTP, อ่านทาง TB (ต้องเป็นค่าเดิม)
     ถ้าคืนค่าไม่สำเร็จ จะหยุดเคสเขียนที่เหลือและพิมพ์ค่าเดิม
+  - `send_as` ส่งเฉพาะ `{<send_as>: ค่าใหม่}` เป็น body ของ set (เมื่อ method รับ key ชื่อต่างจากผล GET); `change` `{"same":true}` ส่งค่าเดิม (no-op)
+  - ถ้า method ของ `get` ยังไม่มีบนบอร์ด (`unknown_method`) เคสนั้น SKIP "needs <get>" เช่น `sensors.get` ก่อน Task 12
 - `parity_test.py` ผลลัพธ์ `PASS`/`FAIL`/`SKIP` ต่อเคส exit code 0 เมื่อไม่มี FAIL; เคสเขียนรันเมื่อใส่ `--writes` และต้องมี `--rule-id`
   (กฎที่ปิดอยู่); `--burst N` ส่ง `alarms.rules.get` N ครั้งติดกันขณะ poll `/api/alarms/summary` ทุก 200 ms
 - ถ้าบอร์ดตอบ 403 `force_password_change` เคสนั้น SKIP ("board web password is still the default")

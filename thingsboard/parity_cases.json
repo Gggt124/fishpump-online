@@ -109,5 +109,26 @@
        "omit": ["settings_status", "auto_enable", "curve_type", "point_count", "points", "min_off_sec", "test_timeout_sec", "threshold_c", "threshold_c_x10", "hysteresis_c", "hysteresis_c_x10", "compressor_min_off_sec", "cooling_relay_polarity", "limits", "modes", "relay_polarities", "curve_types", "status"],
        "path": "mode", "change": {"same": true}, "set": "cooling.mode.set", "set_http": "/api/cooling/mode"}
     ]
+  },
+  "water_power": {
+    "reads": [],
+    "errors": [
+      {"method": "water.offset", "params": {}, "http": "/api/water/offset", "error": "missing_field"},
+      {"method": "water.offset", "params": {"ph_offset": 1, "temp_offset": 1}, "http": "/api/water/offset", "error": "missing_field"},
+      {"method": "water.offset", "params": {"ph_offset": "x"}, "http": "/api/water/offset", "error": "missing_field"},
+      {"method": "water.offset", "params": {"ph_offset": 9}, "http": "/api/water/offset", "error": "value_out_of_range"},
+      {"method": "water.offset", "params": {"temp_offset": 99}, "http": "/api/water/offset", "error": "value_out_of_range"},
+      {"method": "water.calibrate", "params": {}, "http": "/api/water/calibrate", "error": "missing_field"},
+      {"method": "water.calibrate", "params": {"point": 3, "buffer_ph": 7}, "http": "/api/water/calibrate", "error": "value_out_of_range"},
+      {"method": "water.calibrate", "params": {"point": 1, "buffer_ph": 15}, "http": "/api/water/calibrate", "error": "value_out_of_range"},
+      {"method": "power.reset_energy", "params": {}, "http": "/api/power/reset-energy", "error": "missing_field"},
+      {"method": "power.reset_energy", "params": {"channel": 2}, "http": "/api/power/reset-energy", "error": "value_out_of_range"}
+    ],
+    "writes": [
+      {"name": "water.offset ph offset (no-op, needs sensors.get)",
+       "get": "sensors.get", "get_http": "/api/sensors/status",
+       "rule_path": "water.offsets", "guard": {"path": "known", "equals": true},
+       "path": "ph", "change": {"same": true}, "send_as": "ph_offset", "set": "water.offset", "set_http": "/api/water/offset"}
+    ]
   }
 }

@@ -35,6 +35,7 @@
 #include "dapi_cooling.h"
 #include "dapi_protection.h"
 #include "dapi_pump.h"
+#include "dapi_water_power.h"
 #include "device_api.h"
 #include "dry_run_guard.h"
 #include "alarm_rules.h"
@@ -2781,34 +2782,8 @@ static cJSON *api_begin_json_post(httpd_req_t *req, char *body,
 
 /* Sensor write endpoints: 256-byte bodies are plenty. */
 static cJSON *sensors_begin_post(httpd_req_t *req, esp_err_t *sent) {
-  char body[256];
+  char body[SENSORS_BODY_BYTES];
   return api_begin_json_post(req, body, sizeof(body), sent);
-}
-
-/* Reads a finite JSON number; false if missing or not a number. */
-static bool sensors_get_number(const cJSON *root, const char *key, double *out) {
-  const cJSON *item = cJSON_GetObjectItem(root, key);
-  if (!cJSON_IsNumber(item) || !isfinite(item->valuedouble)) {
-    return false;
-  }
-  *out = item->valuedouble;
-  return true;
-}
-
-static esp_err_t sensors_send_queue_result(httpd_req_t *req, esp_err_t err,
-                                           const char *field) {
-  switch (err) {
-  case ESP_OK:
-    return send_json(req, "{\"ok\":true,\"queued\":true}", "202 Accepted");
-  case ESP_ERR_INVALID_ARG:
-    return send_api_error(req, "value_out_of_range", field, "400 Bad Request");
-  case ESP_ERR_NO_MEM:
-    return send_api_error(req, "queue_full", "Sensor is busy, try again",
-                          "503 Service Unavailable");
-  default:
-    return send_api_error(req, "sensor_unavailable", "Sensor task not running",
-                          "503 Service Unavailable");
-  }
 }
 
 /* POST /api/power/reset-energy {"channel":0|1} */
@@ -2818,17 +2793,9 @@ static esp_err_t handle_api_power_reset_energy(httpd_req_t *req) {
   if (!root) {
     return sent;
   }
-  double ch = 0;
-  bool present = sensors_get_number(root, "channel", &ch);
+  esp_err_t result = http_dapi(req, "power.reset_energy", root);
   cJSON_Delete(root);
-  if (!present) {
-    return send_api_error(req, "missing_field", "channel", "400 Bad Request");
-  }
-  if (ch != 0.0 && ch != 1.0) {
-    return send_api_error(req, "value_out_of_range", "channel", "400 Bad Request");
-  }
-  return sensors_send_queue_result(
-      req, power_monitor_request_reset_energy((uint8_t)ch), "channel");
+  return result;
 }
 
 /* POST /api/water/calibrate {"point":1|2,"buffer_ph":0..14} */
@@ -2838,24 +2805,9 @@ static esp_err_t handle_api_water_calibrate(httpd_req_t *req) {
   if (!root) {
     return sent;
   }
-  double point = 0, buffer_ph = 0;
-  bool has_point = sensors_get_number(root, "point", &point);
-  bool has_ph = sensors_get_number(root, "buffer_ph", &buffer_ph);
+  esp_err_t result = http_dapi(req, "water.calibrate", root);
   cJSON_Delete(root);
-  if (!has_point || !has_ph) {
-    return send_api_error(req, "missing_field", has_point ? "buffer_ph" : "point",
-                          "400 Bad Request");
-  }
-  if (point != 1.0 && point != 2.0) {
-    return send_api_error(req, "value_out_of_range", "point", "400 Bad Request");
-  }
-  if (buffer_ph < 0.0 || buffer_ph > 14.0) {
-    return send_api_error(req, "value_out_of_range", "buffer_ph",
-                          "400 Bad Request");
-  }
-  return sensors_send_queue_result(
-      req, water_quality_request_calibrate((uint8_t)point, (float)buffer_ph),
-      "buffer_ph");
+  return result;
 }
 
 /* POST /api/water/calibrate/cancel */
@@ -2865,8 +2817,9 @@ static esp_err_t handle_api_water_calibrate_cancel(httpd_req_t *req) {
   if (!root) {
     return sent;
   }
+  esp_err_t result = http_dapi(req, "water.calibrate.cancel", root);
   cJSON_Delete(root);
-  return sensors_send_queue_result(req, water_quality_request_cancel(), "");
+  return result;
 }
 
 /* POST /api/water/offset {"ph_offset":+-2} or {"temp_offset":+-10} */
@@ -2876,31 +2829,9 @@ static esp_err_t handle_api_water_offset(httpd_req_t *req) {
   if (!root) {
     return sent;
   }
-  bool has_ph_key = cJSON_HasObjectItem(root, "ph_offset");
-  bool has_temp_key = cJSON_HasObjectItem(root, "temp_offset");
-  double value = 0;
-  bool is_ph = has_ph_key;
-  bool has_value = (has_ph_key != has_temp_key) &&
-                   sensors_get_number(root, is_ph ? "ph_offset" : "temp_offset", &value);
+  esp_err_t result = http_dapi(req, "water.offset", root);
   cJSON_Delete(root);
-  if (!has_value) {
-    return send_api_error(req, "missing_field", "ph_offset|temp_offset",
-                          "400 Bad Request");
-  }
-  if (is_ph) {
-    if (fabs(value) > 2.0) {
-      return send_api_error(req, "value_out_of_range", "ph_offset",
-                            "400 Bad Request");
-    }
-    return sensors_send_queue_result(
-        req, water_quality_request_ph_offset((float)value), "ph_offset");
-  }
-  if (fabs(value) > 10.0) {
-    return send_api_error(req, "value_out_of_range", "temp_offset",
-                          "400 Bad Request");
-  }
-  return sensors_send_queue_result(
-      req, water_quality_request_temp_offset((float)value), "temp_offset");
+  return result;
 }
 
 static esp_err_t handle_api_cooling_status(httpd_req_t *req) {
@@ -4339,6 +4270,7 @@ bool web_server_start(void) {
   dapi_protection_register();
   dapi_pump_register();
   dapi_cooling_register();
+  dapi_water_power_register();
   esp_err_t start_err = httpd_start(&s_server, &config);
   if (start_err != ESP_OK) {
     taskENTER_CRITICAL(&s_web_diag_lock);

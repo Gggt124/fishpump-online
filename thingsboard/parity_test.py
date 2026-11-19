@@ -120,6 +120,7 @@ def write_body(get_result, case, subst):
     """Body for the set call: the GET result without ok, narrowed to rule_path, the path changed by `change`.
     A case with "wrap" nests the body under that key (the set method wants {"pump": {...}}).
     A case with "omit" drops those top-level keys first (read-only fields the set method rejects).
+    A case with "send_as" sends only {send_as: new value} (the set method takes one differently named key).
     Returns (set_body, old_value, new_value)."""
     omit = set(case.get("omit") or ())
     base = {k: v for k, v in get_result.items() if k != "ok" and k not in omit}
@@ -128,6 +129,8 @@ def write_body(get_result, case, subst):
     old = get_path(base, case["path"], subst)
     new = apply_change(old, case["change"])
     body = set_path(base, case["path"], new, subst)
+    if case.get("send_as"):
+        body = {case["send_as"]: new}
     if case.get("wrap"):
         body = {case["wrap"]: body}
     return body, old, new
@@ -192,6 +195,11 @@ class _FakeTb:
         if self.write_status == 200:
             return 200, {"ok": True}
         return self.write_status, "timeout"
+
+
+class _FakeTbUnknown:
+    def rpc_twoway(self, dev, method, params, timeout_ms=10000):
+        return 200, {"ok": False, "error": "unknown_method"}
 
 
 def _write_scenario(board_kw=None, tb_kw=None):
@@ -260,6 +268,13 @@ def selftest():
     mget = {"ok": True, "mode": "auto", "auto_enable": True, "points": [], "status": {"mode": "auto"}}
     mbody, mold, mnew = write_body(mget, mcase, {})
     check("cooling mode write sends only the current mode", mbody == {"mode": "auto"} and mold == mnew == "auto")
+    ocase2 = cases_for_selftest()["water_power"]["writes"][0]
+    oget = {"ok": True, "water": {"offsets": {"known": True, "ph": 0.05, "temp": -0.5}, "ph": 7.0}}
+    obody2, oold2, onew2 = write_body(oget, ocase2, {})
+    check("water offset write sends only the current ph offset",
+          obody2 == {"ph_offset": 0.05} and oold2 == onew2 == 0.05 and guard_ok(oget, ocase2, {}))
+    check("water offset guard needs known offsets",
+          not guard_ok({"water": {"offsets": {"known": False, "ph": 0, "temp": 0}}}, ocase2, {}))
     wcase = cases_for_selftest()["pump"]["writes"][0]
     wget = {"ok": True, "water_set1_off": 30, "float_gpio": 4, "relay_gpio": 5, "debounce_ms": 2000,
             "hardware_reboot_required": False, "pump_relay1_gpio": 5, "pump_relay2_gpio": 6, "ds18b20_gpio": 7,
@@ -267,6 +282,10 @@ def selftest():
     wbody, wold, wnew = write_body(wget, wcase, {})
     check("pump write drops read-only fields", wnew == wold + 60 and "float_gpio" not in wbody and "ok" not in wbody
           and wbody["relay1_polarity"] == "active_low")
+    r = Runner(_FakeTbUnknown(), "dev", None)
+    _quiet(r.run_write, "water_power", ocase2, None)
+    check("write on a missing get method SKIPs with the method name", r.counts["SKIP"] == 1 and r.counts["FAIL"] == 0
+          and r.skip_reasons == ["needs sensors.get"])
     check("burst ok", burst_verdict([{"ok": True}, {"ok": False, "error": "busy"}], [200, 200]) == [])
     check("burst bad reply", len(burst_verdict([{"ok": False, "error": "x"}, None], [200])) == 2)
     check("burst bad poll", len(burst_verdict([{"ok": True}], [200, 503])) == 1)
@@ -299,9 +318,12 @@ class Runner:
         self.fails = 0
         self.counts = {"PASS": 0, "FAIL": 0, "SKIP": 0}
         self.stop_writes = False
+        self.skip_reasons = []
 
     def report(self, status, name, reason=""):
         self.counts[status] += 1
+        if status == "SKIP":
+            self.skip_reasons.append(reason)
         print("%-5s %s%s" % (status, name, (" - " + reason) if reason else ""))
 
     def rpc(self, method, params):
@@ -377,11 +399,13 @@ class Runner:
             return self.report("SKIP", name, "needs --rule-id (a disabled rule)")
         subst = {"RULE_ID": rule_id}
         rs, rb = self.rpc(c["get"], {})
+        if not self.rpc_failed(rs) and error_code(rb) == "unknown_method":
+            return self.report("SKIP", name, "needs %s" % c["get"])
         if self.rpc_failed(rs) or not isinstance(rb, dict) or rb.get("ok") is not True:
             return self.report("FAIL", name, "read via TB failed: %s %s" % (rs, _short(rb, 100)))
         try:
             if not guard_ok(rb, c, subst):
-                return self.report("SKIP", name, "rule %s is not disabled (guard failed)" % rule_id)
+                return self.report("SKIP", name, "guard failed (%s must be %r)" % (c["guard"]["path"], c["guard"]["equals"]))
             set_body, old, new = write_body(rb, c, subst)
             original_body = write_body(rb, dict(c, change={"value": old}), subst)[0]
         except (KeyError, IndexError, ValueError, TypeError) as e:
@@ -407,7 +431,7 @@ class Runner:
         if not restored:
             try:
                 rest_status, rest_body = self.http("POST", c["set_http"], original_body)
-                rest_ok = rest_status == 200 and isinstance(rest_body, dict) and rest_body.get("ok") is True
+                rest_ok = rest_status in (200, 202) and isinstance(rest_body, dict) and rest_body.get("ok") is True
                 rest_note = "restore HTTP %s" % rest_status
             except board_http.BoardError as e:
                 rest_ok, rest_note = False, "restore raised: %s" % e
