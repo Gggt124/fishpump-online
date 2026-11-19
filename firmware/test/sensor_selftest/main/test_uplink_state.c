@@ -99,8 +99,13 @@ void test_uplink_state(void)
     }
     CHECK(all8);
     CHECK(!uplink_attr_cache_commit(&c, "k_ninth", 9));
-    CHECK(!uplink_attr_cache_commit(&c, "abcdefghijklmnopqrstuvwx", 1)); /* 24 chars */
     CHECK(!uplink_attr_cache_changed(&c, "k7", 7));
+    uplink_attr_cache_reset(&c);
+    /* key length boundary, on an empty cache so only the length guard can reject */
+    CHECK(!uplink_attr_cache_commit(&c, "abcdefghijklmnopqrstuvwx", 1)); /* 24 chars */
+    CHECK(c.n == 0);
+    CHECK(uplink_attr_cache_commit(&c, "abcdefghijklmnopqrstuvw", 1)); /* 23 chars */
+    CHECK(!uplink_attr_cache_changed(&c, "abcdefghijklmnopqrstuvw", 1));
     uplink_attr_cache_reset(&c);
     CHECK(uplink_attr_cache_changed(&c, "k0", 0));
     CHECK(uplink_attr_cache_changed(&c, "k7", 7));
