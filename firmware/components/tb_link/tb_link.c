@@ -45,6 +45,7 @@ static const char *TAG = "tb_link";
 #define TB_PROV_REPLY_TIMEOUT_MS 15000
 #define TB_NETWORK_TIMEOUT_MS 10000
 #define TB_KEEPALIVE_SEC 30
+#define TB_LOST_GRACE_MS 2000 /* CONNECTED with the connected flag down this long = a dropped DISCONNECTED */
 #define TB_OUTBOX_LIMIT 16384
 #define TB_QUEUE_LEN 8
 #define TB_REPLY_MAX 384
@@ -108,6 +109,7 @@ typedef struct {
     bool prov_req_sent;
     uint32_t attempt;        /* mirror of s.attempt for the attempt the task waits on */
     uint32_t reconnect_fails; /* consecutive esp_mqtt_client_reconnect refusals */
+    int64_t lost_since_ms;   /* CONNECTED watchdog: when the connected flag was first seen down, 0 = up */
 } task_ctx_t;
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
@@ -447,6 +449,7 @@ static void task_handle_cmd(task_ctx_t *tc, const tb_cmd_t *c)
     switch (c->type) {
     case CMD_CONNECTED:
         if (!tc->prov_mode) {
+            tc->lost_since_ms = 0;
             tc->backoff_ms = 0; /* accepted connect: next failure starts at 5 s again */
             task_set_error("");
             task_publish_state(tc, TB_STATE_CONNECTED);
@@ -541,8 +544,19 @@ static void task_tick(task_ctx_t *tc)
             }
         }
         break;
-    case TB_STATE_OFF:
     case TB_STATE_CONNECTED:
+        /* The handler only posts commands; a DISCONNECTED lost to a full queue would leave this state with the
+         * flag down for good. Treat a flag that stays down past a short grace like that DISCONNECTED. */
+        if (atomic_load(&s.connected)) {
+            tc->lost_since_ms = 0;
+        } else if (tc->lost_since_ms == 0) {
+            tc->lost_since_ms = now;
+        } else if (now - tc->lost_since_ms >= TB_LOST_GRACE_MS) {
+            tc->lost_since_ms = 0;
+            task_fail(tc, "mqtt: disconnected", false);
+        }
+        break;
+    case TB_STATE_OFF:
     default:
         break;
     }

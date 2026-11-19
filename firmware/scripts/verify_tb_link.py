@@ -121,6 +121,10 @@ def test_tb_link_component():
                           r"!\s*wifi_manager_is_sta_connected\(\)[^;{]*CONNECT(ED|ING)", tick) is not None
     assert_test(wifi_fast, "task_tick drops a CONNECTING/CONNECTED link at once when Wi-Fi is lost",
                 "no !wifi_manager_is_sta_connected() guard tied to the CONNECTING/CONNECTED states")
+    conn_case = re.search(r"case\s+TB_STATE_CONNECTED\s*:(.*?)(?=case\s+TB_STATE_\w+\s*:|default\s*:)", tick, re.S)
+    assert_test(conn_case is not None and "atomic_load(&s.connected)" in conn_case.group(1)
+                and "task_fail(" in conn_case.group(1) and "lost_since_ms" in conn_case.group(1),
+                "task_tick CONNECTED case watches the connected flag and fails the link when it stays down")
     assert_test(re.search(r"\besp_mqtt_client_reconnect\s*\(", src) is not None,
                 "token client is kept and reconnected with esp_mqtt_client_reconnect")
     defaults_txt = read(FIRMWARE_DIR / "sdkconfig.defaults")
