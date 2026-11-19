@@ -25,7 +25,7 @@ WIDGET_FILE = HERE / "widgets" / "fishpump_rpc_panel.json"
 
 BUNDLE_TITLE = "fishpump"
 WIDGET_FQN = "fishpump_rpc_panel"
-WIDGET_FULL_FQN = "tenant." + WIDGET_FQN  # guess: dashboards reference tenant widgets as tenant.<fqn>
+WIDGET_FULL_FQN = "tenant." + WIDGET_FQN  # confirmed live (4.3.1): typeFullFqn and the ?fqn= query are scope-qualified; the stored fqn stays bare
 LATEST_FQN = "system.cards.entities_table"  # latest-values table, as used in the Firmware demo dashboard
 DASHBOARD_TITLE = "Fishpump — ทดสอบ"
 DEFAULT_DEVICE = "fishpump-1de564"
@@ -147,9 +147,38 @@ BROKEN_FIXTURE = [
 ]
 
 
+class _RecordingApi:
+    """Fake api for the offline lookup test: records GET params, answers 404 (type missing)."""
+    def __init__(self):
+        self.gets = []
+
+    def get(self, path, params=None, **kw):
+        self.gets.append((path, dict(params or {})))
+        return None
+
+    def post(self, path, body=None, params=None, **kw):
+        return {"id": {"id": "fake"}}
+
+
+def widget_lookup_problem():
+    import contextlib
+    import io
+    api = _RecordingApi()
+    with contextlib.redirect_stdout(io.StringIO()):
+        ensure_widget_type(api)
+    want = [(P_WIDGET_TYPE, {"fqn": WIDGET_FULL_FQN})]
+    if api.gets != want or WIDGET_FULL_FQN != "tenant.fishpump_rpc_panel":
+        return "widget type lookup must GET %s?fqn=tenant.fishpump_rpc_panel (TB rejects a bare fqn), got %r" % (
+            P_WIDGET_TYPE, api.gets)
+    return None
+
+
 def run_check(pages_file=PAGES_FILE, cases_file=CASES_FILE):
     """Returns the problem list for the real files (plus the self-test of the checker itself)."""
     problems = []
+    lookup = widget_lookup_problem()
+    if lookup:
+        problems.append(lookup)
     if not check_pages(BROKEN_FIXTURE, {}):
         problems.append("internal: the checker accepted a deliberately broken fixture")
     try:
@@ -268,7 +297,7 @@ def build_dashboard(pages, device_name, existing=None):
 
 def ensure_widget_type(api):
     doc = json.loads(WIDGET_FILE.read_text(encoding="utf-8"))
-    existing = api.get(P_WIDGET_TYPE, {"fqn": WIDGET_FQN}, ok404=True)
+    existing = api.get(P_WIDGET_TYPE, {"fqn": WIDGET_FULL_FQN}, ok404=True)
     if existing and existing.get("fqn") == WIDGET_FQN and (existing.get("tenantId") or {}).get("id") != \
             "13814000-1dd2-11b2-8080-808080808080":
         body = dict(existing)
