@@ -19,6 +19,7 @@ void app_main(void)
     test_dry_run_config();
     test_dry_run_machine();
     test_tb_link();
+    test_device_api();
 
     if (g_fail == 0) {
         ESP_LOGI("selftest", "SELFTEST PASS (%d checks)", g_pass);

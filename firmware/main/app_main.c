@@ -29,6 +29,7 @@
 #include "dry_run_logic.h"
 #include "uplink.h"
 #include "time_sync.h"
+#include "device_api.h"
 #include "tb_link.h"
 #include "web_server.h"
 #include "wifi_manager.h"
@@ -834,6 +835,7 @@ void app_main(void) {
   esp_log_level_set("uplink", ESP_LOG_INFO);
   esp_log_level_set("time_sync", ESP_LOG_INFO);
   esp_log_level_set("tb_link", ESP_LOG_INFO);
+  esp_log_level_set("device_api", ESP_LOG_INFO); /* one line per WRITE call, never params */
   esp_log_level_set("dns_server",
                     ESP_LOG_WARN); /* DNS very chatty — WARN only */
   esp_log_level_set("session",
@@ -1222,6 +1224,11 @@ void app_main(void) {
     } else {
       ESP_LOGI(TAG, "Wi-Fi auto-connect is disabled; staying in AP-only mode");
     }
+  }
+
+  /* 3c. Method table used by the web handlers and the ThingsBoard RPC worker */
+  if (device_api_init() != ESP_OK) {
+    ESP_LOGE(TAG, "device_api init failed");
   }
 
   /* 4. Start HTTP server */

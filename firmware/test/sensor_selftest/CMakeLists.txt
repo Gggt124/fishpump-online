@@ -13,6 +13,7 @@ set(EXTRA_COMPONENT_DIRS
     ../../components/dry_run_logic
     ../../components/uplink_format
     ../../components/tb_link_logic
+    ../../components/device_api
     ../../managed_components/espressif__cjson
 )
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

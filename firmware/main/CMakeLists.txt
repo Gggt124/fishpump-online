@@ -68,6 +68,7 @@ idf_component_register(
         time_sync
         tb_link
         tb_link_logic
+        device_api
         water_quality
         wifi_manager
         esp_http_server
