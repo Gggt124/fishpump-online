@@ -371,7 +371,7 @@ Six keys. Each value is built from one or more reads.
 | `cfg_cooling` | `cooling.config.get` without `ok`, `status` |
 | `cfg_protection` | `protection.get` without `ok`, `pump_status` |
 | `hardware_map` | `hardware.map.get` without `ok`, `options` |
-| `wifi` | Built field by field. From `status.get`: `ssid` (from `sta_ssid`), `ip` (from `sta_ip`), `mode` (from `wifi_mode`), `ap_enabled`. From `wifi.profiles.get`: `auto_index`, `profiles` as a list of `{ssid, auto, connected}`. `auto` is the `auto` of the profile with `connected: true`, else false. |
+| `wifi` | Built field by field. From `status.get`: `ssid` (from `sta_ssid`), `ip` (from `sta_ip`), `mode` (from `wifi_mode`), `ap_enabled`. From `wifi.profiles.get`: `auto_index`, `profiles` as a list of `{ssid, auto, connected}`. The top-level `auto` boolean is the `auto` of the profile with `connected: true`, false when none is connected. |
 | `tb_link` | `{"device_name", "fw_version"}`: the device name from the link config and `APP_TEMPLATE_FIRMWARE_VERSION`. Nothing else of the link config is read. |
 
 Notes:
@@ -406,7 +406,7 @@ One flat object. The first 28 rows come from `uplink_status_flatten` of the `pum
 | `cooling_mode_name` | `cooling.status` | `mode` | string | yes |
 | `cooling_auto_enable` | `cooling.status` | `auto_enable` | bool | yes |
 | `cooling_sensor_state` | `cooling.status` | `sensor_state` | string | yes |
-| `cooling_fault_code` | `cooling.status` | `fault_code` | number | yes |
+| `cooling_fault_code` | `cooling.status` | `fault_code` | string | yes |
 | `cooling_demand` | `cooling.status` | `cooling_demand` | bool | yes |
 | `cooling_blocked_reason` | `cooling.status` | `blocked_reason` | string | yes |
 | `cooling_temp_valid` | `cooling.status` | `temperature_valid` | bool | yes |
