@@ -357,9 +357,14 @@ class _GetOnlyTb(tb_api.TbApi):
         return self.reply
 
 
-def _follow_scenario(lag=2, never=False):
+class _FakeTbBoom(_FakeTbAttr):
+    def client_attributes(self, dev, keys):
+        raise RuntimeError("boom")
+
+
+def _follow_scenario(lag=2, never=False, boom=False):
     rules = [{"id": 3, "enabled": False, "delay_sec": 4}]
-    tb = _FakeTbAttr(rules, lag, never)
+    tb = (_FakeTbBoom if boom else _FakeTbAttr)(rules, lag, never)
     r = Runner(tb, "dev", _FakeBoard(rules), state={"follow_timeout_s": 5, "follow_pass_s": 3})
     case = dict(json.loads(CASES_FILE.read_text(encoding="utf-8"))["alarms"]["writes"][0],
                 attr={"key": "cfg_t", "path": "x.v"})
@@ -419,6 +424,20 @@ def selftest_state(check):
         check("follow: the attribute updating after 2 polls is PASS with both delays",
               len(fr) == 1 and fr[0][0] == "PASS" and "follow" in fr[0][2] and " s / " in fr[0][2]
               and rules[0]["delay_sec"] == 4)
+        class _Down:
+            def request(self, verb, path, body=None):
+                raise board_http.BoardError("GET %s: connection refused" % path)
+        r = Runner(_FakeTbState({"cfg_pump": {"a": 1}, "wifi": {"x": 1}}), "dev", _Down())
+        _quiet(r.run_attr, case, [])
+        _quiet(r.run_attr_present, "wifi")
+        check("attr with an unreachable board is a FAIL row and the run goes on",
+              r.rows[0][0] == "FAIL" and "refused" in r.rows[0][2] and r.rows[1][0] == "PASS")
+        clock[0] = 0.0
+        r, rules = _follow_scenario(boom=True)
+        fr = [row for row in r.rows if row[1].endswith("follow")]
+        check("follow: an unexpected exception is FAIL and the restore still happened",
+              len(fr) == 1 and fr[0][0] == "FAIL" and "boom" in fr[0][2] and rules[0]["delay_sec"] == 4
+              and not r.stop_writes)
         clock[0] = 0.0
         r, rules = _follow_scenario(never=True)
         fr = [row for row in r.rows if row[1].endswith("follow")]
@@ -737,7 +756,7 @@ class Runner:
             try:
                 value = self.tb.client_attributes(self.device_id, [attr["key"]]).get(attr["key"])
                 last = "(attribute missing)" if value is None else get_path(value, attr["path"])
-            except (tb_api.TbError, KeyError, IndexError, TypeError, AttributeError) as e:
+            except Exception as e:  # nothing here may skip the restore that follows
                 last = "(error: %s)" % e
             if last == want:
                 return _now() - start, last
@@ -769,7 +788,10 @@ class Runner:
             return self.report("FAIL", name, str(e))
         if c["key"] not in got:
             return self.report("FAIL", name, "attribute missing in ThingsBoard")
-        hs, hb = self.http("GET", c["http"])
+        try:
+            hs, hb = self.http("GET", c["http"])
+        except board_http.BoardError as e:
+            return self.report("FAIL", name, "board not reachable: %s" % e)
         if self.default_pw(hs, hb):
             return self.report("SKIP", name, FORCE_PW_MSG)
         if hs != 200 or not isinstance(hb, dict):
