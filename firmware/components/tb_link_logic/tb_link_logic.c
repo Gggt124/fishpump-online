@@ -320,3 +320,78 @@ int tb_rpc_response_topic(uint32_t req_id, char *out, size_t out_size)
     }
     return n;
 }
+
+uint32_t tb_rpc_hash(const char *data, size_t len)
+{
+    uint32_t h = 2166136261u; /* FNV-1a */
+    for (size_t i = 0; data != NULL && i < len; i++) {
+        h ^= (uint8_t)data[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+void tb_rpc_dedup_init(tb_rpc_dedup_t *d)
+{
+    if (d != NULL) {
+        memset(d, 0, sizeof(*d));
+    }
+}
+
+static bool dedup_live(const tb_rpc_dedup_entry_t *e, uint32_t now_ms)
+{
+    return e->used && (uint32_t)(now_ms - e->at_ms) <= TB_RPC_DEDUP_WINDOW_MS;
+}
+
+static bool dedup_match(const tb_rpc_dedup_entry_t *e, uint32_t req_id, uint32_t len, uint32_t hash)
+{
+    return e->used && e->req_id == req_id && e->len == len && e->hash == hash;
+}
+
+int tb_rpc_dedup_find(const tb_rpc_dedup_t *d, uint32_t req_id, const char *payload, size_t len, uint32_t now_ms)
+{
+    if (d == NULL || payload == NULL) {
+        return -1;
+    }
+    uint32_t hash = tb_rpc_hash(payload, len);
+    for (int i = 0; i < TB_RPC_DEDUP_SLOTS; i++) {
+        if (dedup_match(&d->e[i], req_id, (uint32_t)len, hash) && dedup_live(&d->e[i], now_ms)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int tb_rpc_dedup_insert(tb_rpc_dedup_t *d, uint32_t req_id, const char *payload, size_t len, uint32_t now_ms)
+{
+    if (d == NULL || payload == NULL) {
+        return -1;
+    }
+    uint32_t hash = tb_rpc_hash(payload, len);
+    int slot = -1;
+    for (int i = 0; i < TB_RPC_DEDUP_SLOTS && slot < 0; i++) {
+        if (dedup_match(&d->e[i], req_id, (uint32_t)len, hash)) {
+            slot = i; /* same key: refresh in place */
+        }
+    }
+    for (int i = 0; i < TB_RPC_DEDUP_SLOTS && slot < 0; i++) {
+        if (!dedup_live(&d->e[i], now_ms)) {
+            slot = i; /* free or expired */
+        }
+    }
+    if (slot < 0) {
+        slot = 0; /* all live: evict the oldest insert */
+        for (int i = 1; i < TB_RPC_DEDUP_SLOTS; i++) {
+            if ((int32_t)(d->e[i].seq - d->e[slot].seq) < 0) {
+                slot = i;
+            }
+        }
+    }
+    d->e[slot] = (tb_rpc_dedup_entry_t){.used = true,
+                                        .req_id = req_id,
+                                        .len = (uint32_t)len,
+                                        .hash = hash,
+                                        .at_ms = now_ms,
+                                        .seq = ++d->seq};
+    return slot;
+}

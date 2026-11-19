@@ -74,6 +74,36 @@ tb_rpc_parse_t tb_rpc_parse_request(const char *payload, size_t len, char *metho
 /* "v1/devices/me/rpc/response/<id>" into out; returns its length, or -1 when it does not fit with the NUL. */
 int tb_rpc_response_topic(uint32_t req_id, char *out, size_t out_size);
 
+/* ---- RPC duplicate suppression (ring of the last handled requests) ----
+ * ThingsBoard re-sends a pending request after a re-subscribe, and the id counter can restart, so the key is the
+ * request id + payload length + a hash of the payload bytes. A hit inside the window means: re-publish the cached
+ * reply, do not run the method again. The ring holds keys only; the caller keeps the reply bytes per slot. */
+#define TB_RPC_DEDUP_SLOTS     4
+#define TB_RPC_DEDUP_WINDOW_MS 30000u /* longer than the widget's 10 s timeout */
+
+typedef struct {
+    bool used;
+    uint32_t req_id;
+    uint32_t len;
+    uint32_t hash;
+    uint32_t at_ms;
+    uint32_t seq; /* insert order, for eviction */
+} tb_rpc_dedup_entry_t;
+
+typedef struct {
+    tb_rpc_dedup_entry_t e[TB_RPC_DEDUP_SLOTS];
+    uint32_t seq;
+} tb_rpc_dedup_t;
+
+/* FNV-1a 32 bit over the bytes */
+uint32_t tb_rpc_hash(const char *data, size_t len);
+void tb_rpc_dedup_init(tb_rpc_dedup_t *d);
+/* Slot of an entry with this key that is at most TB_RPC_DEDUP_WINDOW_MS old (uint32 ms subtraction), else -1. */
+int tb_rpc_dedup_find(const tb_rpc_dedup_t *d, uint32_t req_id, const char *payload, size_t len, uint32_t now_ms);
+/* Record a handled request and return its slot: the slot of the same key if present, else a free or expired
+ * slot, else the oldest entry (evicted). The caller replaces that slot's cached reply. */
+int tb_rpc_dedup_insert(tb_rpc_dedup_t *d, uint32_t req_id, const char *payload, size_t len, uint32_t now_ms);
+
 #ifdef __cplusplus
 }
 #endif

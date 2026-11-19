@@ -702,6 +702,25 @@ static bool rpc_publish(uint32_t gen, uint32_t req_id, const char *body)
     return id >= 0;
 }
 
+/* Last handled requests, keyed by id + payload length + payload hash (tb_link_logic). ThingsBoard re-sends a
+ * pending request after a re-subscribe, and a reply can be lost while the link is down: a repeat inside the
+ * window gets the cached reply and the method does not run again. Only the tb_rpc task touches these. */
+static tb_rpc_dedup_t s_rpc_dedup;
+static char *s_rpc_dedup_reply[TB_RPC_DEDUP_SLOTS]; /* heap, NUL terminated; NULL = nothing cached */
+
+static char *rpc_dup_string(const char *src)
+{
+    size_t n = strlen(src) + 1;
+    char *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (p == NULL) {
+        p = heap_caps_malloc(n, MALLOC_CAP_8BIT); /* boards without PSRAM */
+    }
+    if (p != NULL) {
+        memcpy(p, src, n);
+    }
+    return p;
+}
+
 /* Runs one request and sends its reply. Frees the payload. Params and replies are never logged. */
 static void rpc_process(rpc_item_t *it)
 {
@@ -712,8 +731,17 @@ static void rpc_process(rpc_item_t *it)
     const char *body = NULL;
     const char *status = "?";
 
+    uint32_t t_ms = (uint32_t)now_ms();
+    int dup = tb_rpc_dedup_find(&s_rpc_dedup, it->req_id, it->payload, it->len, t_ms);
     tb_rpc_parse_t pr = tb_rpc_parse_request(it->payload, it->len, method, sizeof(method), &params);
-    rpc_item_free(it);
+    if (dup >= 0 && s_rpc_dedup_reply[dup] != NULL) {
+        cJSON_Delete(params);
+        (void)rpc_publish(it->gen, it->req_id, s_rpc_dedup_reply[dup]);
+        ESP_LOGI(TAG, "rpc %s id=%lu -> duplicate, cached reply", method[0] != '\0' ? method : "-",
+                 (unsigned long)it->req_id);
+        rpc_item_free(it);
+        return;
+    }
     if (pr == TB_RPC_PARSE_BAD_JSON) {
         body = TB_RPC_BODY_INVALID_JSON;
         status = "invalid_json";
@@ -730,6 +758,20 @@ static void rpc_process(rpc_item_t *it)
     }
     cJSON_Delete(params);
     cJSON_Delete(out);
+
+    /* Remember the request and its reply before publishing, so a dropped reply is still answered next time.
+     * No memory for the copy: do not cache. */
+    char *copy = rpc_dup_string(body);
+    if (copy != NULL) {
+        int slot = tb_rpc_dedup_insert(&s_rpc_dedup, it->req_id, it->payload, it->len, t_ms);
+        if (slot >= 0) {
+            free(s_rpc_dedup_reply[slot]);
+            s_rpc_dedup_reply[slot] = copy;
+        } else {
+            free(copy);
+        }
+    }
+    rpc_item_free(it);
 
     bool sent = rpc_publish(it->gen, it->req_id, body);
     ESP_LOGI(TAG, "rpc %s id=%lu -> %s%s", method[0] != '\0' ? method : "-", (unsigned long)it->req_id, status,

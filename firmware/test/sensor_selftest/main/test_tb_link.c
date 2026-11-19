@@ -269,4 +269,54 @@ void test_tb_link(void)
         CHECK(tb_rpc_response_topic(17, buf, 30) == 29);
         CHECK(tb_rpc_response_topic(4294967295u, buf, sizeof(buf)) == 37);
     }
+
+    /* RPC duplicate suppression */
+    {
+        const char *pa = "{\"method\":\"pump.stop\"}";
+        const char *pb = "{\"method\":\"pump.start\"}";
+        size_t la = strlen(pa), lb = strlen(pb);
+        CHECK(tb_rpc_hash(pa, la) != tb_rpc_hash(pb, lb));
+        CHECK(tb_rpc_hash(pa, la) == tb_rpc_hash(pa, la));
+        tb_rpc_dedup_t d;
+        tb_rpc_dedup_init(&d);
+        CHECK(tb_rpc_dedup_find(&d, 90, pa, la, 1000) == -1); /* empty ring */
+        int s90 = tb_rpc_dedup_insert(&d, 90, pa, la, 1000);
+        CHECK(s90 >= 0 && s90 < TB_RPC_DEDUP_SLOTS);
+        CHECK(tb_rpc_dedup_find(&d, 90, pa, la, 1000) == s90);
+        CHECK(tb_rpc_dedup_find(&d, 90, pa, la, 1000 + 29999) == s90);       /* inside the window */
+        CHECK(tb_rpc_dedup_find(&d, 90, pa, la, 1000 + 30000) == s90);       /* edge: 30 s old still hits */
+        CHECK(tb_rpc_dedup_find(&d, 90, pa, la, 1000 + 30001) == -1);        /* after 30 s */
+        CHECK(tb_rpc_dedup_find(&d, 90, pb, lb, 1000) == -1);                /* same id, other payload */
+        CHECK(tb_rpc_dedup_find(&d, 90, pa, la - 1, 1000) == -1);            /* same id, other length */
+        CHECK(tb_rpc_dedup_find(&d, 91, pa, la, 1000) == -1);                /* other id, same payload */
+        /* re-insert of the same key reuses its slot and refreshes the time */
+        CHECK(tb_rpc_dedup_insert(&d, 90, pa, la, 20000) == s90);
+        CHECK(tb_rpc_dedup_find(&d, 90, pa, la, 49000) == s90);
+
+        /* eviction: four slots, the fifth key evicts the oldest */
+        tb_rpc_dedup_init(&d);
+        int sl[5];
+        for (uint32_t i = 0; i < 4; i++) {
+            sl[i] = tb_rpc_dedup_insert(&d, 100 + i, pa, la, 5000 + i);
+        }
+        CHECK(sl[0] != sl[1] && sl[1] != sl[2] && sl[2] != sl[3] && sl[0] != sl[3]);
+        sl[4] = tb_rpc_dedup_insert(&d, 104, pa, la, 5010);
+        CHECK(sl[4] == sl[0]);
+        CHECK(tb_rpc_dedup_find(&d, 100, pa, la, 5010) == -1);
+        CHECK(tb_rpc_dedup_find(&d, 101, pa, la, 5010) == sl[1]);
+        CHECK(tb_rpc_dedup_find(&d, 104, pa, la, 5010) == sl[4]);
+        /* an expired entry's slot is taken before a live one is evicted */
+        tb_rpc_dedup_init(&d);
+        int e0 = tb_rpc_dedup_insert(&d, 1, pa, la, 0);
+        (void)tb_rpc_dedup_insert(&d, 2, pa, la, 20000);
+        (void)tb_rpc_dedup_insert(&d, 3, pa, la, 20001);
+        (void)tb_rpc_dedup_insert(&d, 4, pa, la, 20002);
+        CHECK(tb_rpc_dedup_insert(&d, 5, pa, la, 40003) == e0);
+        CHECK(tb_rpc_dedup_find(&d, 2, pa, la, 40003) >= 0);
+        /* uint32 ms wrap: subtraction still works */
+        tb_rpc_dedup_init(&d);
+        int w = tb_rpc_dedup_insert(&d, 7, pa, la, 0xffffff00u);
+        CHECK(tb_rpc_dedup_find(&d, 7, pa, la, 0x00000100u) == w);
+        CHECK(tb_rpc_dedup_find(&d, 7, NULL, 0, 0) == -1);
+    }
 }
