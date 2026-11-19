@@ -193,9 +193,9 @@ def test_api():
     assert_test("dry_run_add_status_gen(" in function_body(ws, "handle_api_pump_status")
                 and '"dry_run"' in function_body(ws, "dry_run_add_status_gen"),
                 "GET /api/pump/status adds dry_run")
-    assert_test("ALARM_SYSTEM_ID_DRY_RUN" in function_body(ws, "handle_api_alarms_status"),
+    assert_test("ALARM_SYSTEM_ID_DRY_RUN" in function_body(read(MAIN_DIR / "dapi_alarms.c"), "dapi_alarms_status"),
                 "alarms status adds dry_run detail to the system alarm")
-    assert_test("ALARM_MAX_RULES + ALARM_ENGINE_MAX_SYSTEM" in function_body(ws, "handle_api_alarms_status"),
+    assert_test("ALARM_MAX_RULES + ALARM_ENGINE_MAX_SYSTEM" in function_body(read(MAIN_DIR / "dapi_alarms.c"), "dapi_alarms_status"),
                 "alarms status sizes active buffer for system alarms")
     hdr = read(COMP_DIR / "alarm_engine" / "include" / "alarm_engine.h")
     assert_test(re.search(r"alarm_engine_get_active[^\n]*system", hdr, re.I) is not None,

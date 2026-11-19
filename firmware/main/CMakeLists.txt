@@ -32,6 +32,8 @@ idf_component_register(
     SRCS
         "app_main.c"
         "web_server.c"
+        "api_json.c"
+        "dapi_alarms.c"
     INCLUDE_DIRS
         "."
     EMBED_FILES

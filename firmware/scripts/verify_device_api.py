@@ -96,9 +96,82 @@ def test_app_main():
                 "device_api_init() is called before the first web_server_start()")
 
 
+def method_table_entry(src, name, flags, max_bytes):
+    pat = (r'\{\s*"' + re.escape(name) + r'"\s*,\s*' + flags + r'\s*,\s*' + max_bytes + r'\s*,\s*\w+\s*\}')
+    return re.search(pat, src) is not None
+
+
+def check_group(title, file_name, register_fn, methods, handlers, forbidden):
+    """methods: (name, flags regex, max bytes regex); handlers: (handler, method)."""
+    print(f"\n--- {title} group ---")
+    ws = read(MAIN_DIR / "web_server.c")
+    src = read(MAIN_DIR / file_name)
+    assert_test(bool(src), f"{file_name} exists")
+    assert_test(f"{file_name}" in read(MAIN_DIR / "CMakeLists.txt"), f"{file_name} is in main/CMakeLists.txt")
+    assert_test(re.search(r"void\s+" + register_fn + r"\s*\(\s*void\s*\)", src) is not None
+                and "device_api_register(" in src, f"{register_fn} registers the table")
+    start = function_body(ws, "web_server_start", r"bool\s+")
+    assert_test(register_fn + "()" in start, f"web_server_start calls {register_fn}()")
+    assert_test(start.find(register_fn + "()") < start.find("httpd_start("),
+                f"{register_fn}() runs before the server starts")
+    for name, flags, max_bytes in methods:
+        assert_test(method_table_entry(src, name, flags, max_bytes), f"table entry {name} {flags} {max_bytes}")
+    for handler, method in handlers:
+        body = function_body(ws, handler)
+        assert_test(f'http_dapi(req, "{method}"' in body, f"{handler} calls http_dapi(req, \"{method}\"")
+        bad = [p for p in forbidden if re.search(r"\b" + p, body)]
+        assert_test(not bad, f"{handler} holds no engine calls", ", ".join(bad))
+
+
+def test_http_dapi():
+    print("\n--- http_dapi ---")
+    ws = read(MAIN_DIR / "web_server.c")
+    body = function_body(ws, "http_dapi")
+    assert_test(bool(body), "http_dapi exists in web_server.c")
+    assert_test("device_api_call(" in body and "DAPI_SRC_HTTP" in body, "http_dapi calls device_api_call with DAPI_SRC_HTTP")
+    assert_test("device_api_http_status(" in body, "http_dapi maps the status through device_api_http_status")
+    assert_test("cJSON_PrintUnformatted" in body and "send_json(" in body, "http_dapi prints unformatted and sends with send_json")
+    assert_test('"memory"' in body and "JSON allocation failed" in body, "http_dapi keeps the memory reply for a NULL out")
+
+
+def test_alarms_group():
+    methods = [
+        ("alarms.signals", r"DAPI_F_READ", "0"),
+        ("alarms.values", r"DAPI_F_READ", "0"),
+        ("alarms.status", r"DAPI_F_READ", "0"),
+        ("alarms.summary", r"DAPI_F_READ", "0"),
+        ("alarms.rules.get", r"DAPI_F_READ", "0"),
+        ("alarms.rules.set", r"DAPI_F_WRITE", "ALARM_POST_BODY_BYTES"),
+        ("alarms.rules.delete", r"DAPI_F_WRITE", "ALARM_POST_BODY_BYTES"),
+        ("alarms.ack", r"DAPI_F_WRITE", "ALARM_POST_BODY_BYTES"),
+    ]
+    handlers = [
+        ("handle_api_alarms_signals", "alarms.signals"),
+        ("handle_api_alarms_values", "alarms.values"),
+        ("handle_api_alarms_status", "alarms.status"),
+        ("handle_api_alarms_summary", "alarms.summary"),
+        ("handle_api_alarms_rules_get", "alarms.rules.get"),
+        ("handle_api_alarms_rules_post", "alarms.rules.set"),
+        ("handle_api_alarms_rules_delete", "alarms.rules.delete"),
+        ("handle_api_alarms_ack", "alarms.ack"),
+    ]
+    forbidden = ["alarm_engine_", "alarm_rule_", "signal_registry_", "telemetry_hub_get_latest"]
+    check_group("alarms", "dapi_alarms.c", "dapi_alarms_register", methods, handlers, forbidden)
+    ws = read(MAIN_DIR / "web_server.c")
+    for h in ("handle_api_alarms_rules_post", "handle_api_alarms_rules_delete", "handle_api_alarms_ack"):
+        body = function_body(ws, h)
+        assert_test("api_begin_json_post(" in body and "cJSON_Delete(root)" in body, f"{h} keeps its body pre-check and frees the tree")
+    for h in ("handle_api_alarms_signals", "handle_api_alarms_values", "handle_api_alarms_status",
+              "handle_api_alarms_summary", "handle_api_alarms_rules_get"):
+        assert_test("require_auth(req)" in function_body(ws, h) and "alarms_unauthorized(req)" in function_body(ws, h),
+                    f"{h} keeps its unauthorized pre-check")
+
+
 if __name__ == "__main__":
     test_component()
     test_logging_and_lock()
     test_app_main()
+    test_http_dapi()
+    test_alarms_group()
     print(f"\nPassed: {passed_tests}  Failed: {failed_tests}")
     sys.exit(1 if failed_tests else 0)

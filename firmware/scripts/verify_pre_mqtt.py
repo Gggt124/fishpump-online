@@ -161,10 +161,10 @@ def test_task4():
                 "warning and info leave the external LED following the AP (spec 2.4)")
     assert_test(re.search(r"ALARM_LED_CRITICAL\)\s*\{[^}]*update_status_leds\(s_led_state,\s*blink,\s*blink\)", app) is not None,
                 "critical keeps blinking both LEDs as in the base")
-    counts = function_body(web, "alarms_add_counts")
+    counts = function_body(read(MAIN_DIR / "dapi_alarms.c"), "alarms_add_counts")
     assert_test('"warning_unacked"' in counts and '"info_unacked"' in counts,
                 "alarms_add_counts emits warning_unacked and info_unacked")
-    summ = function_body(web, "handle_api_alarms_summary")
+    summ = function_body(read(MAIN_DIR / "dapi_alarms.c"), "dapi_alarms_summary")
     assert_test('"last_critical_seq"' in summ, "the summary handler emits last_critical_seq")
     assert_test("last_critical_seq" in eng_h, "alarm_engine_summary_t has last_critical_seq")
     rec = function_body(eng, "record_event_for")
@@ -417,7 +417,7 @@ def test_bench_followups():
     uf = read(COMP_DIR / "uplink_format" / "uplink_format.c")
     assert_test("alarm_json_number(e->value)" in uf, "uplink event value goes through alarm_json_number")
     web = read(MAIN_DIR / "web_server.c")
-    av = function_body(web, "alarms_add_value", r"static\s+void\s+")
+    av = function_body(read(MAIN_DIR / "dapi_alarms.c"), "alarms_add_value", r"static\s+void\s+")
     assert_test("alarm_json_number(" in av, "web alarm values go through alarm_json_number")
 
     app = read(MAIN_DIR / "app_main.c")
