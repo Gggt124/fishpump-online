@@ -7,6 +7,7 @@ access token, publishes over MQTT with mqtt_mini, prints a PASS/FAIL table and
 exits with the number of failures. Run tb_setup.py first.
 """
 import argparse
+import json
 import sys
 import time
 import urllib.parse
@@ -28,7 +29,6 @@ class Ctx:
         self._alarm_path = None
 
     def publish(self, obj):
-        import json
         c = MqttClient(self.host, self.mqtt_port, client_id=DEVICE_NAME, username=self.token)
         c.connect()
         c.publish(TOPIC_TELEMETRY, json.dumps(obj))
@@ -162,12 +162,51 @@ def get_or_replace_device(api, profile):
                                     "deviceProfileId": profile["id"]})
 
 
+def print_diagnostics(api, device_id):
+    """Dump what is needed to debug a failed run: server attributes and node failure events."""
+    print()
+    print("--- diagnostics ---")
+    try:
+        attrs = api.get("/api/plugins/telemetry/DEVICE/%s/values/attributes/SERVER_SCOPE" % device_id)
+        print("device SERVER_SCOPE attributes: %s" % json.dumps(attrs, ensure_ascii=False))
+    except TbError as e:
+        print("could not read attributes: %s" % e)
+    try:
+        tenant = api.get("/api/auth/user")["tenantId"]["id"]
+        chain = api.find_by_name("/api/ruleChains", "fishpump")
+        meta = api.get("/api/ruleChain/%s/metadata" % chain["id"]["id"])
+    except (TbError, KeyError, TypeError) as e:
+        print("could not locate the rule chain: %s" % e)
+        return
+    shown = 0
+    for node in meta.get("nodes", []):
+        nid = node["id"]["id"]
+        res = None
+        for path in ("/api/events/RULE_NODE/%s/DEBUG_RULE_NODE" % nid, "/api/events/RULE_NODE/%s" % nid):
+            try:
+                res = api.get(path, {"tenantId": tenant, "pageSize": 5, "page": 0,
+                                     "sortProperty": "ts", "sortOrder": "DESC"}, ok404=True)
+            except TbError as e:
+                print("  events for %s: %s" % (node.get("name"), e))
+                break
+            if res is not None:
+                break
+        for e in (res or {}).get("data", []):
+            body = e.get("body", e)
+            print("  node %-28s ts=%s type=%s msgType=%s relation=%s error=%s" % (
+                node.get("name"), e.get("createdTime", e.get("ts")), body.get("type"), body.get("msgType"),
+                body.get("relationType"), body.get("error")))
+            shown += 1
+    if not shown:
+        print("  no rule node debug events found (debugSettings failuresEnabled may not be applied)")
+
+
 def main():
     utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_common_args(ap)
     ap.add_argument("--mqtt-port", type=int, default=1883, help="MQTT port (default %(default)s)")
-    ap.add_argument("--keep", action="store_true", help="do not delete the test device at the end")
+    ap.add_argument("--keep", action="store_true", help="keep the test device even when all cases pass (it is always kept on failure)")
     args = ap.parse_args()
     api = connect_from_args(args, ap)
     host = urllib.parse.urlparse(args.url).hostname
@@ -187,19 +226,24 @@ def main():
         rows = run_cases(Ctx(api, host, args.mqtt_port, token, did))
     except (TbError, MqttError, OSError) as e:
         print("ERROR: %s" % e, file=sys.stderr)
+        if device is not None:
+            print_diagnostics(api, device["id"]["id"])
         return 1
-    finally:
-        if device is not None and not args.keep:
-            try:
-                api.delete("/api/device/%s" % device["id"]["id"])
-            except TbError as e:
-                print("warning: could not delete %s: %s" % (DEVICE_NAME, e), file=sys.stderr)
     fails = 0
     print()
     for name, ok, detail in rows:
         print("%-4s %-52s %s" % ("PASS" if ok else "FAIL", name, detail))
         fails += 0 if ok else 1
     print("\n%d/%d PASS" % (len(rows) - fails, len(rows)))
+    if fails:
+        print_diagnostics(api, device["id"]["id"])
+        print()
+        print("test device %s KEPT for inspection (the next run replaces it)" % DEVICE_NAME)
+    elif not args.keep:
+        try:
+            api.delete("/api/device/%s" % device["id"]["id"])
+        except TbError as e:
+            print("warning: could not delete %s: %s" % (DEVICE_NAME, e), file=sys.stderr)
     return min(fails, 255)
 
 

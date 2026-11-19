@@ -17,7 +17,11 @@
       {
         "type": "org.thingsboard.rule.engine.filter.TbMsgTypeSwitchNode",
         "name": "Message Type Switch",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
@@ -31,7 +35,11 @@
       {
         "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode",
         "name": "Save Timeseries",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
@@ -45,7 +53,11 @@
       {
         "type": "org.thingsboard.rule.engine.telemetry.TbMsgAttributesNode",
         "name": "Save Client Attributes",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
@@ -62,7 +74,11 @@
       {
         "type": "org.thingsboard.rule.engine.action.TbLogNode",
         "name": "Log RPC from Device",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
@@ -78,7 +94,11 @@
       {
         "type": "org.thingsboard.rule.engine.rpc.TbSendRPCRequestNode",
         "name": "RPC Call Request",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
@@ -92,7 +112,11 @@
       {
         "type": "org.thingsboard.rule.engine.action.TbLogNode",
         "name": "Log Other",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
@@ -108,7 +132,11 @@
       {
         "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode",
         "name": "Has alarm_event?",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
@@ -125,7 +153,11 @@
       {
         "type": "org.thingsboard.rule.engine.metadata.TbGetAttributesNode",
         "name": "Fetch last_alarm_event",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 1,
         "configuration": {
@@ -148,7 +180,11 @@
       {
         "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
         "name": "Normalize and dedupe",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
@@ -165,7 +201,11 @@
       {
         "type": "org.thingsboard.rule.engine.filter.TbJsSwitchNode",
         "name": "Route",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
@@ -181,7 +221,11 @@
       {
         "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode",
         "name": "Create Alarm CRITICAL",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
@@ -206,7 +250,11 @@
       {
         "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode",
         "name": "Create Alarm WARNING",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
@@ -231,7 +279,11 @@
       {
         "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode",
         "name": "Create Alarm INDETERMINATE",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
@@ -256,13 +308,17 @@
       {
         "type": "org.thingsboard.rule.engine.action.TbClearAlarmNode",
         "name": "Clear Alarm",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
           "scriptLang": "TBEL",
-          "alarmDetailsBuildJs": "return details;",
-          "alarmDetailsBuildTbel": "return details;",
+          "alarmDetailsBuildJs": "return msg;",
+          "alarmDetailsBuildTbel": "return msg;",
           "alarmType": "${alarmType}"
         },
         "additionalInfo": {
@@ -273,7 +329,11 @@
       {
         "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
         "name": "Build last_alarm_event",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
@@ -290,7 +350,11 @@
       {
         "type": "org.thingsboard.rule.engine.telemetry.TbMsgAttributesNode",
         "name": "Save last_alarm_event",
-        "debugMode": false,
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
         "singletonMode": false,
         "configurationVersion": 0,
         "configuration": {
