@@ -169,6 +169,17 @@
 
 **แก้แล้วในรอบแก้สุดท้าย (ไม่ต้องทำอีก):** Task 2 คอมเมนต์ layout v1; Task 6 verify เกือบ tautology; Task 7 poll วัดล้มเหลว 5 ครั้งแล้วบอร์ดอาจยังวัดอยู่ (ตอนนี้ sync ใหม่เมื่อ poll สถานะถัดไปสำเร็จ); เสียงบี๊ปค้างในแท็บที่ซ่อน
 
+### จาก milestone 2 ThingsBoard (device_api + RPC, ledger ตามลำดับ task) — ข้อที่แก้แล้วใน final review ไม่ได้ใส่ไว้
+- Task 1 (harness golden): "skipped in both" นับเป็น PASS · `cooling_mode_replay` เขียน `auto_enable` ด้วย (ต้องให้ mode กับ auto_enable ตรงกันก่อน capture) · selftest ของไฟล์ case ตรวจไม่กี่ endpoint · `--force` ไม่ข้ามการตรวจ poison (README ไม่บอก) — เหตุผล: เป็นตัวทดสอบ baseline จับไว้แล้ว
+- Task 2 (device_api): ขอบ `>= max_params_bytes` ตาราง method เต็ม และ busy ยังไม่มีเทสต์ · mutex ไม่ re-entrant (ห้ามเรียกซ้อน) · init ล้มเหลวแค่ log — เหตุผล: เกิดเฉพาะ OOM ตอนบูต หรือเป็นกติกาที่ verifier ตรวจ
+- Task 3 (tb_link RPC): คำขอที่ถูกดึงก่อนรื้อลิงก์ยังเรียก method (แค่ทิ้งคำตอบ) · `too_large`/`busy` ไม่มี log ฝั่งบอร์ด · log status ผิดตอนใช้ memory body · `tb_link_rpc_stack_hwm` เป็น int32_t · race `outbox_get_size` ของ esp-mqtt (upstream) · ชื่อ method ใน log ไม่ได้ทำความสะอาด (ผู้เรียกผ่านการยืนยันตัวแล้ว) · HWM ของ task esp-mqtt ไม่อยู่ใน BOARD_DIAG — เหตุผล: ไม่มีผลต่อปั๊ม แคช RPC ครอบกรณีส่งซ้ำแล้ว
+- Task 4: regex ตรวจ ack ใน `verify_alarm_system` ไม่ได้ตรวจจริง (เป็นมาก่อน) · GET ของ HTTP รอ mutex ได้ถึง 5 วินาที (bench F7 ไม่เจอ busy) · `rules.set` ถือ root ไว้ระหว่างเรียก engine · register ซ้ำเมื่อ httpd retry — เหตุผล: bench ผ่าน
+- Task 5 (widget/parity): case อ่านไม่ assert `ok` เป็น true · restore อาจทับการแก้จากเว็บที่เกิดพร้อมกัน · ข้อความ RESTORE FAILED ทำให้เข้าใจผิดเมื่ออ่านซ้ำจาก TB ล้มหลัง restore สำเร็จ · เทสต์ widget lookup ครอบแค่ทางสร้างใหม่ · `onInit` ไม่อยู่ใน `ngZone.run` — เหตุผล: เป็นเครื่องมือทดสอบ
+- Task 7–10: ไม่มี parity case ระดับ guard INVALID_ARG · `cases_for_selftest()` ซ้ำซ้อน · `api_pump_required_u32/bool` เป็นโค้ดตาย · ควรบันทึกรูปแบบ "omit" ของ parity case · `cooling.mode.set` แบบ no-op บังคับ `auto_enable` · การตรวจ substring ใน verifier อ่อน · case เขียนของ water เป็น no-op พิสูจน์ได้แค่ว่าเรียกถึง · restore ที่รับ 202 แข่งกับการเขียนที่เข้าคิว · ลำดับคำ "offset อุณหภูมิ" ต่างจากเว็บ "อุณหภูมิ offset" — เหตุผล: ความสวยงามของโค้ด/เครื่องมือทดสอบ
+- Task 11 (Wi-Fi): parity case connect/disconnect/forget จะทำของจริงถ้า LOCAL_ONLY หรือ guard พัง (ควรมีคำเตือนใน README) · อ่าน `params_from` ล้มแล้วได้ FAIL แทน SKIP · indent · selftest NO_LOCK ไม่ได้ตรวจเพดาน params · ที่มีอยู่ก่อน: `wifi_manager_cancel_scan` คืนค่าโดยไม่ล้าง callback ถ้ารอ mutex 5 วินาทีไม่ได้ (เกิดยาก) — เหตุผล: verifier ตรึง flag ไว้แล้ว
+- Task 12: `status.get` ตอน OOM ใช้ memory body ร่วม (อนุมัติแล้ว) · literal `body[512]` ของ hardware.map ซ้ำกับ macro · parity ของ status/uplink อาจกระพริบตอนสถานะเปลี่ยน · `status.get` คัดลอก 2 KB สองครั้ง — เหตุผล: เกิดเฉพาะ OOM หรือแค่ทดสอบ
+- Task 13: selftest ของ case เขียน pump ใช้ตัวอย่างคำตอบที่เขียนตายตัว (ถ้าเฟิร์มแวร์เพิ่ม key ต้องแก้ตาม) — เหตุผล: parity บนบอร์ดจริงจับได้อยู่แล้ว
+
 ### จากระบบป้องกันปั๊มเดินแห้ง (`2026-11-16-pump-dry-run-protection-results.md` ส่วน 4 และ 7) ที่ Task 6–7 ไม่ได้แก้
 
 (ข้อที่แก้แล้วในรอบนี้: การซ่อม raise/clear ของแจ้งเตือน, การอ่าน flow switch ไม่ได้ตอนวัด, ช่วงตัวเลขในการ์ด, ข้อความอธิบายเมื่อช่วงเปิดสั้น, poll ตอนซ่อนแท็บ, ฟอร์มไม่เติมค่าหลัง 503, poll วัดล้มเหลว, ข้อ "4." ซ้ำ, ขั้น bench stop ระหว่าง WAIT)
