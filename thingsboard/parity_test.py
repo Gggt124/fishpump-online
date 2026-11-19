@@ -28,12 +28,14 @@ FORCE_PW_MSG = "board web password is still the default"
 
 # ---------------------------------------------------------------- pure helpers (selftested)
 
-def strip_keys(obj, ignore):
-    """Deep copy without the ignored keys at any level."""
+def strip_keys(obj, ignore, path=""):
+    """Deep copy without the ignored keys. A plain name is ignored at any level; a dotted entry
+    ("status.output_mv") only at that path from the reply root (lists do not add a path segment)."""
     if isinstance(obj, dict):
-        return {k: strip_keys(v, ignore) for k, v in obj.items() if k not in ignore}
+        return {k: strip_keys(v, ignore, path + k + ".") for k, v in obj.items()
+                if k not in ignore and (path + k) not in ignore}
     if isinstance(obj, list):
-        return [strip_keys(v, ignore) for v in obj]
+        return [strip_keys(v, ignore, path) for v in obj]
     return obj
 
 
@@ -224,6 +226,10 @@ def selftest():
     check("ignore top", compare_bodies({"a": 1, "t": 5}, {"a": 1, "t": 9}, ["t"]) is None)
     check("ignore deep", compare_bodies({"l": [{"a": 1, "t": 1}]}, {"l": [{"a": 1, "t": 2}]}, ["t"]) is None)
     check("ignore keeps other", compare_bodies({"l": [{"a": 1, "t": 1}]}, {"l": [{"a": 2, "t": 1}]}, ["t"]) is not None)
+    check("ignore dotted path only at its path",
+          compare_bodies({"s": {"t": 1}, "t": 5}, {"s": {"t": 2}, "t": 5}, ["s.t"]) is None
+          and compare_bodies({"s": {"t": 1}, "t": 5}, {"s": {"t": 1}, "t": 6}, ["s.t"]) is not None
+          and compare_bodies({"s": {"t": 1}, "l": [{"t": 1}]}, {"s": {"t": 1}, "l": [{"t": 2}]}, ["s.t"]) is not None)
     check("error_code", error_code({"ok": False, "error": "x"}) == "x" and error_code({"ok": True}) is None)
     sample = {"ok": True, "rules": [{"id": 3, "delay_sec": 4, "enabled": False}, {"id": 7, "delay_sec": 9}], "max": 8}
     sub = {"RULE_ID": 7}

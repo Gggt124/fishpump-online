@@ -74,7 +74,7 @@
   "cooling": {
     "reads": [
       {"method": "cooling.status", "http": "/api/cooling/status", "ignore": ["temperature_c", "temperature_valid", "sensor_state", "fault", "fault_code", "relay_energized", "output_volts", "output_mv", "duty_percent", "lockout_active", "lockout_remaining_sec", "test_remaining_sec", "cooling_demand", "blocked_reason"]},
-      {"method": "cooling.config.get", "http": "/api/cooling/config", "ignore": ["temperature_c", "temperature_valid", "sensor_state", "fault", "fault_code", "relay_energized", "duty_percent", "lockout_active", "lockout_remaining_sec", "test_remaining_sec", "cooling_demand", "blocked_reason"]}
+      {"method": "cooling.config.get", "http": "/api/cooling/config", "ignore": ["status.temperature_c", "status.temperature_valid", "status.sensor_state", "status.fault", "status.fault_code", "status.relay_energized", "status.output_volts", "status.output_mv", "status.duty_percent", "status.lockout_active", "status.lockout_remaining_sec", "status.test_remaining_sec", "status.cooling_demand", "status.blocked_reason"]}
     ],
     "errors": [
       {"method": "cooling.config.set", "params": {}, "http": "/api/cooling/config", "error": "missing_field"},
