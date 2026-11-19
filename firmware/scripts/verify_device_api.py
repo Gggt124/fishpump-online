@@ -470,6 +470,28 @@ def test_hardware_group():
         assert_test(sym not in ws, f"web_server.c no longer holds {sym}")
 
 
+def test_final_review_guards():
+    print("\n--- final review: remote-only guards and re-delivery cache ---")
+    wifi = read(MAIN_DIR / "dapi_wifi.c")
+    pump = read(MAIN_DIR / "dapi_pump.c")
+    cool = read(MAIN_DIR / "dapi_cooling.c")
+    link = read(FIRMWARE_DIR / "components" / "tb_link" / "tb_link.c")
+    app = read(MAIN_DIR / "app_main.c")
+    assert_test("dapi_wifi_setauto_blocked(" in function_body(wifi, "dapi_wifi_profiles_setauto"),
+                "wifi.profiles.setauto asks dapi_wifi_setauto_blocked")
+    assert_test("dapi_wifi_save_password_blocked(" in function_body(wifi, "dapi_wifi_profiles_save"),
+                "wifi.profiles.save asks dapi_wifi_save_password_blocked")
+    assert_test("dapi_polarity_write_blocked(" in function_body(pump, "dapi_pump_config_set"),
+                "pump.config.set asks dapi_polarity_write_blocked")
+    assert_test("dapi_polarity_write_blocked(" in function_body(cool, "dapi_cooling_config_set"),
+                "cooling.config.set asks dapi_polarity_write_blocked")
+    body = function_body(link, "rpc_process")
+    assert_test("tb_rpc_dedup_find(" in body and "tb_rpc_dedup_insert(" in body and "duplicate, cached reply" in body,
+                "rpc_process answers a repeated request from the reply cache")
+    assert_test(re.search(r'esp_log_level_set\(\s*"dapi_wifi"\s*,\s*ESP_LOG_INFO\s*\)', app) is not None,
+                "app_main raises dapi_wifi to INFO")
+
+
 if __name__ == "__main__":
     test_component()
     test_logging_and_lock()
@@ -483,5 +505,6 @@ if __name__ == "__main__":
     test_wifi_group()
     test_status_group()
     test_hardware_group()
+    test_final_review_guards()
     print(f"\nPassed: {passed_tests}  Failed: {failed_tests}")
     sys.exit(1 if failed_tests else 0)

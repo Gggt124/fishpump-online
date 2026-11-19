@@ -47,7 +47,8 @@ esp_err_t device_api_register(const dapi_method_t *methods, size_t count);
 const dapi_method_t *device_api_find(const char *name);
 /* Number of registered methods. */
 size_t device_api_count(void);
-/* *out is always set; the caller deletes it. */
+/* *out is set to the reply object, or NULL when even the error reply could not be allocated (out of memory).
+ * The caller checks for NULL and deletes it otherwise. */
 dapi_status_t device_api_call(const char *method, const cJSON *params, dapi_source_t src, cJSON **out);
 const char *device_api_http_status(dapi_status_t st);
 /* {"ok":false,"error":code[,"message":message]}; message NULL -> no key. */

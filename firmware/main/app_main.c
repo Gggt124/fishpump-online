@@ -836,6 +836,7 @@ void app_main(void) {
   esp_log_level_set("time_sync", ESP_LOG_INFO);
   esp_log_level_set("tb_link", ESP_LOG_INFO);
   esp_log_level_set("device_api", ESP_LOG_INFO); /* one line per WRITE call, never params */
+  esp_log_level_set("dapi_wifi", ESP_LOG_INFO);  /* Wi-Fi profile save / forget / setauto lines */
   esp_log_level_set("dns_server",
                     ESP_LOG_WARN); /* DNS very chatty — WARN only */
   esp_log_level_set("session",

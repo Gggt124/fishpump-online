@@ -1,5 +1,6 @@
 #include "device_api.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -10,7 +11,9 @@
 static const char *TAG = "device_api";
 
 static dapi_method_t s_methods[DAPI_MAX_METHODS];
-static size_t s_count;
+/* Written by device_api_register (release, after the entries are copied) and read by the tb_rpc task and the HTTP
+ * handlers (acquire): a method found in the table is always completely written. */
+static atomic_size_t s_count;
 static SemaphoreHandle_t s_lock;
 
 cJSON *dapi_error(const char *code, const char *message)
@@ -42,7 +45,8 @@ const dapi_method_t *device_api_find(const char *name)
     if (!name) {
         return NULL;
     }
-    for (size_t i = 0; i < s_count; i++) {
+    size_t n = atomic_load_explicit(&s_count, memory_order_acquire);
+    for (size_t i = 0; i < n; i++) {
         if (strcmp(s_methods[i].name, name) == 0) {
             return &s_methods[i];
         }
@@ -52,7 +56,7 @@ const dapi_method_t *device_api_find(const char *name)
 
 size_t device_api_count(void)
 {
-    return s_count;
+    return atomic_load_explicit(&s_count, memory_order_acquire);
 }
 
 esp_err_t device_api_register(const dapi_method_t *methods, size_t count)
@@ -60,7 +64,8 @@ esp_err_t device_api_register(const dapi_method_t *methods, size_t count)
     if (!methods && count) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (s_count + count > DAPI_MAX_METHODS) {
+    size_t base = atomic_load_explicit(&s_count, memory_order_relaxed);
+    if (base + count > DAPI_MAX_METHODS) {
         return ESP_ERR_INVALID_STATE;
     }
     /* validate everything first so a failure adds nothing */
@@ -78,8 +83,9 @@ esp_err_t device_api_register(const dapi_method_t *methods, size_t count)
         }
     }
     for (size_t i = 0; i < count; i++) {
-        s_methods[s_count++] = methods[i];
+        s_methods[base + i] = methods[i];
     }
+    atomic_store_explicit(&s_count, base + count, memory_order_release);
     return ESP_OK;
 }
 
