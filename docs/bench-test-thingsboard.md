@@ -66,6 +66,34 @@ Plan: `docs/superpowers/plans/2026-11-18-thingsboard-link-m1.md` (Task 7)
   **ต้องเห็น:** `heap_free` ไม่ต่ำกว่า 100 KB, `tb_hwm` ไม่ต่ำกว่า 512 และไม่มีรีบูต
   บันทึก: 2026-11-19 06:40–06:56Z (uptime 5880 → 6781 วินาที) connected ตลอด `heap_free` 148–154 KB (`heap_min` ต่ำสุด 110 KB) `tb_hwm` = 2880 tasks = 22 ไม่มีรีบูต ThingsBoard ได้ telemetry 35 จุดในช่วงนี้
 
+## รอบ 2: device_api + RPC
+
+ทดสอบ 2026-11-19 กับ firmware b971a55 (กลุ่ม alarms ผ่าน device_api และ RPC ของ ThingsBoard) และไฟล์ฝั่ง ThingsBoard ของ commit b870e30 กฎที่ใช้ทดสอบการเขียนคือ id 19 (ปิดอยู่)
+
+- [/] **A1 แฟลชและบูต** — `idf.py -C firmware -p COM12 flash` แล้วเปิด monitor
+  **ต้องเห็น:** บูตได้ ลิงก์ connected และ `BOARD_DIAG` มี `tb_rpc_hwm`
+  บันทึก: connected ที่ 4.4 วินาทีหลังบูต `tb_rpc_hwm=5264` `heap_free` ประมาณ 148 KB (`heap_min` 120 KB) ไม่มีรีบูต
+
+- [/] **A2 golden compare** — `api_golden.py compare --base base --label a2 --with-writes`
+  **ต้องเห็น:** ทุกเคสผ่าน
+  บันทึก: ผ่าน 148/149 เคส alarms ที่ย้ายแล้วผ่านทั้งหมด เคสที่ไม่ผ่านคือ `uplink_preview` `$.last_event` (object กับ null) เป็นสถานะบอร์ด ไม่ใช่ regression: baseline มี event ค้างจาก B6 (กฎ 19, seq 4) แต่หลังแฟลชยังไม่เกิด event ใหม่ และ uplink ยังไม่ได้ย้าย (Task 12)
+
+- [/] **A3 ติดตั้ง dashboard** — `tb_setup.py` สองครั้ง แล้วเปิด dashboard
+  **ต้องเห็น:** bundle, widget และ dashboard สร้างครั้งเดียว ครั้งที่สองเป็นการอัปเดต หน้า Alarms โหลดได้
+  บันทึก: ครั้งแรกติดที่ `GET /api/widgetType` → 400 "Invalid fqn!" เพราะ ThingsBoard 4.3.1 ต้องการ `tenant.<fqn>` แก้ใน c5a8f87 แล้วรันใหม่ ครั้งแรกสร้าง widget type, bundle และ dashboard "Fishpump — ทดสอบ" (2 หน้า กำหนดให้ลูกค้าทดสอบ) ครั้งที่สองอัปเดตทั้งหมด ไม่มีของซ้ำ หน้า Alarms โหลดได้ มีตารางค่า alarm ล่าสุดของ fishpump-1de564
+
+- [/] **A4 parity alarms** — `parity_test.py --group alarms --writes --rule-id 19`
+  **ต้องเห็น:** ผ่านทั้งหมด
+  บันทึก: 13 PASS, 0 FAIL (อ่าน 5, error 7, เขียน 1: `delay_sec` ของกฎ 19 จาก 0 → 1 แล้วคืนเป็น 0)
+
+- [/] **A5 กดทุกปุ่มในหน้า Alarms**
+  **ต้องเห็น:** ทุกปุ่มแสดงคำตอบ มีคำเตือนก่อนลบกฎ กดยกเลิกแล้วไม่มีอะไรส่งออกไป (serial ไม่มีบรรทัด `rpc`)
+  บันทึก: ปุ่มอ่าน 5 ปุ่มตอบ 200 OK `rules.set` ตอบ 409 `rules_full` (กฎเต็ม 24/24 จึงไม่มีอะไรเปลี่ยน) ปุ่มโหลดค่าดึงกฎ 1 มาได้ ลบ id 65000 ตอบ `not_found` รับทราบทั้งหมดตอบ `acked: 0` รับทราบตาม id ตอบ `acked: 1` คำเตือนก่อนลบขึ้นว่า "ลบกฎแจ้งเตือน ใช่หรือไม่? (id 65000)" และคำเตือนก่อนรับทราบทั้งหมดขึ้นครบ กดยกเลิกแล้ว serial ไม่มีบรรทัด `rpc` เพิ่ม หมายเหตุ: Claude กดผ่าน browser โดยแทน `window.confirm` ด้วยตัวที่จดข้อความแล้วตอบยกเลิก
+
+- [/] **A6 ยิง RPC รัว** — `parity_test.py --group alarms --burst 20` แล้ว `--burst 30` ระหว่างนั้นกด **บันทึก** ในการ์ด ThingsBoard (ค่าเดิม) หนึ่งครั้ง
+  **ต้องเห็น:** PASS หรือมีแค่ `busy` ไม่มี crash `heap_free` ไม่ต่ำกว่า 100 KB `tb_rpc_hwm` ไม่ต่ำกว่า 512
+  บันทึก: รอบ 20: 20 คำตอบ (busy 0) poll HTTP 80 ครั้งได้ 200 ทั้งหมด รอบ 30 กดบันทึกกลางทาง: ลิงก์ wait_wifi → connected ใน 1.1 วินาที 30 คำตอบ (busy 0) poll 129 ครั้งได้ 200 ทั้งหมด ไม่มี RPC timeout หลังจบ `heap_free` 147.5 KB `heap_min` 112.5 KB `tb_rpc_hwm` 3616 uptime 12,700 วินาทีไม่มีรีบูต หมายเหตุ: RPC id 90 ถูกส่งซ้ำหลังต่อใหม่ บอร์ดจึงทำซ้ำหนึ่งครั้ง (เป็นการอ่าน ไม่มีผลเสีย ตรงกับข้อสังเกตของ Task 3 เรื่องการส่งซ้ำหลัง reconnect)
+
 ## หลังทดสอบ
 
 - [/] ปิดกฎที่เปิดไว้ทดสอบ ให้ลิงก์ยังตั้งค่าอยู่ และ host เป็น `192.168.1.51` — กฎ id 19 คืนเป็น `pump_is_running` และปิดแล้ว (ตรวจจาก attribute `alarm_rules` ใน ThingsBoard) host = `192.168.1.51` ลิงก์ connected
