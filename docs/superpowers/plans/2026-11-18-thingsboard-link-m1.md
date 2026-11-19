@@ -10,7 +10,7 @@
 - A small `time_sync` component starts SNTP and hands the clock to `uplink`.
 - The ThingsBoard side is a Python setup script with a rule-chain JSON, plus a rule-chain test script that speaks MQTT/REST, all under `thingsboard/` in the repo.
 
-**Tech Stack:** ESP-IDF v6.0.1 (`components/mqtt`, `esp_netif_sntp`), cJSON (managed `espressif/cjson`), vanilla JS web app, Python 3 standard library only (no pip packages) for the ThingsBoard scripts, ThingsBoard CE 4.3.1.
+**Tech Stack:** ESP-IDF v6.0.1 (`esp_netif_sntp`; esp-mqtt is the managed component `espressif/mqtt ^1.1.0`, pulled in by `components/tb_link/idf_component.yml`), cJSON (managed `espressif/cjson`), vanilla JS web app, Python 3 standard library only (no pip packages) for the ThingsBoard scripts, ThingsBoard CE 4.3.1.
 
 **Spec:** `docs/superpowers/specs/2026-11-18-thingsboard-mqtt-link-design.md`. This plan covers milestone 1 of section 8a. Milestones 2–6 each get their own plan after this one is benched.
 
