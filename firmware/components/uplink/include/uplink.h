@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "cJSON.h"
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -40,6 +41,20 @@ esp_err_t uplink_init(void);
  * (e.g. esp_mqtt_client_enqueue). */
 esp_err_t uplink_set_sink(const uplink_sink_t *sink);
 void uplink_set_wall_clock(int64_t (*now_unix_ms)(void));      /* NULL = none */
+
+typedef struct {
+    /* One member per client attribute (e.g. "cfg_pump"); NULL = nothing this round. Called on the uplink task
+     * with no uplink lock held; may take the device_api lock. The caller deletes the object. */
+    cJSON *(*build_attributes)(void);
+    /* Flat status telemetry; *watched_hash covers the watched keys. NULL = skip. Same calling rules. */
+    cJSON *(*build_status)(uint32_t *watched_hash);
+} uplink_state_source_t;
+
+/* NULL = none; copied. ESP_ERR_INVALID_STATE before uplink_init. */
+esp_err_t uplink_set_state_source(const uplink_state_source_t *src);
+/* Ask for the client attributes to be rebuilt. An atomic store: never blocks, safe from any task, even
+ * before uplink_init. */
+void uplink_note_settings_changed(void);
 
 /* Whole preview as a malloc'd JSON string (caller frees), NULL on OOM or before init. */
 char *uplink_preview_json(void);

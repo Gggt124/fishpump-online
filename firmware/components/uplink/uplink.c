@@ -1,5 +1,6 @@
 #include "uplink.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +20,7 @@
 static const char *TAG = "uplink";
 
 #define UPLINK_TICK_MS 1000
-#define UPLINK_TASK_STACK 4096
+#define UPLINK_TASK_STACK 6144
 #define UPLINK_TASK_PRIORITY 2 /* not in TWDT, below the sensor tasks (3) */
 #define UPLINK_TASK_CORE 1
 
@@ -69,7 +70,29 @@ static struct {
     bool want_rules;
     uint32_t rules_sent_rev;
     TaskHandle_t task;
+
+    /* State source (under lock). The task copies it into a local before calling it. */
+    uplink_state_source_t state_src;
+    bool has_state_src;
+
+    /* do_state (uplink task only) */
+    uplink_attr_cache_t attr_cache;
+    bool state_connected; /* the connect edge for do_state; was_connected belongs to do_attributes */
+    bool state_ever;
+    uint32_t state_build_ms;
+
+    /* do_status: status_buf/status_len are under lock (preview); the rest is uplink task only */
+    char *status_buf;
+    int status_len;
+    bool status_polled_ever;
+    uint32_t status_poll_ms;
+    bool status_sent_ever;
+    uint32_t status_sent_ms;
+    uint32_t status_last_hash;
 } s;
+
+/* Set when a setting may have changed; consumed by do_state. File scope so it works before uplink_init. */
+static atomic_bool s_dirty;
 
 static uint32_t now_ms(void)
 {
@@ -309,6 +332,139 @@ static void do_attributes(void)
     xSemaphoreGive(s.send_lock);
 }
 
+/* Client attributes: rebuilt when settings change (or every UPLINK_STATE_RECHECK_MS), each member sent
+ * only when its printed form changed since the last accepted send. Builders run with no uplink lock held. */
+static void do_state(void)
+{
+    xSemaphoreTake(s.send_lock, portMAX_DELAY);
+    bool connected = sink_ready();
+    xSemaphoreGive(s.send_lock);
+    if (!connected) {
+        s.state_connected = false;
+        return;
+    }
+    if (!s.state_connected) {
+        s.state_connected = true;
+        uplink_attr_cache_reset(&s.attr_cache);
+        s.state_ever = false;
+    }
+
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    uplink_state_source_t src = s.state_src;
+    bool has_src = s.has_state_src;
+    xSemaphoreGive(s.lock);
+    if (!has_src || src.build_attributes == NULL) {
+        return; /* nothing to build yet; the dirty flag is left alone */
+    }
+
+    uint32_t now = now_ms();
+    if (!uplink_state_rebuild_due(atomic_exchange(&s_dirty, false), s.state_ever,
+                                  (uint32_t)(now - s.state_build_ms))) {
+        return;
+    }
+
+    cJSON *root = src.build_attributes();
+    if (root != NULL) {
+        for (cJSON *m = root->child; m != NULL; m = m->next) {
+            if (m->string == NULL) {
+                continue;
+            }
+            cJSON *wrap = cJSON_CreateObject();
+            char *json = NULL;
+            if (wrap != NULL && cJSON_AddItemReferenceToObject(wrap, m->string, m)) {
+                json = cJSON_PrintUnformatted(wrap);
+            }
+            cJSON_Delete(wrap); /* the member is only referenced, so it stays in root */
+            if (json == NULL) {
+                atomic_store(&s_dirty, true);
+                continue;
+            }
+            size_t len = strlen(json);
+            if (len > UPLINK_STATE_ATTR_MAX_BYTES) {
+                ESP_LOGW(TAG, "attribute %s is %u bytes, over the %d limit; skipped", m->string, (unsigned)len,
+                         UPLINK_STATE_ATTR_MAX_BYTES);
+                free(json);
+                continue;
+            }
+            uint32_t hash = uplink_hash32(json, len);
+            if (uplink_attr_cache_changed(&s.attr_cache, m->string, hash)) {
+                xSemaphoreTake(s.send_lock, portMAX_DELAY);
+                esp_err_t err = sink_ready() ? s.sink.send(s.sink.ctx, UPLINK_MSG_ATTRIBUTES, json, len)
+                                             : ESP_ERR_INVALID_STATE;
+                if (err == ESP_OK) {
+                    uplink_attr_cache_commit(&s.attr_cache, m->string, hash);
+                }
+                xSemaphoreGive(s.send_lock);
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "attribute %s send failed: %s", m->string, esp_err_to_name(err));
+                    atomic_store(&s_dirty, true);
+                }
+            }
+            free(json);
+        }
+        cJSON_Delete(root);
+    }
+    s.state_ever = true;
+    s.state_build_ms = now;
+}
+
+/* Status telemetry: polled (faster while connected), kept for the preview, sent when due. */
+static void do_status(void)
+{
+    xSemaphoreTake(s.send_lock, portMAX_DELAY);
+    bool connected = sink_ready();
+    xSemaphoreGive(s.send_lock);
+    if (!connected) {
+        s.status_sent_ever = false; /* the first message after a connect goes out at once */
+    }
+
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    uplink_state_source_t src = s.state_src;
+    bool has_src = s.has_state_src;
+    xSemaphoreGive(s.lock);
+    if (!has_src || src.build_status == NULL) {
+        return;
+    }
+
+    uint32_t now = now_ms();
+    if (!uplink_status_poll_due(connected, s.status_polled_ever, (uint32_t)(now - s.status_poll_ms))) {
+        return;
+    }
+    s.status_poll_ms = now;
+
+    uint32_t hash = 0;
+    cJSON *obj = src.build_status(&hash);
+    if (obj == NULL) {
+        return; /* try again at the next poll */
+    }
+    s.status_polled_ever = true;
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    bool ok = cJSON_PrintPreallocated(obj, s.status_buf, UPLINK_TELEMETRY_BUF, false);
+    s.status_len = ok ? (int)strlen(s.status_buf) : 0;
+    int len = s.status_len;
+    xSemaphoreGive(s.lock);
+    cJSON_Delete(obj);
+    if (!ok) {
+        ESP_LOGW(TAG, "status telemetry does not fit its buffer");
+        return;
+    }
+
+    if (connected && uplink_status_send_due(s.status_sent_ever, (uint32_t)(now - s.status_sent_ms),
+                                            hash != s.status_last_hash)) {
+        xSemaphoreTake(s.send_lock, portMAX_DELAY);
+        esp_err_t err = sink_ready() ? s.sink.send(s.sink.ctx, UPLINK_MSG_TELEMETRY, s.status_buf, (size_t)len)
+                                     : ESP_ERR_INVALID_STATE;
+        xSemaphoreGive(s.send_lock);
+        if (err == ESP_OK) {
+            s.status_sent_ever = true;
+            s.status_sent_ms = now;
+            s.status_last_hash = hash;
+        } else {
+            ESP_LOGW(TAG, "status send failed: %s", esp_err_to_name(err));
+        }
+    }
+}
+
 static void uplink_task(void *arg)
 {
     (void)arg;
@@ -328,6 +484,8 @@ static void uplink_task(void *arg)
             do_events(&sm, now);
         }
         do_attributes();
+        do_state();
+        do_status();
     }
 }
 
@@ -340,12 +498,15 @@ esp_err_t uplink_init(void)
     s.send_lock = xSemaphoreCreateMutex();
     s.tel_buf = psram_alloc(UPLINK_TELEMETRY_BUF);
     s.ev_buf = psram_alloc(UPLINK_EVENT_BUF);
+    s.status_buf = psram_alloc(UPLINK_TELEMETRY_BUF);
     s.events = psram_alloc(ALARM_HISTORY_LEN * sizeof(alarm_event_t));
-    if (s.lock == NULL || s.send_lock == NULL || s.tel_buf == NULL || s.ev_buf == NULL || s.events == NULL) {
+    if (s.lock == NULL || s.send_lock == NULL || s.tel_buf == NULL || s.ev_buf == NULL || s.status_buf == NULL ||
+        s.events == NULL) {
         goto fail;
     }
     s.tel_buf[0] = '\0';
     s.ev_buf[0] = '\0';
+    s.status_buf[0] = '\0';
     s.want_identity = true;
     s.want_rules = true;
     s.initialized = true; /* before the task starts: the preview may be asked at once */
@@ -368,9 +529,11 @@ fail:
     }
     free(s.tel_buf);
     free(s.ev_buf);
+    free(s.status_buf);
     free(s.events);
     s.tel_buf = NULL;
     s.ev_buf = NULL;
+    s.status_buf = NULL;
     s.events = NULL;
     return ESP_ERR_NO_MEM;
 }
@@ -395,6 +558,28 @@ esp_err_t uplink_set_sink(const uplink_sink_t *sink)
     return ESP_OK;
 }
 
+esp_err_t uplink_set_state_source(const uplink_state_source_t *src)
+{
+    if (!s.initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    xSemaphoreTake(s.lock, portMAX_DELAY);
+    if (src == NULL) {
+        s.has_state_src = false;
+        memset(&s.state_src, 0, sizeof(s.state_src));
+    } else {
+        s.state_src = *src;
+        s.has_state_src = true;
+    }
+    xSemaphoreGive(s.lock);
+    return ESP_OK;
+}
+
+void uplink_note_settings_changed(void)
+{
+    atomic_store(&s_dirty, true);
+}
+
 void uplink_set_wall_clock(int64_t (*now_unix_ms)(void))
 {
     s.wall_clock = now_unix_ms;
@@ -409,7 +594,7 @@ char *uplink_preview_json(void)
     char *identity = build_identity(&id_len);
     char *rules = build_rules(&rules_len);
 
-    size_t cap = 512 + UPLINK_TELEMETRY_BUF + UPLINK_EVENT_BUF + id_len + rules_len;
+    size_t cap = 512 + 2 * UPLINK_TELEMETRY_BUF + UPLINK_EVENT_BUF + id_len + rules_len;
     char *out = psram_alloc(cap);
     if (out == NULL) {
         free(identity);
@@ -425,11 +610,12 @@ char *uplink_preview_json(void)
     uint32_t dropped = s.fwd.dropped;
     int n = snprintf(out, cap,
                      "{\"ok\":true,\"sink\":\"%s\",\"connected\":%s,\"interval_sec\":%d,"
-                     "\"pending_events\":%lu,\"waiting_for_clock\":%s,\"dropped\":%lu,\"last_telemetry\":%s,\"last_event\":%s,"
+                     "\"pending_events\":%lu,\"waiting_for_clock\":%s,\"dropped\":%lu,\"last_telemetry\":%s,\"last_status\":%s,\"last_event\":%s,"
                      "\"identity\":%s,\"rules\":%s}",
                      has_sink ? "set" : "none", connected ? "true" : "false", UPLINK_INTERVAL_SEC,
                      (unsigned long)pending, waiting ? "true" : "false", (unsigned long)dropped,
-                     s.tel_len > 0 ? s.tel_buf : "null", s.ev_len > 0 ? s.ev_buf : "null",
+                     s.tel_len > 0 ? s.tel_buf : "null",
+                     s.status_len > 0 ? s.status_buf : "null", s.ev_len > 0 ? s.ev_buf : "null",
                      identity != NULL ? identity : "null", rules != NULL ? rules : "null");
     xSemaphoreGive(s.lock);
     free(identity);

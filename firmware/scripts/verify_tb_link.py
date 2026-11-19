@@ -288,12 +288,43 @@ def test_rpc_transport():
                 "BOARD_DIAG prints tb_rpc_hwm= right after tb_hwm=")
 
 
+def _take_give_spans(body):
+    """Text between each xSemaphoreTake and its next xSemaphoreGive."""
+    spans = []
+    for m in re.finditer(r"xSemaphoreTake\s*\(", body):
+        g = body.find("xSemaphoreGive", m.end())
+        spans.append(body[m.start():g if g != -1 else len(body)])
+    return spans
+
+
+def test_uplink_state():
+    print("\n--- Milestone 3 Task 3: uplink sends state attributes and status telemetry ---")
+    hdr = read(COMP_DIR / "uplink" / "include" / "uplink.h")
+    src = read(COMP_DIR / "uplink" / "uplink.c")
+    cm = read(COMP_DIR / "uplink" / "CMakeLists.txt")
+    assert_test("uplink_set_state_source" in hdr and "uplink_note_settings_changed" in hdr,
+                "uplink.h declares uplink_set_state_source and uplink_note_settings_changed")
+    assert_test("#define UPLINK_TASK_STACK 6144" in src, "UPLINK_TASK_STACK is 6144")
+    for name in ("uplink_attr_cache_reset", "uplink_state_rebuild_due", "uplink_status_poll_due",
+                 "uplink_status_send_due", "UPLINK_STATE_ATTR_MAX_BYTES"):
+        assert_test(name in src, f"uplink.c uses {name}")
+    for fn, builder in (("do_state", "build_attributes("), ("do_status", "build_status(")):
+        body = function_body(src, fn)
+        spans = _take_give_spans(body)
+        assert_test(bool(body) and builder in body and not any(builder in sp for sp in spans),
+                    f"{fn} calls {builder[:-1]} and never between a Take and its Give")
+    assert_test('\\"last_status\\":' in src, "preview format string has last_status")
+    m = re.search(r"REQUIRES([^)]*)\)", cm)
+    assert_test(m is not None and "cjson" in m.group(1).split(), "uplink CMake REQUIRES contain cjson")
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
     test_tb_link_component()
     test_web_card_and_api()
     test_rpc_transport()
+    test_uplink_state()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 
