@@ -1,5 +1,6 @@
 #include "dapi_wifi.h"
 
+#include <limits.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,6 +10,7 @@
 #include "device_api.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_wifi.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -251,9 +253,25 @@ static dapi_status_t dapi_wifi_profiles_get(const cJSON *params, dapi_source_t s
   return DAPI_OK;
 }
 
+/* The station's active password, for the ThingsBoard save guard. False when it cannot be read. */
+static bool active_sta_password(char *out, size_t size) {
+  wifi_config_t cfg;
+  memset(&cfg, 0, sizeof(cfg));
+  if (esp_wifi_get_config(WIFI_IF_STA, &cfg) != ESP_OK) {
+    return false;
+  }
+  size_t n = 0;
+  while (n < sizeof(cfg.sta.password) && n + 1 < size && cfg.sta.password[n] != 0) {
+    out[n] = (char)cfg.sta.password[n];
+    n++;
+  }
+  out[n] = '\0';
+  memset(&cfg, 0, sizeof(cfg));
+  return true;
+}
+
 /* {"ssid":"..","password":".."} - persist a credential after a confirmed connect */
 static dapi_status_t dapi_wifi_profiles_save(const cJSON *params, dapi_source_t src, cJSON **out) {
-  (void)src;
   char ssid[33] = {0}, password[65] = {0};
   const cJSON *s = cJSON_GetObjectItem(params, "ssid");
   const cJSON *p = cJSON_GetObjectItem(params, "password");
@@ -279,6 +297,17 @@ static dapi_status_t dapi_wifi_profiles_save(const cJSON *params, dapi_source_t 
   if (!wifi_manager_is_sta_connected() || strcmp(wifi_manager_get_sta_ssid(), ssid) != 0) {
     *out = raw("{\"ok\":false,\"error\":\"not_connected\"}");
     return DAPI_OK;
+  }
+  /* ThingsBoard may not replace the working password of the connected network (the board would lose the link) */
+  if (src == DAPI_SRC_TB && password[0] != '\0') {
+    char active[65] = {0};
+    bool have = active_sta_password(active, sizeof(active));
+    bool blocked = dapi_wifi_save_password_blocked(src, password, have ? active : NULL);
+    memset(active, 0, sizeof(active));
+    if (blocked) {
+      *out = dapi_error("in_use", "Cannot change the password of the network in use from ThingsBoard");
+      return DAPI_CONFLICT;
+    }
   }
 
   wifi_profile_t *profiles = profiles_alloc();
@@ -317,12 +346,13 @@ static dapi_status_t dapi_wifi_profiles_save(const cJSON *params, dapi_source_t 
 
 /* {"index":-1..n} or {"ssid":".."} - set or clear the auto-connect profile */
 static dapi_status_t dapi_wifi_profiles_setauto(const cJSON *params, dapi_source_t src, cJSON **out) {
-  (void)src;
   int target_idx = -1;
   /* Accept {"ssid":"..."} to find index, or {"index":-1} to clear */
   const cJSON *idx_item = cJSON_GetObjectItem(params, "index");
   if (idx_item && cJSON_IsNumber(idx_item)) {
-    target_idx = (int)idx_item->valuedouble;
+    /* Out of range (or not finite) is never a valid index: INT_MAX gets the same setauto_failed reply as 99. */
+    double d = idx_item->valuedouble;
+    target_idx = (d >= -1e6 && d <= 1e6) ? (int)d : INT_MAX;
   } else {
     const cJSON *s = cJSON_GetObjectItem(params, "ssid");
     if (s && cJSON_IsString(s)) {
@@ -339,6 +369,32 @@ static dapi_status_t dapi_wifi_profiles_setauto(const cJSON *params, dapi_source
         }
       }
       free(profiles);
+    }
+  }
+
+  /* ThingsBoard may only keep auto-connect on the network in use: clearing it or pointing it elsewhere can leave
+   * the board AP-only after a power cycle, out of reach of ThingsBoard. */
+  if (src == DAPI_SRC_TB) {
+    int connected_idx = -1;
+    if (wifi_manager_is_sta_connected()) {
+      wifi_profile_t *profiles = profiles_alloc();
+      if (!profiles) {
+        return DAPI_INTERNAL;
+      }
+      int count = 0, auto_idx = -1;
+      nvs_store_load_wifi_profiles(profiles, &count, &auto_idx);
+      const char *now = wifi_manager_get_sta_ssid();
+      for (int i = 0; i < count; i++) {
+        if (strcmp(profiles[i].ssid, now) == 0) {
+          connected_idx = i;
+          break;
+        }
+      }
+      free(profiles);
+    }
+    if (dapi_wifi_setauto_blocked(src, target_idx, connected_idx)) {
+      *out = dapi_error("in_use", "From ThingsBoard auto-connect can only be set to the network in use");
+      return DAPI_CONFLICT;
     }
   }
 

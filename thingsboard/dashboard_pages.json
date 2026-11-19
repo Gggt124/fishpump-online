@@ -26,7 +26,7 @@
     "actions": [
       {"label": "protection.get", "method": "protection.get", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "protection.set", "method": "protection.set",
-       "params": {"pump": {"enabled": true, "prime_sec": 5, "dry_trip_sec": 10, "retry_wait_min": 5, "retry_backoff": true, "max_retries": 3}},
+       "params": {"pump": {"enabled": "แก้ก่อนส่ง", "prime_sec": "แก้ก่อนส่ง", "dry_trip_sec": "แก้ก่อนส่ง", "retry_wait_min": "แก้ก่อนส่ง", "retry_backoff": "แก้ก่อนส่ง", "max_retries": "แก้ก่อนส่ง"}},
        "edit": true, "load": "protection.get", "confirm": null},
       {"label": "protection.measure.get", "method": "protection.measure.get", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "protection.measure.set (เริ่มวัด)", "method": "protection.measure.set", "params": {"action": "start"}, "edit": false, "load": null,
@@ -45,7 +45,7 @@
       {"label": "pump.config.get", "method": "pump.config.get", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "pump.config.set (แม่แบบ: ต้องกรอกทุกค่าก่อนส่ง)", "method": "pump.config.set",
        "params": {"water_set1_on": "แก้ก่อนส่ง", "water_set1_off": "แก้ก่อนส่ง", "water_set2_on": "แก้ก่อนส่ง", "water_set2_off": "แก้ก่อนส่ง", "water_auto_start": "แก้ก่อนส่ง", "relay1_polarity": "แก้ก่อนส่ง", "timer1_start_phase": "แก้ก่อนส่ง", "timer2_start_phase": "แก้ก่อนส่ง"},
-       "edit": true, "load": null, "confirm": null},
+       "edit": true, "load": "pump.config.get", "confirm": null},
       {"label": "pump.control (หยุดน้ำ)", "method": "pump.control", "params": {"system": "water", "action": "stop"}, "edit": true, "load": null, "confirm": null},
       {"label": "pump.start", "method": "pump.start", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "pump.stop", "method": "pump.stop", "params": null, "edit": false, "load": null, "confirm": null}
@@ -60,7 +60,7 @@
       {"label": "cooling.config.get", "method": "cooling.config.get", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "cooling.config.set (แม่แบบ: ต้องกรอกทุกค่าก่อนส่ง)", "method": "cooling.config.set",
        "params": {"threshold_c_x10": "แก้ก่อนส่ง", "hysteresis_c_x10": "แก้ก่อนส่ง", "auto_enable": "แก้ก่อนส่ง", "test_timeout_sec": "แก้ก่อนส่ง", "compressor_min_off_sec": "แก้ก่อนส่ง", "mode": "แก้ก่อนส่ง", "cooling_relay_polarity": "แก้ก่อนส่ง"},
-       "edit": true, "load": null, "confirm": null},
+       "edit": true, "load": "cooling.config.get", "confirm": null},
       {"label": "cooling.mode.set (โหมดอัตโนมัติ)", "method": "cooling.mode.set", "params": {"mode": "auto"}, "edit": true, "load": null, "confirm": null}
     ]
   },
@@ -97,7 +97,7 @@
       {"label": "wifi.profiles.get", "method": "wifi.profiles.get", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "wifi.profiles.save (รหัสผ่านถูกส่งไปใน RPC)", "method": "wifi.profiles.save", "params": {"ssid": "แก้ก่อนส่ง", "password": "แก้ก่อนส่ง"},
        "edit": true, "load": null, "confirm": null},
-      {"label": "wifi.profiles.setauto (ตาม index, -1 = ปิด)", "method": "wifi.profiles.setauto", "params": {"index": -1}, "edit": true, "load": null, "confirm": null},
+      {"label": "wifi.profiles.setauto (จาก ThingsBoard ตั้งได้เฉพาะเครือข่ายที่เชื่อมต่ออยู่)", "method": "wifi.profiles.setauto", "params": {"ssid": "แก้ก่อนส่ง"}, "edit": true, "load": null, "confirm": null},
       {"label": "wifi.profiles.forget", "method": "wifi.profiles.forget", "params": {"ssid": "แก้ก่อนส่ง"}, "edit": true, "load": null,
        "confirm": "ลืมเครือข่ายนี้ ใช่หรือไม่?"},
       {"label": "wifi.connect (ใช้ได้เฉพาะเว็บแอปในเครื่องเท่านั้น)", "method": "wifi.connect", "params": {"ssid": "แก้ก่อนส่ง"}, "edit": true, "load": null, "confirm": null},

@@ -17,4 +17,33 @@ void test_dapi_guards(void)
     /* names are compared exactly */
     CHECK(dapi_wifi_forget_blocked(DAPI_SRC_TB, "Farm", "farm") == false);
     CHECK(dapi_wifi_forget_blocked(DAPI_SRC_TB, "farm2", "farm") == false);
+
+    /* setauto from thingsboard: only the connected network's own profile */
+    CHECK(dapi_wifi_setauto_blocked(DAPI_SRC_TB, 2, 2) == false);
+    CHECK(dapi_wifi_setauto_blocked(DAPI_SRC_TB, 0, 0) == false);
+    CHECK(dapi_wifi_setauto_blocked(DAPI_SRC_TB, -1, 2) == true);  /* clear */
+    CHECK(dapi_wifi_setauto_blocked(DAPI_SRC_TB, -1, -1) == true); /* clear, not connected */
+    CHECK(dapi_wifi_setauto_blocked(DAPI_SRC_TB, 1, 2) == true);   /* another profile */
+    CHECK(dapi_wifi_setauto_blocked(DAPI_SRC_TB, 0, -1) == true);  /* not connected: cannot prove */
+    CHECK(dapi_wifi_setauto_blocked(DAPI_SRC_TB, 99, -1) == true); /* out of range */
+    CHECK(dapi_wifi_setauto_blocked(DAPI_SRC_HTTP, -1, -1) == false);
+    CHECK(dapi_wifi_setauto_blocked(DAPI_SRC_HTTP, 1, 2) == false);
+
+    /* save from thingsboard may not change the active station password */
+    CHECK(dapi_wifi_save_password_blocked(DAPI_SRC_TB, "newpass", "oldpass") == true);
+    CHECK(dapi_wifi_save_password_blocked(DAPI_SRC_TB, "same", "same") == false);
+    CHECK(dapi_wifi_save_password_blocked(DAPI_SRC_TB, "", "oldpass") == false); /* keeps the saved one */
+    CHECK(dapi_wifi_save_password_blocked(DAPI_SRC_TB, NULL, "oldpass") == false);
+    CHECK(dapi_wifi_save_password_blocked(DAPI_SRC_TB, "x", NULL) == true);      /* cannot read it */
+    CHECK(dapi_wifi_save_password_blocked(DAPI_SRC_TB, "", NULL) == false);
+    CHECK(dapi_wifi_save_password_blocked(DAPI_SRC_TB, "Same", "same") == true);
+    CHECK(dapi_wifi_save_password_blocked(DAPI_SRC_HTTP, "newpass", "oldpass") == false);
+
+    /* relay polarity from thingsboard: only equal to the stored value */
+    CHECK(dapi_polarity_write_blocked(DAPI_SRC_TB, "active_low", "active_high") == true);
+    CHECK(dapi_polarity_write_blocked(DAPI_SRC_TB, "active_high", "active_high") == false);
+    CHECK(dapi_polarity_write_blocked(DAPI_SRC_TB, "bogus", "active_high") == false); /* not a polarity: the parser rejects it with its own error */
+    CHECK(dapi_polarity_write_blocked(DAPI_SRC_TB, "", "active_high") == false);
+    CHECK(dapi_polarity_write_blocked(DAPI_SRC_TB, NULL, "active_high") == false); /* key absent */
+    CHECK(dapi_polarity_write_blocked(DAPI_SRC_HTTP, "active_low", "active_high") == false);
 }

@@ -5,6 +5,7 @@
 #include <strings.h>
 
 #include "app_config.h"
+#include "dapi_guards.h"
 #include "device_api.h"
 #include "dry_run_guard.h"
 #include "esp_heap_caps.h"
@@ -808,10 +809,27 @@ static dapi_status_t dapi_pump_config_get(const cJSON *params, dapi_source_t src
 
 /* pump.config.set - full replacement of the editable pump settings */
 static dapi_status_t dapi_pump_config_set(const cJSON *params, dapi_source_t src, cJSON **out) {
-  (void)src;
   nvs_store_pump_settings_t settings;
   nvs_store_pump_settings_defaults(&settings);
   nvs_store_load_pump_settings(&settings);
+
+  /* ThingsBoard cannot flip a relay polarity blind: it may only re-send the stored value. */
+  if (src == DAPI_SRC_TB) {
+    const char *r1_stored = api_pump_relay_polarity_name(settings.relay1_active_low);
+    const char *r2_stored = api_pump_relay_polarity_name(settings.relay2_active_low);
+    const struct {
+      const char *key;
+      const char *stored;
+    } polarity_keys[] = {{"relay1_polarity", r1_stored}, {"relay_polarity", r1_stored}, {"relay2_polarity", r2_stored}};
+    for (size_t i = 0; i < sizeof(polarity_keys) / sizeof(polarity_keys[0]); i++) {
+      const cJSON *item = cJSON_GetObjectItem(params, polarity_keys[i].key);
+      const char *requested = (item && cJSON_IsString(item)) ? item->valuestring : NULL;
+      if (dapi_polarity_write_blocked(src, requested, polarity_keys[i].stored)) {
+        *out = dapi_error("read_only_field", polarity_keys[i].key);
+        return DAPI_BAD_REQUEST;
+      }
+    }
+  }
   const char *error_code = NULL;
   const char *error_message = NULL;
   bool valid = api_pump_parse_settings_payload(params, &settings, &error_code, &error_message);

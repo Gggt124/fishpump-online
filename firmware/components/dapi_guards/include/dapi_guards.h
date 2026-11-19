@@ -15,6 +15,22 @@ extern "C" {
  * the board is not connected. The local web app is never blocked. */
 bool dapi_wifi_forget_blocked(dapi_source_t src, const char *ssid, const char *connected_ssid);
 
+/* True when wifi.profiles.setauto must be refused. From ThingsBoard the auto-connect profile may only be set to
+ * the profile of the network the board is connected to now: target_index is the resolved profile index (-1 =
+ * clear, unknown ssid or out of range), connected_index the index of the connected network's saved profile
+ * (-1 = not connected or not saved). Anything else could leave the board AP-only after a power cycle. */
+bool dapi_wifi_setauto_blocked(dapi_source_t src, int target_index, int connected_index);
+
+/* True when wifi.profiles.save must be refused: from ThingsBoard a non-empty password that differs from the
+ * station's active password would overwrite the working credentials. An empty password keeps the saved one.
+ * active_password NULL (could not be read) blocks, because safety cannot be proven. */
+bool dapi_wifi_save_password_blocked(dapi_source_t src, const char *password, const char *active_password);
+
+/* True when a relay polarity write must be refused: from ThingsBoard a polarity can only be re-sent equal to the
+ * stored value (flipping it blind inverts the relay). requested NULL = key absent. A value that is not
+ * "active_low" or "active_high" is not blocked here: the parser answers it with invalid_relay_polarity. */
+bool dapi_polarity_write_blocked(dapi_source_t src, const char *requested, const char *stored);
+
 #ifdef __cplusplus
 }
 #endif

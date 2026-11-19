@@ -6,6 +6,7 @@
 
 #include "api_json.h"
 #include "cooling_control.h"
+#include "dapi_guards.h"
 #include "device_api.h"
 #include "driver/gpio.h"
 #include "esp_heap_caps.h"
@@ -812,10 +813,19 @@ static dapi_status_t dapi_cooling_config_get(const cJSON *params, dapi_source_t 
 
 /* cooling.config.set - validate, save, apply to the runtime, reply with the new config. */
 static dapi_status_t dapi_cooling_config_set(const cJSON *params, dapi_source_t src, cJSON **out) {
-  (void)src;
   nvs_store_cooling_settings_t settings;
   nvs_store_cooling_settings_defaults(&settings);
   nvs_store_load_cooling_settings(&settings);
+
+  /* ThingsBoard cannot flip the relay polarity blind: it may only re-send the stored value. */
+  if (src == DAPI_SRC_TB) {
+    const cJSON *item = cJSON_GetObjectItem(params, "cooling_relay_polarity");
+    const char *requested = (item && cJSON_IsString(item)) ? item->valuestring : NULL;
+    if (dapi_polarity_write_blocked(src, requested, hardware_map_polarity_name(settings.relay_polarity))) {
+      *out = dapi_error("read_only_field", "cooling_relay_polarity");
+      return DAPI_BAD_REQUEST;
+    }
+  }
   const char *error_code = NULL;
   const char *error_message = NULL;
   bool valid = api_cooling_parse_config_payload(params, &settings, &error_code, &error_message);
