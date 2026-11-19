@@ -170,6 +170,22 @@ void test_tb_link(void)
         CHECK(tb_provision_parse(fail2, strlen(fail2), tok, sizeof(tok), err, sizeof(err)) == TB_PROV_FAILURE);
         CHECK(err[0] == 0);
 
+        /* any non-SUCCESS status is a failure, e.g. ThingsBoard NOT_FOUND for a wrong key/secret */
+        const char *nf = "{\"status\":\"NOT_FOUND\",\"errorMsg\":\"Provision data was not found!\"}";
+        strcpy(err, "x");
+        CHECK(tb_provision_parse(nf, strlen(nf), tok, sizeof(tok), err, sizeof(err)) == TB_PROV_FAILURE);
+        CHECK(strcmp(err, "Provision data was not found!") == 0);
+
+        const char *odd = "{\"status\":\"WEIRD\"}";
+        strcpy(err, "x");
+        CHECK(tb_provision_parse(odd, strlen(odd), tok, sizeof(tok), err, sizeof(err)) == TB_PROV_FAILURE);
+        CHECK(strcmp(err, "WEIRD") == 0);
+
+        char tiny[8];
+        CHECK(tb_provision_parse(nf, strlen(nf), tok, sizeof(tok), tiny, sizeof(tiny)) == TB_PROV_FAILURE);
+        CHECK(strlen(tiny) == sizeof(tiny) - 1 && strncmp(tiny, "Provisi", 7) == 0);
+        CHECK(tb_provision_parse(odd, strlen(odd), tok, sizeof(tok), NULL, 0) == TB_PROV_FAILURE);
+
         const char *basic = "{\"status\":\"SUCCESS\",\"credentialsType\":\"MQTT_BASIC\",\"credentialsValue\":\"abc123\"}";
         CHECK(tb_provision_parse(basic, strlen(basic), tok, sizeof(tok), err, sizeof(err)) == TB_PROV_BAD_REPLY);
         const char *junk = "not json";

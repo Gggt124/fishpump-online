@@ -228,10 +228,18 @@ tb_prov_result_t tb_provision_parse(const char *json, size_t len, char *token, s
                 strcpy(token, val->valuestring);
                 res = TB_PROV_OK;
             }
-        } else if (strcmp(status->valuestring, "FAILURE") == 0) {
+        } else {
+            /* FAILURE, NOT_FOUND (wrong key/secret) or anything else: show ThingsBoard's text,
+             * or the status itself when there is no errorMsg. */
             const cJSON *msg = cJSON_GetObjectItemCaseSensitive(r, "errorMsg");
-            if (cJSON_IsString(msg) && msg->valuestring && err && err_size) {
-                snprintf(err, err_size, "%s", msg->valuestring);
+            if (err && err_size) {
+                const char *text = (cJSON_IsString(msg) && msg->valuestring) ? msg->valuestring : NULL;
+                if (!text && strcmp(status->valuestring, "FAILURE") != 0) {
+                    text = status->valuestring;
+                }
+                if (text) {
+                    snprintf(err, err_size, "%s", text);
+                }
             }
             res = TB_PROV_FAILURE;
         }
