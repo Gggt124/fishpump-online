@@ -313,6 +313,7 @@ def test_uplink_state():
         spans = _take_give_spans(body)
         assert_test(bool(body) and builder in body and not any(builder in sp for sp in spans),
                     f"{fn} calls {builder[:-1]} and never between a Take and its Give")
+    assert_test('"attribute %s sent (%u B)"' in src, "uplink.c logs each sent attribute")
     assert_test('\\"last_status\\":' in src, "preview format string has last_status")
     m = re.search(r"REQUIRES([^)]*)\)", cm)
     assert_test(m is not None and "cjson" in m.group(1).split(), "uplink CMake REQUIRES contain cjson")

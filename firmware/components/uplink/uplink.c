@@ -393,6 +393,7 @@ static void do_state(void)
                                              : ESP_ERR_INVALID_STATE;
                 if (err == ESP_OK) {
                     uplink_attr_cache_commit(&s.attr_cache, m->string, hash);
+                    ESP_LOGI(TAG, "attribute %s sent (%u B)", m->string, (unsigned)len);
                 }
                 xSemaphoreGive(s.send_lock);
                 if (err != ESP_OK) {
