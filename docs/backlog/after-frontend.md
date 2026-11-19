@@ -96,6 +96,10 @@
   - `tb_link_logic`: ไม่ตรวจชุดตัวอักษรของ token ที่ได้จากการลงทะเบียน · `cJSON_Add*` ใน `to_json` ไม่ตรวจผล (OOM เท่านั้น)
   - การ์ดบนเว็บ: refresh ครั้งแรกอาจทับค่าที่กำลังพิมพ์ · error `invalid_field` แสดงชื่อ key ดิบแทนชื่อภาษาไทย · reprovision ล้มเหลวใช้รหัส `save_failed` ซ้ำ
   - สคริปต์ ThingsBoard: `tb_setup.py` เขียน metadata ของ rule chain ใหม่ทุกครั้ง (ไม่สร้างซ้ำ) · preflight ตรวจเฉพาะ key `description`/`additionalInfo` · diagnostics ของ `tb_event_test.py` ไม่จับ `AttributeError`
+- [ ] **ข้อที่พบใน bench milestone 2 (device_api + RPC, 2026-11-20 รอบ A และ F ใน `bench-test-thingsboard.md`):**
+  - ThingsBoard ส่ง RPC เดิมซ้ำได้หลังต่อใหม่ (A6 เห็น id 90 ถูกทำสองครั้ง) การอ่านไม่มีผล แต่คำสั่งเขียนอาจทำซ้ำ เช่น `alarms.rules.set` แบบสร้างใหม่ได้กฎสองข้อ หรือ `power.reset_energy` ทางแก้: จำ id ของ RPC ล่าสุดที่ทำแล้วใน `tb_link` แล้วตอบซ้ำแทนการทำใหม่
+  - `pump.config.set` มีเพดาน params 512 ไบต์ (เท่ากับ body ของ HTTP) เว็บแอปส่งกรณียาวที่สุด (ตั้งเวลา 86400 ทุกช่อง) 475 ไบต์ ยังผ่าน แต่ถ้าวางคำตอบของ `pump.config.get` ทั้งก้อนลงใน dashboard จะได้ `invalid_body` (case ทดสอบเคยพลาดแบบนี้ แก้ใน eb26c87) ถ้าเพิ่ม key ใน config ต้องเช็กเพดานนี้
+  - ปุ่ม Wi-Fi ที่เขียนค่า (`wifi.profiles.save`, `setauto`, `wifi.connect`) ยังไม่ได้กดจริงจาก dashboard เพราะจะเปลี่ยนโปรไฟล์ Wi-Fi ของบอร์ด parity (F4) ทดสอบผ่าน RPC แล้ว ควรกดจริงหนึ่งรอบตอนทำ milestone 4 (staged commit ของ `wifi.connect`)
 - [ ] ตามแผนแพลตฟอร์ม: กฎอยู่ในเฟิร์มแวร์ ThingsBoard เก็บข้อมูลและส่งแจ้งเตือน และรองรับหลายลูกค้า/หลาย firmware (`identity` ใน preview มี `fw_type` และ `contract_version` ไว้สำหรับเรื่องนี้)
 
 ---

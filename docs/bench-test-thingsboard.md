@@ -94,6 +94,38 @@ Plan: `docs/superpowers/plans/2026-11-18-thingsboard-link-m1.md` (Task 7)
   **ต้องเห็น:** PASS หรือมีแค่ `busy` ไม่มี crash `heap_free` ไม่ต่ำกว่า 100 KB `tb_rpc_hwm` ไม่ต่ำกว่า 512
   บันทึก: รอบ 20: 20 คำตอบ (busy 0) poll HTTP 80 ครั้งได้ 200 ทั้งหมด รอบ 30 กดบันทึกกลางทาง: ลิงก์ wait_wifi → connected ใน 1.1 วินาที 30 คำตอบ (busy 0) poll 129 ครั้งได้ 200 ทั้งหมด ไม่มี RPC timeout หลังจบ `heap_free` 147.5 KB `heap_min` 112.5 KB `tb_rpc_hwm` 3616 uptime 12,700 วินาทีไม่มีรีบูต หมายเหตุ: RPC id 90 ถูกส่งซ้ำหลังต่อใหม่ บอร์ดจึงทำซ้ำหนึ่งครั้ง (เป็นการอ่าน ไม่มีผลเสีย ตรงกับข้อสังเกตของ Task 3 เรื่องการส่งซ้ำหลัง reconnect)
 
+## รอบ 3: device_api ครบทุกกลุ่ม (ทดสอบสุดท้ายของ milestone 2)
+
+ทดสอบ 2026-11-20 กับ firmware 84fdbad (38 method ทุกกลุ่มผ่าน device_api) และไฟล์ฝั่ง ThingsBoard ของ commit eb26c87 กฎที่ใช้ทดสอบการเขียนคือ id 19 (ปิดอยู่) บนบอร์ดไม่มีเซนเซอร์ pH, PZEM และ PT100
+
+- [/] **F1 แฟลชและบูต** — `idf.py -C firmware -p COM12 flash` แล้วเปิด monitor
+  **ต้องเห็น:** บูตได้ ลิงก์ connected ไม่มีบรรทัด `E` จาก device_api หรือ tb_link
+  บันทึก: hash ตรง connected ที่ 4.1 วินาทีหลังบูต ได้เวลา SNTP `tb_rpc_hwm=5264` `heap_free` 140.9 KB (`heap_min` 119.6 KB) บรรทัด `E` มีแค่ pt100_max31865 (ไม่ได้ต่อเซนเซอร์)
+
+- [/] **F2 golden compare** — `api_golden.py compare --base base --label f2 --with-writes`
+  **ต้องเห็น:** ALL PASS (เว็บแอปได้คำตอบเหมือนก่อนย้ายเข้า device_api ทุกไบต์)
+  บันทึก: ALL PASS ทุก case รวมการเขียนแบบคืนค่าเดิม
+
+- [/] **F3 ไฟล์เว็บแอปไม่เปลี่ยน** — `git diff --stat be0ab72 -- firmware/main/static`
+  **ต้องเห็น:** ว่าง
+  บันทึก: ว่าง
+
+- [/] **F4 parity ทุกกลุ่ม** — `tb_setup.py` (อัปเดต dashboard) แล้ว `parity_test.py --writes --rule-id 19`
+  **ต้องเห็น:** PASS ทั้งหมด SKIP ต้องมีเหตุผล
+  บันทึก: tb_setup อัปเดต widget และ dashboard 9 หน้า รอบแรก 90 PASS 1 FAIL 1 SKIP FAIL คือการเขียน `pump.config.set` ผ่าน ThingsBoard ตอบ `invalid_body` สาเหตุอยู่ที่ case ทดสอบ ไม่ใช่ firmware: case ส่งคำตอบของ `pump.config.get` กลับไปทั้งก้อน รวม key สถานะ 3 ตัวและชื่อสำรองซ้ำทุกตัว ยาว 600 ไบต์ เกินเพดาน 512 ไบต์ที่ HTTP ก็ใช้เหมือนกัน (เว็บแอปส่งจริงประมาณ 460 ไบต์) แก้ใน eb26c87 ให้ส่งเฉพาะ key ที่แก้ได้ แล้วรันกลุ่ม pump ซ้ำ: 17 PASS 0 FAIL (`water_set1_off` 60 → 120 แล้วคืนค่า) SKIP คือ `water.offset` เพราะไม่มีเซนเซอร์ pH (`offsets.known` เป็น false) serial ไม่มีรีบูต `heap_min` 110.6 KB `tb_rpc_hwm` 3520
+
+- [/] **F5 กดทุกปุ่มใน dashboard** (ยกเว้นปุ่มของ F6)
+  **ต้องเห็น:** ทุกปุ่มแสดงคำตอบ ข้อความยืนยันตรงกับเว็บแอป
+  บันทึก: ปุ่มอ่านตอบ 200 ทุกหน้า (protection, pump, cooling, wifi, status, sensors, hardware; หน้า alarms ทดสอบแล้วใน A5) `protection.set` กดโหลดค่าแล้วส่งค่าเดิมตอบ 200 แม่แบบ `pump.config.set` และ `cooling.config.set` ถูกปฏิเสธตามคาด (`missing_or_invalid_field`, `invalid_type`) `cooling.mode.set` auto (เดิมเป็น auto) ตอบ 200 `water.calibrate.cancel` ตอบ 202 `queued` ข้อความยืนยัน 12 ข้อขึ้นครบและตรงกับเว็บแอป (ที่ dashboard ไม่รู้ชื่อกฎ ชื่อเครือข่าย หรือค่า จะใช้ข้อความกลาง) กดยกเลิกแล้ว serial ไม่มีบรรทัด `rpc` ปุ่ม `wifi.profiles.save`, `setauto` และ `wifi.connect` ไม่ได้กดจาก dashboard เพราะจะเปลี่ยนโปรไฟล์ Wi-Fi นอกการทดสอบที่คืนค่าเดิม F4 ทดสอบทั้งสามแล้ว หมายเหตุ: Claude กดผ่าน browser โดยแทน `window.confirm` ด้วยตัวที่จดข้อความ
+
+- [/] **F6 สั่งปั๊มและวัดจาก dashboard** (ผู้ใช้ดูรีเลย์)
+  **ต้องเห็น:** เหมือนปุ่มในเว็บแอป มีคำเตือนก่อนเริ่มวัด
+  บันทึก: ปั๊มเดินตามตั้งเวลาอยู่ จึงทำตามลำดับ `pump.stop` (รีเลย์ดับ) → เริ่มวัด (คำเตือน 120 วินาทีขึ้น กดตกลง ปั๊มเดิน) → หยุดวัดที่ 10.3 วินาที (รีเลย์ดับ สถานะ `stopped`) → `pump.start` (รีเลย์ติด ชุด 1 นาน 50 วินาที) ผู้ใช้ยืนยันว่ารีเลย์ตรงทุกขั้น serial ตอบ 200 ทุก RPC ปั๊มกลับไปเดินตามเดิม
+
+- [/] **F7 ยิง RPC รัวและทนทาน 15 นาที** — เปิดหน้า Status ของเว็บแอปค้างไว้ แล้ว `parity_test.py --burst 30` ตามด้วยดู `BOARD_DIAG` 15 นาที
+  **ต้องเห็น:** ไม่มี crash `heap_free` ไม่ต่ำกว่า 100 KB และ HWM ทุกตัวรวม `tb_rpc_hwm` ไม่ต่ำกว่า 512
+  บันทึก: burst 30 ได้ 30 คำตอบ (busy 0) poll HTTP 123 ครั้งได้ 200 ทั้งหมด (รันพร้อมอ่านและ error case ทุกกลุ่ม: 86 PASS 0 FAIL 7 SKIP ที่ SKIP คือ case เขียนที่ต้องใช้ `--writes`) หลังจากนั้นดู `BOARD_DIAG` อีก 15 นาที ช่วง uptime 22,299 → 25,031 วินาที (92 บรรทัด) ไม่มีรีบูตหรือ crash `heap_free` 142–149 KB (`heap_min` 110.6 KB) HWM ต่ำสุด `main_stack_hwm` 1188 `hwm_alarm` 2600 `hwm_uplink` 2048 `hwm_dry_run` 3204 `tb_hwm` 3700 `tb_rpc_hwm` 3456 HTTP `failed=0` จาก 475 request (หน้า Status ของเว็บแอปเปิดค้างไว้)
+
 ## หลังทดสอบ
 
 - [/] ปิดกฎที่เปิดไว้ทดสอบ ให้ลิงก์ยังตั้งค่าอยู่ และ host เป็น `192.168.1.51` — กฎ id 19 คืนเป็น `pump_is_running` และปิดแล้ว (ตรวจจาก attribute `alarm_rules` ใน ThingsBoard) host = `192.168.1.51` ลิงก์ connected
