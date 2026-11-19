@@ -46,6 +46,8 @@ void tb_link_get_status(tb_link_status_t *out);
 const char *tb_link_state_name(tb_state_t s);
 /* Minimum free stack of the tb_link task in bytes since it started, or -1 when it was not created. */
 int32_t tb_link_stack_hwm(void);
+/* Same for the tb_rpc task (runs the device_api methods), or -1 before it exists. */
+int32_t tb_link_rpc_stack_hwm(void);
 
 #ifdef __cplusplus
 }

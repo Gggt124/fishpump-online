@@ -6,7 +6,9 @@
 #include <string.h>
 
 #include "esp_crt_bundle.h"
+#include "device_api.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_timer.h"
@@ -19,16 +21,24 @@
 #include "uplink.h"
 #include "wifi_manager.h"
 
+#include "cJSON.h"
+
 /*
  * Threading model
  *  - tb_link task: the only code that creates, starts, stops or destroys an esp-mqtt client (the task_* helpers
  *    below are called from it only), loads and saves the token, and changes the state.
  *  - mqtt_event_handler (esp-mqtt task): posts a small command to the queue and flips the atomic `connected`
- *    flag. It never touches the client, NVS or the uplink.
+ *    flag. It never touches NVS or the uplink. The one exception is the fixed too_large / busy reply to an RPC
+ *    request, published on the event's own client (esp-mqtt allows that from its handler, and the client
+ *    cannot be destroyed while its handler runs). RPC requests are only copied into rpc_q; the handler never
+ *    runs a method.
+ *  - tb_rpc task: pops RPC requests, runs device_api_call and publishes the reply under client_lock, like
+ *    sink_send, after checking the request's generation against the current one.
  *  - HTTP task: tb_link_apply_config / tb_link_reprovision save the config, update the RAM copy and raise the
  *    atomic restart flag; they never wait for the task.
  *  - uplink task: sink_is_connected / sink_send. sink_send enqueues under client_lock, which the task takes
- *    only to clear the published client pointer before it destroys the client.
+ *    only to clear the published client pointer before it destroys the client. tb_rpc uses client_lock the
+ *    same way, and the tb_link task drains rpc_q after each destroy.
  * Every command carries the session generation of the client that produced it; the generation is bumped on
  * each teardown and each new client, so events of a destroyed client never touch the next session.
  * Locks: save_lock (NVS saves + config hand-off) -> lock (config copy and status fields). Neither is ever
@@ -52,6 +62,16 @@ static const char *TAG = "tb_link";
 #define TB_PROV_RESPONSE_TOPIC "/provision/response"
 #define TB_PROV_REQUEST_TOPIC "/provision/request"
 #define TB_ERR_MAX 96
+#define TB_RPC_TASK_STACK 6144
+#define TB_RPC_TASK_PRIORITY 2
+#define TB_RPC_QUEUE_LEN 4
+#define TB_RPC_LOCK_MS 200
+#define TB_RPC_SUB_TOPIC TB_RPC_REQ_PREFIX "+"
+#define TB_RPC_BODY_TOO_LARGE "{\"ok\":false,\"error\":\"too_large\"}"
+#define TB_RPC_BODY_BUSY "{\"ok\":false,\"error\":\"busy\"}"
+#define TB_RPC_BODY_INVALID_JSON "{\"ok\":false,\"error\":\"invalid_json\",\"message\":\"Expected a JSON object\"}"
+#define TB_RPC_BODY_UNKNOWN_METHOD "{\"ok\":false,\"error\":\"unknown_method\"}"
+#define TB_RPC_BODY_MEMORY "{\"ok\":false,\"error\":\"memory\",\"message\":\"JSON allocation failed\"}"
 
 typedef enum {
     CMD_RESTART = 0, /* wake-up only: the restart itself is carried by the atomic flag */
@@ -72,9 +92,19 @@ typedef struct {
     char data[TB_REPLY_MAX];
 } tb_cmd_t;
 
+/* One queued RPC request. payload is heap memory (PSRAM when there is some), owned by the item. */
+typedef struct {
+    uint32_t req_id;
+    uint32_t gen; /* session generation of the client that received it */
+    size_t len;
+    char *payload; /* NUL terminated */
+} rpc_item_t;
+
 static struct {
     bool inited;
     QueueHandle_t q;
+    QueueHandle_t rpc_q;           /* rpc_item_t, depth TB_RPC_QUEUE_LEN */
+    TaskHandle_t rpc_task;
     SemaphoreHandle_t lock;        /* cfg and the status fields */
     SemaphoreHandle_t save_lock;   /* serialises NVS saves with the config hand-off */
     SemaphoreHandle_t client_lock; /* client_pub, held by sink_send while it enqueues */
@@ -156,6 +186,67 @@ static esp_err_t sink_send(void *ctx, uplink_msg_kind_t kind, const char *json, 
     return ESP_FAIL;
 }
 
+/* ---- RPC receive side (esp-mqtt task) ---- */
+
+static void rpc_item_free(rpc_item_t *it)
+{
+    free(it->payload);
+    it->payload = NULL;
+}
+
+/* Reply with a fixed body on the event's own client (handler context only). */
+static void rpc_reply_from_handler(esp_mqtt_client_handle_t client, uint32_t req_id, const char *body)
+{
+    char topic[48];
+    if (client == NULL || tb_rpc_response_topic(req_id, topic, sizeof(topic)) < 0) {
+        return;
+    }
+    (void)esp_mqtt_client_enqueue(client, topic, body, (int)strlen(body), 1, 0, true);
+}
+
+/* Copy the request into rpc_q without waiting; never runs a method. Called by the handler of a live session. */
+static void rpc_on_data(esp_mqtt_event_handle_t ev, uint32_t gen)
+{
+    uint32_t req_id = 0;
+    if (!atomic_load(&s.token_session) || s.rpc_q == NULL ||
+        !tb_rpc_parse_topic(ev->topic, (size_t)ev->topic_len, &req_id)) {
+        return;
+    }
+    if (ev->current_data_offset != 0) {
+        return; /* a later fragment: the first one already got its too_large */
+    }
+    if (ev->total_data_len > ev->data_len || ev->data_len > TB_RPC_MAX_REQUEST || ev->data_len < 0) {
+        rpc_reply_from_handler(ev->client, req_id, TB_RPC_BODY_TOO_LARGE);
+        return;
+    }
+    rpc_item_t it = {.req_id = req_id, .gen = gen, .len = (size_t)ev->data_len};
+    it.payload = heap_caps_malloc(it.len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (it.payload == NULL) {
+        it.payload = heap_caps_malloc(it.len + 1, MALLOC_CAP_8BIT); /* boards without PSRAM */
+    }
+    if (it.payload == NULL) {
+        rpc_reply_from_handler(ev->client, req_id, TB_RPC_BODY_BUSY);
+        return;
+    }
+    if (it.len > 0) {
+        memcpy(it.payload, ev->data, it.len);
+    }
+    it.payload[it.len] = '\0';
+    if (xQueueSend(s.rpc_q, &it, 0) != pdTRUE) {
+        rpc_item_free(&it);
+        rpc_reply_from_handler(ev->client, req_id, TB_RPC_BODY_BUSY);
+    }
+}
+
+/* Free every queued request (after a client destroy: their replies have no client to go to). */
+static void rpc_queue_drain(void)
+{
+    rpc_item_t it;
+    while (s.rpc_q != NULL && xQueueReceive(s.rpc_q, &it, 0) == pdTRUE) {
+        rpc_item_free(&it);
+    }
+}
+
 /* ---- esp-mqtt event handler (esp-mqtt task): post a command, flip the flag, nothing else ---- */
 
 static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -182,6 +273,11 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         c.type = CMD_SUBSCRIBED;
         break;
     case MQTT_EVENT_DATA:
+        if (ev->topic != NULL && ev->topic_len > (int)strlen(TB_RPC_REQ_PREFIX) &&
+            memcmp(ev->topic, TB_RPC_REQ_PREFIX, strlen(TB_RPC_REQ_PREFIX)) == 0) {
+            rpc_on_data(ev, gen);
+            return;
+        }
         /* Only the first fragment carries the topic; the reply is small, a fragmented one counts as bad. */
         if (ev->topic == NULL || ev->topic_len != (int)strlen(TB_PROV_RESPONSE_TOPIC) ||
             memcmp(ev->topic, TB_PROV_RESPONSE_TOPIC, (size_t)ev->topic_len) != 0) {
@@ -250,6 +346,7 @@ static void task_teardown(task_ctx_t *tc)
         esp_mqtt_client_destroy(c);
     }
     atomic_store(&s.connected, false); /* a handler that raced the gen bump is gone now */
+    rpc_queue_drain(); /* no handler of the old client can queue any more; tb_rpc drops stale replies by gen */
 }
 
 /* A failed attempt. A token session keeps its client (and so its QoS 1 outbox: alarm events already accepted
@@ -453,6 +550,10 @@ static void task_handle_cmd(task_ctx_t *tc, const tb_cmd_t *c)
             tc->backoff_ms = 0; /* accepted connect: next failure starts at 5 s again */
             task_set_error("");
             task_publish_state(tc, TB_STATE_CONNECTED);
+            /* Clean session: the subscription is gone after every reconnect, so subscribe on every accepted connect. */
+            if (esp_mqtt_client_subscribe_single(tc->client, TB_RPC_SUB_TOPIC, 1) < 0) {
+                ESP_LOGW(TAG, "rpc: subscribe failed");
+            }
         } else {
             tc->prov_connected = true;
             tc->deadline_ms = now_ms() + TB_PROV_REPLY_TIMEOUT_MS;
@@ -581,6 +682,72 @@ static void tb_link_task(void *arg)
     }
 }
 
+/* ---- tb_rpc task: runs device_api methods and publishes the replies ---- */
+
+/* Publish a reply through the same guard as sink_send: client_lock, with the client pointer valid only while the
+ * request's generation is still the current one. */
+static bool rpc_publish(uint32_t gen, uint32_t req_id, const char *body)
+{
+    char topic[48];
+    int id = -1;
+    if (tb_rpc_response_topic(req_id, topic, sizeof(topic)) < 0 || !atomic_load(&s.connected)) {
+        return false;
+    }
+    if (xSemaphoreTake(s.client_lock, pdMS_TO_TICKS(TB_RPC_LOCK_MS)) == pdTRUE) {
+        if (s.client_pub != NULL && gen == atomic_load(&s.gen)) {
+            id = esp_mqtt_client_enqueue(s.client_pub, topic, body, (int)strlen(body), 1, 0, true);
+        }
+        xSemaphoreGive(s.client_lock);
+    }
+    return id >= 0;
+}
+
+/* Runs one request and sends its reply. Frees the payload. Params and replies are never logged. */
+static void rpc_process(rpc_item_t *it)
+{
+    char method[TB_RPC_METHOD_MAX] = "";
+    cJSON *params = NULL;
+    cJSON *out = NULL;
+    char *printed = NULL;
+    const char *body = NULL;
+    const char *status = "?";
+
+    tb_rpc_parse_t pr = tb_rpc_parse_request(it->payload, it->len, method, sizeof(method), &params);
+    rpc_item_free(it);
+    if (pr == TB_RPC_PARSE_BAD_JSON) {
+        body = TB_RPC_BODY_INVALID_JSON;
+        status = "invalid_json";
+    } else if (pr == TB_RPC_PARSE_NO_METHOD) {
+        body = TB_RPC_BODY_UNKNOWN_METHOD;
+        status = "unknown_method";
+    } else {
+        dapi_status_t st = device_api_call(method, params, DAPI_SRC_TB, &out);
+        status = device_api_http_status(st);
+        if (out != NULL) {
+            printed = cJSON_PrintUnformatted(out);
+        }
+        body = (printed != NULL) ? printed : TB_RPC_BODY_MEMORY;
+    }
+    cJSON_Delete(params);
+    cJSON_Delete(out);
+
+    bool sent = rpc_publish(it->gen, it->req_id, body);
+    ESP_LOGI(TAG, "rpc %s id=%lu -> %s%s", method[0] != '\0' ? method : "-", (unsigned long)it->req_id, status,
+             sent ? "" : " (reply dropped)");
+    free(printed);
+}
+
+static void tb_rpc_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        rpc_item_t it;
+        if (xQueueReceive(s.rpc_q, &it, portMAX_DELAY) == pdTRUE) {
+            rpc_process(&it);
+        }
+    }
+}
+
 /* ---- public API ---- */
 
 static void post_restart(void)
@@ -599,7 +766,8 @@ esp_err_t tb_link_init(void)
     s.save_lock = xSemaphoreCreateMutex();
     s.client_lock = xSemaphoreCreateMutex();
     s.q = xQueueCreate(TB_QUEUE_LEN, sizeof(tb_cmd_t));
-    if (s.lock == NULL || s.save_lock == NULL || s.client_lock == NULL || s.q == NULL) {
+    s.rpc_q = xQueueCreate(TB_RPC_QUEUE_LEN, sizeof(rpc_item_t));
+    if (s.lock == NULL || s.save_lock == NULL || s.client_lock == NULL || s.q == NULL || s.rpc_q == NULL) {
         return ESP_ERR_NO_MEM;
     }
     uint8_t mac[6] = {0};
@@ -611,7 +779,13 @@ esp_err_t tb_link_init(void)
              (int)provisioned);
     s.state = TB_STATE_OFF;
     s.inited = true;
+    if (xTaskCreate(tb_rpc_task, "tb_rpc", TB_RPC_TASK_STACK, NULL, TB_RPC_TASK_PRIORITY, &s.rpc_task) != pdPASS) {
+        s.inited = false;
+        return ESP_ERR_NO_MEM;
+    }
     if (xTaskCreate(tb_link_task, "tb_link", TB_TASK_STACK, NULL, TB_TASK_PRIORITY, &s.task) != pdPASS) {
+        vTaskDelete(s.rpc_task); /* nothing can have been queued: no client exists yet */
+        s.rpc_task = NULL;
         s.inited = false;
         return ESP_ERR_NO_MEM;
     }
@@ -709,6 +883,15 @@ void tb_link_get_status(tb_link_status_t *out)
 int32_t tb_link_stack_hwm(void)
 {
     TaskHandle_t t = s.task;
+    if (t == NULL) {
+        return -1;
+    }
+    return (int32_t)(uxTaskGetStackHighWaterMark(t) * sizeof(StackType_t));
+}
+
+int32_t tb_link_rpc_stack_hwm(void)
+{
+    TaskHandle_t t = s.rpc_task;
     if (t == NULL) {
         return -1;
     }

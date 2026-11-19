@@ -336,7 +336,7 @@ static void log_board_and_hardware_diagnostics(void) {
       "cpu_load_pct=%lu.%lu core0_pct=%lu.%lu core1_pct=%lu.%lu tasks=%lu "
       "twdt_main=%s reset=%s heap_free=%lu heap_min=%lu heap_largest=%lu "
       "heap_alloc_blocks=%lu heap_free_blocks=%lu main_stack_hwm=%lu "
-      "hwm_alarm=%ld hwm_uplink=%ld hwm_dry_run=%ld tb_hwm=%ld "
+      "hwm_alarm=%ld hwm_uplink=%ld hwm_dry_run=%ld tb_hwm=%ld tb_rpc_hwm=%ld "
       "die_temp=unsupported external_temp_source=ds18b20",
       (unsigned long long)(now_us / 1000), CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ,
       !cpu_stats_available ? "unsupported"
@@ -356,7 +356,7 @@ static void log_board_and_hardware_diagnostics(void) {
       (unsigned long)heap_info.free_blocks,
       (unsigned long)uxTaskGetStackHighWaterMark(NULL),
       (long)alarm_engine_stack_hwm(), (long)uplink_stack_hwm(),
-      (long)dry_run_guard_stack_hwm(), (long)tb_link_stack_hwm());
+      (long)dry_run_guard_stack_hwm(), (long)tb_link_stack_hwm(), (long)tb_link_rpc_stack_hwm());
 
   pump_control_status_t pump = {0};
   if (pump_control_get_status(&pump)) {

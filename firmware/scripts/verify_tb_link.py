@@ -223,11 +223,77 @@ def test_web_card_and_api():
                 "reprovision asks window.confirm before posting")
 
 
+def test_rpc_transport():
+    print("\n--- Milestone 2 Task 3: ThingsBoard RPC transport ---")
+    src = read(COMP_DIR / "tb_link" / "tb_link.c")
+    hdr = read(COMP_DIR / "tb_link" / "include" / "tb_link.h")
+    cm = read(COMP_DIR / "tb_link" / "CMakeLists.txt")
+    app = read(MAIN_DIR / "app_main.c")
+    handle = function_body(src, "task_handle_cmd")
+    connected = handle[handle.find("case CMD_CONNECTED:"):handle.find("case CMD_SUBSCRIBED:")]
+    sub_at = connected.find("TB_RPC_SUB_TOPIC")
+    assert_test(sub_at != -1 and sub_at < connected.find("} else {") and ", 1)" in connected[sub_at:sub_at + 60],
+                "RPC subscribe (QoS 1) is in the token branch of task_handle_cmd CMD_CONNECTED")
+    assert_test('#define TB_RPC_SUB_TOPIC TB_RPC_REQ_PREFIX "+"' in src,
+                "subscribe topic is the request prefix + '+'")
+    handler = function_body(src, "mqtt_event_handler")
+    ondata = function_body(src, "rpc_on_data")
+    assert_test(bool(ondata) and "device_api_call" not in ondata and "device_api_call" not in handler,
+                "event handler RPC branch never calls device_api_call")
+    assert_test(re.search(r"xQueueSend\s*\(\s*s\.rpc_q\s*,\s*&it\s*,\s*0\s*\)", ondata) is not None,
+                "event handler queues the request with xQueueSend and zero wait")
+    assert_test("rpc_on_data(" in handler, "MQTT_EVENT_DATA routes RPC topics to rpc_on_data")
+    assert_test("TB_RPC_BODY_TOO_LARGE" in ondata and "TB_RPC_BODY_BUSY" in ondata
+                and "current_data_offset" in ondata and "total_data_len > ev->data_len" in ondata
+                and "TB_RPC_MAX_REQUEST" in ondata,
+                "handler answers too_large (fragmented or over cap, first fragment only) and busy")
+    assert_test("#define TB_RPC_QUEUE_LEN 4" in src and "#define TB_RPC_TASK_STACK 6144" in src
+                and "#define TB_RPC_TASK_PRIORITY 2" in src and '"tb_rpc"' in src,
+                "tb_rpc task: 6144 B stack, priority 2, queue depth 4")
+    bodies = {
+        "too_large": r'"{\"ok\":false,\"error\":\"too_large\"}"',
+        "busy": r'"{\"ok\":false,\"error\":\"busy\"}"',
+        "invalid_json": r'"{\"ok\":false,\"error\":\"invalid_json\",\"message\":\"Expected a JSON object\"}"',
+        "unknown_method": r'"{\"ok\":false,\"error\":\"unknown_method\"}"',
+        "memory": r'"{\"ok\":false,\"error\":\"memory\",\"message\":\"JSON allocation failed\"}"',
+    }
+    for name, body in bodies.items():
+        assert_test(body in src, f"fixed reply body present: {name}")
+    pub = function_body(src, "rpc_publish")
+    take = pub.find("xSemaphoreTake(s.client_lock")
+    assert_test(take != -1 and take < pub.find("s.client_pub != NULL") and "gen == atomic_load(&s.gen)" in pub
+                and take < pub.find("esp_mqtt_client_enqueue(s.client_pub")
+                and pub.find("esp_mqtt_client_enqueue") < pub.find("xSemaphoreGive(s.client_lock)"),
+                "tb_rpc publishes under client_lock, checking client_pub and the generation inside the lock")
+    proc = function_body(src, "rpc_process")
+    assert_test("device_api_call(method, params, DAPI_SRC_TB, &out)" in proc and "rpc_publish(" in proc
+                and "esp_mqtt_client_enqueue" not in proc and "client_pub" not in proc,
+                "rpc_process calls device_api_call and publishes only through rpc_publish")
+    assert_test("TB_RPC_BODY_MEMORY" in proc and 'ESP_LOGI(TAG, "rpc %s id=%lu -> %s' in proc,
+                "rpc_process has the memory fallback body and logs 'rpc <method> id=<id> -> <status>'")
+    assert_test(not re.search(r"ESP_LOG[EWIDV]\s*\([^;]*(params|payload)", proc + ondata),
+                "RPC path never logs params or payload")
+    td = function_body(src, "task_teardown")
+    assert_test("rpc_queue_drain()" in td and td.find("esp_mqtt_client_destroy") < td.find("rpc_queue_drain()"),
+                "task_teardown drains rpc_q after destroying the client")
+    drain = function_body(src, "rpc_queue_drain")
+    assert_test("xQueueReceive(s.rpc_q" in drain and "rpc_item_free(" in drain,
+                "rpc_queue_drain frees every queued item")
+    assert_test("tb_rpc_task" in function_body(src, "tb_link_init", rettype=r"esp_err_t\s+"),
+                "tb_link_init creates the tb_rpc task")
+    assert_test("tb_link_rpc_stack_hwm" in hdr and "tb_link_rpc_stack_hwm" in src,
+                "tb_link exports tb_link_rpc_stack_hwm")
+    assert_test("device_api" in cm, "tb_link CMakeLists REQUIRES device_api")
+    assert_test("tb_hwm=%ld tb_rpc_hwm=%ld" in app and "tb_link_rpc_stack_hwm()" in app,
+                "BOARD_DIAG prints tb_rpc_hwm= right after tb_hwm=")
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
     test_tb_link_component()
     test_web_card_and_api()
+    test_rpc_transport()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

@@ -258,3 +258,65 @@ uint32_t tb_backoff_next_ms(uint32_t current_ms)
     }
     return current_ms * 2;
 }
+
+/* ---- ThingsBoard server-side RPC ---- */
+
+bool tb_rpc_parse_topic(const char *topic, size_t topic_len, uint32_t *req_id)
+{
+    const size_t pl = sizeof(TB_RPC_REQ_PREFIX) - 1;
+    if (topic == NULL || req_id == NULL || topic_len <= pl || topic_len > pl + 10 ||
+        memcmp(topic, TB_RPC_REQ_PREFIX, pl) != 0) {
+        return false;
+    }
+    uint64_t v = 0;
+    for (size_t i = pl; i < topic_len; i++) {
+        if (topic[i] < '0' || topic[i] > '9') {
+            return false;
+        }
+        v = v * 10 + (uint64_t)(topic[i] - '0');
+    }
+    if (v > 0xffffffffull) {
+        return false;
+    }
+    *req_id = (uint32_t)v;
+    return true;
+}
+
+tb_rpc_parse_t tb_rpc_parse_request(const char *payload, size_t len, char *method, size_t method_size,
+                                    cJSON **params)
+{
+    if (params != NULL) {
+        *params = NULL;
+    }
+    if (payload == NULL || len == 0 || method == NULL || method_size == 0 || params == NULL) {
+        return TB_RPC_PARSE_BAD_JSON;
+    }
+    cJSON *root = cJSON_ParseWithLength(payload, len);
+    if (root == NULL || !cJSON_IsObject(root)) {
+        cJSON_Delete(root);
+        return TB_RPC_PARSE_BAD_JSON;
+    }
+    const cJSON *m = cJSON_GetObjectItemCaseSensitive(root, "method");
+    if (!cJSON_IsString(m) || m->valuestring == NULL || m->valuestring[0] == '\0' ||
+        strlen(m->valuestring) >= method_size) {
+        cJSON_Delete(root);
+        return TB_RPC_PARSE_NO_METHOD;
+    }
+    memcpy(method, m->valuestring, strlen(m->valuestring) + 1);
+    *params = cJSON_DetachItemFromObjectCaseSensitive(root, "params");
+    cJSON_Delete(root);
+    return TB_RPC_PARSE_OK;
+}
+
+int tb_rpc_response_topic(uint32_t req_id, char *out, size_t out_size)
+{
+    if (out == NULL || out_size == 0) {
+        return -1;
+    }
+    int n = snprintf(out, out_size, TB_RPC_RESP_PREFIX "%lu", (unsigned long)req_id);
+    if (n < 0 || (size_t)n >= out_size) {
+        out[0] = '\0';
+        return -1;
+    }
+    return n;
+}

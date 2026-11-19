@@ -54,6 +54,26 @@ tb_prov_result_t tb_provision_parse(const char *json, size_t len, char *token, s
 /* 0 -> 5000, else min(2*current, 60000) */
 uint32_t tb_backoff_next_ms(uint32_t current_ms);
 
+/* ---- ThingsBoard server-side RPC ---- */
+#define TB_RPC_REQ_PREFIX  "v1/devices/me/rpc/request/"
+#define TB_RPC_RESP_PREFIX "v1/devices/me/rpc/response/"
+#define TB_RPC_MAX_REQUEST 1792 /* > largest HTTP body (1536) + envelope; < mqtt buffer 2048 */
+#define TB_RPC_METHOD_MAX  48
+
+/* Topic "v1/devices/me/rpc/request/<decimal id>" (topic_len bytes, not NUL terminated): true and *req_id set.
+ * False for another prefix, an empty or non-decimal id, or an id over 4294967295. */
+bool tb_rpc_parse_topic(const char *topic, size_t topic_len, uint32_t *req_id);
+
+typedef enum { TB_RPC_PARSE_OK = 0, TB_RPC_PARSE_BAD_JSON, TB_RPC_PARSE_NO_METHOD } tb_rpc_parse_t;
+/* Envelope {"method":"...","params":...}. BAD_JSON: not a JSON object. NO_METHOD: method missing, not a string,
+ * empty or not fitting method_size with its NUL. OK: method copied; *params = the params item detached from the
+ * envelope (any JSON type) or NULL when absent; the caller deletes it. *params is NULL unless OK. */
+tb_rpc_parse_t tb_rpc_parse_request(const char *payload, size_t len, char *method, size_t method_size,
+                                    cJSON **params);
+
+/* "v1/devices/me/rpc/response/<id>" into out; returns its length, or -1 when it does not fit with the NUL. */
+int tb_rpc_response_topic(uint32_t req_id, char *out, size_t out_size);
+
 #ifdef __cplusplus
 }
 #endif

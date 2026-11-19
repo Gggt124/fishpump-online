@@ -211,4 +211,62 @@ void test_tb_link(void)
     CHECK(tb_backoff_next_ms(20000) == 40000u);
     CHECK(tb_backoff_next_ms(40000) == 60000u);
     CHECK(tb_backoff_next_ms(60000) == 60000u);
+    /* RPC topic and envelope parsing */
+    {
+        uint32_t id = 0;
+        const char *t = "v1/devices/me/rpc/request/17";
+        CHECK(tb_rpc_parse_topic(t, strlen(t), &id) && id == 17);
+        t = "v1/devices/me/rpc/request/4294967295";
+        CHECK(tb_rpc_parse_topic(t, strlen(t), &id) && id == 4294967295u);
+        t = "v1/devices/me/rpc/request/";
+        CHECK(!tb_rpc_parse_topic(t, strlen(t), &id));
+        t = "v1/devices/me/rpc/request/1a";
+        CHECK(!tb_rpc_parse_topic(t, strlen(t), &id));
+        t = "v1/devices/me/rpc/request/4294967296";
+        CHECK(!tb_rpc_parse_topic(t, strlen(t), &id));
+        t = "v1/devices/me/rpc/response/17";
+        CHECK(!tb_rpc_parse_topic(t, strlen(t), &id));
+        t = "v1/devices/me/rpc/request/17";
+        CHECK(!tb_rpc_parse_topic(t, strlen(t) - 1 > 26 ? 26 : strlen(t) - 1, &id));
+        CHECK(tb_rpc_parse_topic(t, strlen(t) - 1, &id) && id == 1); /* topic_len, not the NUL, ends the id */
+        CHECK(!tb_rpc_parse_topic(NULL, 0, &id));
+
+        char method[TB_RPC_METHOD_MAX];
+        cJSON *params = (cJSON *)1;
+        const char *r = "{\"method\":\"alarms.status\"}";
+        CHECK(tb_rpc_parse_request(r, strlen(r), method, sizeof(method), &params) == TB_RPC_PARSE_OK);
+        CHECK(strcmp(method, "alarms.status") == 0 && params == NULL);
+        r = "{\"method\":\"x\",\"params\":{\"a\":1}}";
+        CHECK(tb_rpc_parse_request(r, strlen(r), method, sizeof(method), &params) == TB_RPC_PARSE_OK);
+        CHECK(params != NULL && cJSON_IsObject(params));
+        cJSON_Delete(params);
+        r = "{\"method\":\"x\",\"params\":[1]}";
+        CHECK(tb_rpc_parse_request(r, strlen(r), method, sizeof(method), &params) == TB_RPC_PARSE_OK);
+        CHECK(params != NULL && cJSON_IsArray(params));
+        cJSON_Delete(params);
+
+        params = (cJSON *)1;
+        r = "{\"params\":{}}";
+        CHECK(tb_rpc_parse_request(r, strlen(r), method, sizeof(method), &params) == TB_RPC_PARSE_NO_METHOD);
+        CHECK(params == NULL);
+        r = "{\"method\":3}";
+        CHECK(tb_rpc_parse_request(r, strlen(r), method, sizeof(method), &params) == TB_RPC_PARSE_NO_METHOD);
+        char j48[80];
+        snprintf(j48, sizeof(j48), "{\"method\":\"%s\"}", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuv");
+        CHECK(strlen("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuv") == TB_RPC_METHOD_MAX);
+        CHECK(tb_rpc_parse_request(j48, strlen(j48), method, sizeof(method), &params) == TB_RPC_PARSE_NO_METHOD);
+        r = "{\"method\":\"\"}";
+        CHECK(tb_rpc_parse_request(r, strlen(r), method, sizeof(method), &params) == TB_RPC_PARSE_NO_METHOD);
+        r = "not json";
+        CHECK(tb_rpc_parse_request(r, strlen(r), method, sizeof(method), &params) == TB_RPC_PARSE_BAD_JSON);
+        r = "[]";
+        CHECK(tb_rpc_parse_request(r, strlen(r), method, sizeof(method), &params) == TB_RPC_PARSE_BAD_JSON);
+        CHECK(tb_rpc_parse_request(NULL, 0, method, sizeof(method), &params) == TB_RPC_PARSE_BAD_JSON);
+
+        char buf[64];
+        CHECK(tb_rpc_response_topic(17, buf, sizeof(buf)) == 29 && strcmp(buf, "v1/devices/me/rpc/response/17") == 0);
+        CHECK(tb_rpc_response_topic(17, buf, 29) == -1);
+        CHECK(tb_rpc_response_topic(17, buf, 30) == 29);
+        CHECK(tb_rpc_response_topic(4294967295u, buf, sizeof(buf)) == 37);
+    }
 }
