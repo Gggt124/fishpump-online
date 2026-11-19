@@ -41,7 +41,7 @@
       {"method": "protection.measure.set", "params": {"action": "save"}, "http": "/api/protection/measure", "error": "invalid_action"}
     ],
     "writes": [
-      {"name": "protection.set prime_sec +1", "get": "protection.get", "get_http": "/api/protection", "rule_path": "pump", "path": "prime_sec", "change": {"add": 1}, "wrap": "pump", "set": "protection.set", "set_http": "/api/protection"}
+      {"name": "protection.set prime_sec +1", "get": "protection.get", "get_http": "/api/protection", "rule_path": "pump", "path": "prime_sec", "attr": {"key": "cfg_protection", "path": "pump.prime_sec"}, "change": {"add": 1}, "wrap": "pump", "set": "protection.set", "set_http": "/api/protection"}
     ]
   },
   "pump": {
@@ -71,7 +71,7 @@
                  "hardware_fields_read_only", "hardware_map_status", "settings_status",
                  "timer1_on_sec", "timer1_off_sec", "timer2_on_sec", "timer2_off_sec", "auto_start",
                  "relay_polarity", "timer1_start_phase", "timer2_start_phase"],
-       "path": "water_set1_off", "change": {"add": 60}, "set": "pump.config.set", "set_http": "/api/pump/config"}
+       "path": "water_set1_off", "attr": {"key": "cfg_pump", "path": "water_set1_off"}, "change": {"add": 60}, "set": "pump.config.set", "set_http": "/api/pump/config"}
     ]
   },
   "cooling": {
@@ -106,7 +106,7 @@
       {"name": "cooling.config.set min_off +1 sec",
        "get": "cooling.config.get", "get_http": "/api/cooling/config",
        "omit": ["settings_status", "point_count", "threshold_c", "threshold_c_x10", "hysteresis_c", "hysteresis_c_x10", "limits", "modes", "relay_polarities", "curve_types", "status"],
-       "path": "min_off_sec", "change": {"add": 1}, "set": "cooling.config.set", "set_http": "/api/cooling/config"},
+       "path": "min_off_sec", "attr": {"key": "cfg_cooling", "path": "min_off_sec"}, "change": {"add": 1}, "set": "cooling.config.set", "set_http": "/api/cooling/config"},
       {"name": "cooling.mode.set current mode (no-op)",
        "get": "cooling.config.get", "get_http": "/api/cooling/config",
        "omit": ["settings_status", "auto_enable", "curve_type", "point_count", "points", "min_off_sec", "test_timeout_sec", "threshold_c", "threshold_c_x10", "hysteresis_c", "hysteresis_c_x10", "compressor_min_off_sec", "cooling_relay_polarity", "limits", "modes", "relay_polarities", "curve_types", "status"],

@@ -6,6 +6,7 @@ Source contract checks for the ThingsBoard link, milestone 1
 (docs/superpowers/plans: 2026-11-18 thingsboard-link-m1).
 """
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -344,6 +345,24 @@ def test_tb_state():
         assert_test(f'"{key}"' in src, f'tb_state.c names the attribute key "{key}"')
 
 
+def test_state_cases_drift():
+    print("\n--- Milestone 3 Task 5: state_cases.json status_keys follow the firmware ---")
+    fmt = read(COMP_DIR / "uplink_format" / "uplink_format.c")
+    table = re.findall(r'\{UPLINK_SRC_\w+\s*,\s*"[^"]+"\s*,\s*"([^"]+)"\s*,\s*(?:true|false)\s*\}', fmt)
+    state = read(MAIN_DIR / "tb_state.c")
+    body = function_body(state, "build_status", rettype=r"static\s+cJSON\s*\*\s*")
+    extra = re.findall(r'(?:add_hwm|cJSON_AddNumberToObject)\s*\(\s*out\s*,\s*"(\w+)"', body)
+    cases_path = FIRMWARE_DIR.parent / "thingsboard" / "state_cases.json"
+    try:
+        keys = json.loads(read(cases_path)).get("status_keys")
+    except ValueError:
+        keys = None
+    assert_test(len(table) >= 20 and len(extra) == 7,
+                "parsed the uplink_status_fields table and the tb_state keys", f"table={len(table)} extra={len(extra)}")
+    assert_test(keys == table + extra, "state_cases.json status_keys = table keys in order + tb_state keys",
+                f"expected {table + extra}, got {keys}")
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
@@ -352,6 +371,7 @@ def main():
     test_rpc_transport()
     test_uplink_state()
     test_tb_state()
+    test_state_cases_drift()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

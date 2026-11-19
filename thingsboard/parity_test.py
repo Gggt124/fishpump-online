@@ -5,6 +5,9 @@
     python thingsboard/parity_test.py ... --writes --rule-id 3        # also the reversible write cases
     python thingsboard/parity_test.py ... --burst 30                  # RPC burst while polling /api/alarms/summary
 
+Besides the RPC cases it checks the client attributes and the status telemetry keys (state_cases.json; --group state
+runs only those). With --writes the write cases that have an "attr" also check that the attribute follows the change.
+
 Passwords: env TB_PASSWORD / BOARD_PASSWORD or a prompt. Cases live in parity_cases.json (format: README).
 Exit code 0 only when no case FAILs.
 """
@@ -24,6 +27,12 @@ HERE = Path(__file__).resolve().parent
 CASES_FILE = HERE / "parity_cases.json"
 DEFAULT_DEVICE = "fishpump-1de564"
 FORCE_PW_MSG = "board web password is still the default"
+STATE_FILE = HERE / "state_cases.json"
+FOLLOW_POLL_S = 0.25
+# the clocks are module-level so the selftest can run the follow polling instantly
+_sleep = time.sleep
+_now = time.monotonic
+_wall = time.time
 
 
 # ---------------------------------------------------------------- pure helpers (selftested)
@@ -45,6 +54,35 @@ def compare_bodies(rpc, http, ignore=()):
     if a == b:
         return None
     return "bodies differ: rpc=%s http=%s" % (_short(a), _short(b))
+
+
+def diff_path(a, b, path=""):
+    """Dotted path of the first difference between two JSON values ('' at the root), or None when equal."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        for k in sorted(set(a) | set(b)):
+            sub = path + ("." if path else "") + k
+            if k not in a or k not in b:
+                return sub
+            d = diff_path(a[k], b[k], sub)
+            if d is not None:
+                return d
+        return None
+    if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+        for i, (x, y) in enumerate(zip(a, b)):
+            d = diff_path(x, y, path + ("." if path else "") + str(i))
+            if d is not None:
+                return d
+        return None
+    return None if a == b else (path or "(root)")
+
+
+def ignore_for(cases, http):
+    """The read ignore list of the parity case that reads this HTTP path ([] when there is none)."""
+    for group in cases.values():
+        for c in group.get("reads", []):
+            if c.get("http") == http:
+                return c.get("ignore", [])
+    return []
 
 
 def _short(obj, n=240):
@@ -272,6 +310,125 @@ def cases_for_selftest():
     return json.loads(CASES_FILE.read_text(encoding="utf-8"))
 
 
+class _FakeBoardMap:
+    """Board stand-in that answers GET <path> from a dict of replies."""
+    def __init__(self, replies):
+        self.replies = replies
+
+    def request(self, verb, path, body=None):
+        return 200, json.dumps(self.replies[path])
+
+
+class _FakeTbState:
+    """TB stand-in with a client-attribute store and a latest-telemetry store."""
+    def __init__(self, attrs=None, tele=None):
+        self.attrs, self.tele = attrs or {}, tele or {}
+
+    def client_attributes(self, dev, keys):
+        return {k: copy.deepcopy(v) for k, v in self.attrs.items() if k in keys}
+
+    def latest_telemetry(self, dev, keys):
+        return {k: v for k, v in self.tele.items() if k in keys}
+
+
+class _FakeTbAttr(_FakeTb):
+    """Writes land in the shared rule list at once, but the attribute TB shows follows only `lag` polls later
+    (never = it never follows)."""
+    def __init__(self, rules, lag=2, never=False):
+        super().__init__(rules)
+        self.lag, self.never, self.shown, self.stale = lag, never, rules[0]["delay_sec"], 0
+
+    def client_attributes(self, dev, keys):
+        cur = self.rules[0]["delay_sec"]
+        if cur != self.shown and not self.never:
+            self.stale += 1
+            if self.stale > self.lag:
+                self.shown, self.stale = cur, 0
+        return {"cfg_t": {"x": {"v": self.shown}}}
+
+
+class _GetOnlyTb(tb_api.TbApi):
+    """TbApi whose GET returns canned data, to test the attribute/telemetry parsing offline."""
+    def __init__(self, reply):
+        self.reply, self.calls = reply, []
+
+    def get(self, path, params=None, **kw):
+        self.calls.append((path, params))
+        return self.reply
+
+
+def _follow_scenario(lag=2, never=False):
+    rules = [{"id": 3, "enabled": False, "delay_sec": 4}]
+    tb = _FakeTbAttr(rules, lag, never)
+    r = Runner(tb, "dev", _FakeBoard(rules), state={"follow_timeout_s": 5, "follow_pass_s": 3})
+    case = dict(json.loads(CASES_FILE.read_text(encoding="utf-8"))["alarms"]["writes"][0],
+                attr={"key": "cfg_t", "path": "x.v"})
+    _quiet(r.run_write, "alarms", case, 3)
+    return r, rules
+
+
+def selftest_state(check):
+    global _sleep, _now, _wall
+    saved = (_sleep, _now, _wall)
+    clock = [0.0]
+    _now = lambda: clock[0]
+    _sleep = lambda s: clock.__setitem__(0, clock[0] + s)
+    _wall = lambda: 1000.0
+    try:
+        case = {"key": "cfg_pump", "http": "/api/pump/config", "drop": ["ok"]}
+        board = _FakeBoardMap({"/api/pump/config": {"ok": True, "a": {"b": 1}, "c": 2}})
+        r = Runner(_FakeTbState({"cfg_pump": {"a": {"b": 1}, "c": 2}}), "dev", board)
+        _quiet(r.run_attr, case, [])
+        check("attr equal to the HTTP reply minus drop is PASS", r.counts["PASS"] == 1 and r.counts["FAIL"] == 0
+              and r.rows[0][1] == "attr cfg_pump")
+        r = Runner(_FakeTbState({"cfg_pump": {"a": {"b": 9}, "c": 2}}), "dev", board)
+        _quiet(r.run_attr, case, [])
+        check("attr with a different value is FAIL naming the path",
+              r.counts["FAIL"] == 1 and "a.b" in r.rows[0][2])
+        r = Runner(_FakeTbState({}), "dev", board)
+        _quiet(r.run_attr, case, [])
+        check("a missing attribute is FAIL", r.counts["FAIL"] == 1)
+        r = Runner(_FakeTbState({"cfg_pump": {"a": {"b": 1}, "c": 3}}), "dev", board)
+        _quiet(r.run_attr, case, ["c"])
+        check("attr honours the read ignore list", r.counts["PASS"] == 1)
+        r = Runner(_FakeTbState({"wifi": {"x": 1}}), "dev", None)
+        _quiet(r.run_attr_present, "wifi")
+        _quiet(r.run_attr_present, "tb_link")
+        check("attr present: PASS when there, FAIL when not", r.counts["PASS"] == 1 and r.counts["FAIL"] == 1
+              and r.rows[0][1] == "attr wifi present")
+        tele = {"pump_phase": (1000000 - 5000, "idle"), "old_key": (1000000 - 60000, 1)}
+        r = Runner(_FakeTbState(tele=tele), "dev", None)
+        _quiet(r.run_status, ["pump_phase", "old_key", "gone_key"], 45)
+        by = {row[1]: row[0] for row in r.rows}
+        check("status: fresh PASS, 60 s old FAIL, missing FAIL",
+              by == {"status pump_phase": "PASS", "status old_key": "FAIL", "status gone_key": "FAIL"})
+        g = _GetOnlyTb([{"key": "cfg_x", "value": '{"a": 1}', "lastUpdateTs": 1}, {"key": "n", "value": 5},
+                        {"key": "s", "value": "hello"}])
+        got = g.client_attributes("dev", ["cfg_x", "n", "s"])
+        check("client_attributes decodes a string-encoded object and keeps other values",
+              got == {"cfg_x": {"a": 1}, "n": 5, "s": "hello"}
+              and g.calls[0][0].endswith("/DEVICE/dev/values/attributes/CLIENT_SCOPE")
+              and g.calls[0][1] == {"keys": "cfg_x,n,s"})
+        g = _GetOnlyTb({"k": [{"ts": 7, "value": "3"}], "e": []})
+        check("latest_telemetry gives key -> (ts, value) and leaves empty keys out",
+              g.latest_telemetry("dev", ["k", "e"]) == {"k": (7, "3")}
+              and g.calls[0][0].endswith("/DEVICE/dev/values/timeseries"))
+        clock[0] = 0.0
+        r, rules = _follow_scenario(lag=2)
+        fr = [row for row in r.rows if row[1].endswith("follow")]
+        check("follow: the attribute updating after 2 polls is PASS with both delays",
+              len(fr) == 1 and fr[0][0] == "PASS" and "follow" in fr[0][2] and " s / " in fr[0][2]
+              and rules[0]["delay_sec"] == 4)
+        clock[0] = 0.0
+        r, rules = _follow_scenario(never=True)
+        fr = [row for row in r.rows if row[1].endswith("follow")]
+        check("follow: an attribute that never updates is FAIL after the timeout, showing the last value",
+              len(fr) == 1 and fr[0][0] == "FAIL" and "4" in fr[0][2] and clock[0] >= 5.0
+              and rules[0]["delay_sec"] == 4)
+    finally:
+        _sleep, _now, _wall = saved
+
+
 def selftest():
     fails = []
 
@@ -395,6 +552,7 @@ def selftest():
     check("b: default password -> SKIP, no write", r.counts["SKIP"] == 1 and tb.writes == 0 and rules[0]["delay_sec"] == 4)
     r, rules, tb = _quiet(_write_scenario, {"raise_on_post": True})
     check("c: BoardError on restore -> stop", r.counts["FAIL"] == 1 and r.stop_writes)
+    selftest_state(check)
     if fails:
         print("SELFTEST FAIL: " + ", ".join(fails))
         return 1
@@ -405,15 +563,18 @@ def selftest():
 # ---------------------------------------------------------------- live runner
 
 class Runner:
-    def __init__(self, tb, device_id, board):
+    def __init__(self, tb, device_id, board, state=None):
         self.tb, self.device_id, self.board = tb, device_id, board
+        self.state = state or {}  # state_cases.json (follow timing)
         self.fails = 0
         self.counts = {"PASS": 0, "FAIL": 0, "SKIP": 0}
         self.stop_writes = False
         self.skip_reasons = []
+        self.rows = []
 
     def report(self, status, name, reason=""):
         self.counts[status] += 1
+        self.rows.append((status, name, reason))
         if status == "SKIP":
             self.skip_reasons.append(reason)
         print("%-5s %s%s" % (status, name, (" - " + reason) if reason else ""))
@@ -528,12 +689,16 @@ class Runner:
         ws, wb = self.rpc(c["set"], set_body)
         write_ok = not self.rpc_failed(ws) and isinstance(wb, dict) and wb.get("ok") is True
         problem = None if write_ok else "write via TB failed: %s %s" % (ws, _short(wb, 100))
+        attr = c.get("attr")
+        follow_new = self._follow(attr, new) if attr and write_ok else None
         seen, err = self._http_value(c, subst)
         if err is None and write_ok and seen != new:
             problem = "HTTP readback shows %r, expected %r" % (seen, new)
         restored = err is None and seen == old
         rest_note = ""
+        did_restore = False
         if not restored:
+            did_restore = True
             try:
                 rest_status, rest_body = self.http("POST", c["set_http"], original_body)
                 rest_ok = rest_status in (200, 202) and isinstance(rest_body, dict) and rest_body.get("ok") is True
@@ -559,6 +724,92 @@ class Runner:
                   % (c.get("rule_path", ""), c["path"], old, rule_id))
             return self.report("FAIL", name, "; ".join(x for x in (problem, rest_note) if x) or "restore failed")
         self.report("FAIL" if problem else "PASS", name, problem or "%r -> %r -> restored" % (old, new))
+        if attr and write_ok and did_restore:
+            self._report_follow("%s/write %s follow" % (group, c["name"]), follow_new, self._follow(attr, old))
+
+    # ---- client attributes and status telemetry (state_cases.json)
+
+    def _follow(self, attr, want):
+        """Poll the client attribute until attr["path"] equals want. Returns (seconds until seen or None, last value seen)."""
+        timeout = self.state.get("follow_timeout_s", 5)
+        start, last = _now(), "(nothing read)"
+        while True:
+            try:
+                value = self.tb.client_attributes(self.device_id, [attr["key"]]).get(attr["key"])
+                last = "(attribute missing)" if value is None else get_path(value, attr["path"])
+            except (tb_api.TbError, KeyError, IndexError, TypeError, AttributeError) as e:
+                last = "(error: %s)" % e
+            if last == want:
+                return _now() - start, last
+            if _now() - start >= timeout:
+                return None, last
+            _sleep(FOLLOW_POLL_S)
+
+    def _report_follow(self, name, new_res, old_res):
+        limit = self.state.get("follow_pass_s", 3)
+        (d_new, last_new), (d_old, last_old) = new_res, old_res
+        if d_new is not None and d_old is not None and d_new <= limit and d_old <= limit:
+            return self.report("PASS", name, "(follow %.1f s / %.1f s)" % (d_new, d_old))
+        bad = []
+        if d_new is None:
+            bad.append("new value never seen, last %r" % (last_new,))
+        elif d_new > limit:
+            bad.append("new value seen after %.1f s (limit %s s)" % (d_new, limit))
+        if d_old is None:
+            bad.append("old value never seen, last %r" % (last_old,))
+        elif d_old > limit:
+            bad.append("old value seen after %.1f s (limit %s s)" % (d_old, limit))
+        self.report("FAIL", name, "; ".join(bad))
+
+    def run_attr(self, c, ignore):
+        name = "attr %s" % c["key"]
+        try:
+            got = self.tb.client_attributes(self.device_id, [c["key"]])
+        except tb_api.TbError as e:
+            return self.report("FAIL", name, str(e))
+        if c["key"] not in got:
+            return self.report("FAIL", name, "attribute missing in ThingsBoard")
+        hs, hb = self.http("GET", c["http"])
+        if self.default_pw(hs, hb):
+            return self.report("SKIP", name, FORCE_PW_MSG)
+        if hs != 200 or not isinstance(hb, dict):
+            return self.report("FAIL", name, "board HTTP %s" % hs)
+        want = {k: v for k, v in hb.items() if k not in c.get("drop", [])}
+        if compare_bodies(got[c["key"]], want, ignore) is None:
+            return self.report("PASS", name)
+        a, b = strip_keys(got[c["key"]], set(ignore)), strip_keys(want, set(ignore))
+        p = diff_path(a, b)
+        try:
+            tb_v, http_v = get_path(a, p), get_path(b, p)
+        except (KeyError, IndexError, TypeError, ValueError):
+            tb_v = http_v = "?"
+        self.report("FAIL", name, "differs at %s: tb=%s http=%s" % (p, _short(tb_v, 80), _short(http_v, 80)))
+
+    def run_attr_present(self, key):
+        name = "attr %s present" % key
+        try:
+            got = self.tb.client_attributes(self.device_id, [key])
+        except tb_api.TbError as e:
+            return self.report("FAIL", name, str(e))
+        self.report("PASS" if got.get(key) is not None else "FAIL", name,
+                    "" if got.get(key) is not None else "attribute missing in ThingsBoard")
+
+    def run_status(self, keys, max_age_s):
+        try:
+            got = self.tb.latest_telemetry(self.device_id, keys)
+        except tb_api.TbError as e:
+            return self.report("FAIL", "status keys", str(e))
+        now_ms = _wall() * 1000.0
+        for key in keys:
+            name = "status %s" % key
+            if key not in got:
+                self.report("FAIL", name, "no telemetry value")
+                continue
+            age = (now_ms - got[key][0]) / 1000.0
+            if age > max_age_s:
+                self.report("FAIL", name, "last value is %.0f s old (limit %s s)" % (age, max_age_s))
+            else:
+                self.report("PASS", name)
 
     def run_burst(self, n):
         name = "burst %d x alarms.rules.get" % n
@@ -606,7 +857,9 @@ def main():
     if args.selftest:
         return selftest()
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
-    groups = args.group or list(cases)
+    state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    run_state = not args.group or "state" in args.group  # the attribute and status rows
+    groups = [g for g in (args.group or list(cases)) if g != "state"]
     unknown = [g for g in groups if g not in cases]
     if unknown:
         ap.error("unknown group(s): %s (have: %s)" % (", ".join(unknown), ", ".join(cases)))
@@ -620,8 +873,14 @@ def main():
         print("ERROR: device %r not found" % args.device, file=sys.stderr)
         return 1
     board = board_http.board_from_args(args)
-    r = Runner(tb, dev["id"]["id"], board)
+    r = Runner(tb, dev["id"]["id"], board, state)
     try:
+        if run_state:
+            for a in state["attributes"]:
+                r.run_attr(a, ignore_for(cases, a["http"]))
+            for key in state["attr_present"]:
+                r.run_attr_present(key)
+            r.run_status(state["status_keys"], state["status_max_age_s"])
         for g in groups:
             for c in cases[g].get("reads", []):
                 r.run_read(g, c)

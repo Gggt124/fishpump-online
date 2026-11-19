@@ -103,3 +103,14 @@ python thingsboard/parity_test.py --user <อีเมล> --device fishpump-1de
 - `parity_test.py` ผลลัพธ์ `PASS`/`FAIL`/`SKIP` ต่อเคส exit code 0 เมื่อไม่มี FAIL; เคสเขียนรันเมื่อใส่ `--writes` และต้องมี `--rule-id`
   (กฎที่ปิดอยู่); `--burst N` ส่ง `alarms.rules.get` N ครั้งติดกันขณะ poll `/api/alarms/summary` ทุก 200 ms
 - ถ้าบอร์ดตอบ 403 `force_password_change` เคสนั้น SKIP ("board web password is still the default")
+
+### state_cases.json (client attributes และ status telemetry)
+
+`parity_test.py` อ่านไฟล์นี้ด้วย (รันพร้อมรอบอ่าน; `--group state` รันเฉพาะส่วนนี้)
+- `attributes`: `{"key","http","drop":[key]}` แถว `attr <key>` ค่า client attribute ใน ThingsBoard ต้องเท่ากับคำตอบ HTTP หลังตัด `drop`
+  (ใช้รายการ `ignore` ของเคส read ที่ชี้ `http` เดียวกันใน `parity_cases.json`); `attr_present`: แถว `attr <key> present` ต้องมีค่า
+- `status_keys`: แถว `status <key>` ต้องมีค่า telemetry ล่าสุดและอายุไม่เกิน `status_max_age_s`; รายการนี้ต้องตรงกับ `uplink_status_fields[]`
+  ใน `uplink_format.c` ตามลำดับ ตามด้วย 7 key ของ `tb_state.c` (`python firmware/scripts/verify_tb_link.py` เช็ค drift)
+- เคส `writes` ที่มี `"attr": {"key","path"}` (path อยู่ในค่า attribute) มีแถว `.../write <ชื่อ> follow` เพิ่ม:
+  หลังเขียนทาง TB และหลังคืนค่าทาง HTTP จะ poll attribute ทุก 250 ms นานสุด `follow_timeout_s` จนค่าตาม PASS เมื่อเห็นทั้งสองครั้งภายใน
+  `follow_pass_s` (แสดงเวลาที่วัดได้ เช่น `follow 1.1 s / 0.9 s`) **แถว follow รันเฉพาะเมื่อใส่ `--writes`**

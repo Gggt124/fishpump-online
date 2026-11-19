@@ -19,6 +19,15 @@ class TbError(Exception):
     pass
 
 
+def _decode_attr_value(value):
+    if isinstance(value, str) and value[:1] in ("{", "["):
+        try:
+            return json.loads(value)
+        except ValueError:
+            pass
+    return value
+
+
 def utf8_stdout():
     for s in (sys.stdout, sys.stderr):
         try:
@@ -120,6 +129,22 @@ class TbApi:
             return status, json.loads(text)
         except ValueError:
             return status, text
+
+    def client_attributes(self, device_id, keys):
+        """Client-scope attributes of a device: {key: value}. A value that is a JSON-encoded object or array
+        (a string starting with { or [) is decoded; keys ThingsBoard does not have are absent."""
+        rows = self.get("/api/plugins/telemetry/DEVICE/%s/values/attributes/CLIENT_SCOPE" % device_id,
+                        {"keys": ",".join(keys)})
+        return {row["key"]: _decode_attr_value(row.get("value")) for row in (rows or []) if "key" in row}
+
+    def latest_telemetry(self, device_id, keys):
+        """Latest telemetry of a device: {key: (ts_ms, value)}; keys with no data are absent."""
+        res = self.get("/api/plugins/telemetry/DEVICE/%s/values/timeseries" % device_id, {"keys": ",".join(keys)})
+        out = {}
+        for key, points in (res or {}).items():
+            if points:
+                out[key] = (points[0]["ts"], points[0]["value"])
+        return out
 
     def find_by_name(self, list_path, name, key="name", extra=None):
         """Page through a ThingsBoard list endpoint and return the entity whose `key` equals name."""

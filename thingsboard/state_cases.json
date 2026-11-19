@@ -1,0 +1,79 @@
+{
+  "attributes": [
+    {
+      "key": "cfg_pump",
+      "http": "/api/pump/config",
+      "drop": [
+        "ok"
+      ]
+    },
+    {
+      "key": "cfg_cooling",
+      "http": "/api/cooling/config",
+      "drop": [
+        "ok",
+        "status"
+      ]
+    },
+    {
+      "key": "cfg_protection",
+      "http": "/api/protection",
+      "drop": [
+        "ok",
+        "pump_status"
+      ]
+    },
+    {
+      "key": "hardware_map",
+      "http": "/api/hardware/map",
+      "drop": [
+        "ok",
+        "options"
+      ]
+    }
+  ],
+  "attr_present": [
+    "wifi",
+    "tb_link"
+  ],
+  "status_keys": [
+    "pump_phase",
+    "pump_countdown_sec",
+    "pump_cycle_sec",
+    "pump_cooldown_sec",
+    "pump_fault",
+    "pump_stabilizing",
+    "pump_config_valid",
+    "wash_running",
+    "wash_phase",
+    "wash_countdown_sec",
+    "dry_run_enabled",
+    "dry_run_state",
+    "dry_run_trips",
+    "dry_run_max_retries",
+    "dry_run_wait_sec",
+    "dry_run_accum_sec",
+    "cooling_mode_name",
+    "cooling_auto_enable",
+    "cooling_sensor_state",
+    "cooling_fault_code",
+    "cooling_demand",
+    "cooling_blocked_reason",
+    "cooling_temp_valid",
+    "cooling_test_sec",
+    "wifi_connected",
+    "wifi_channel",
+    "heap_min_free_bytes",
+    "heap_largest_block_bytes",
+    "stack_hwm_alarm",
+    "stack_hwm_uplink",
+    "stack_hwm_dry_run",
+    "stack_hwm_tb_link",
+    "stack_hwm_tb_rpc",
+    "tb_sent",
+    "tb_failed"
+  ],
+  "status_max_age_s": 45,
+  "follow_timeout_s": 5,
+  "follow_pass_s": 3
+}
