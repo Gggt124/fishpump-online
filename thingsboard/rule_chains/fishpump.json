@@ -1,7 +1,7 @@
 {
   "ruleChain": {
     "additionalInfo": {
-      "description": "fishpump rule chain. Modelled on the Root Rule Chain: Message Type Switch -> Save Timeseries / Save Client Attributes / RPC / Log. Telemetry messages first pass 'Has alarm_event?'. Plain telemetry is saved. Alarm events ({\"alarm_event\":{..}} or {\"ts\",\"values\":{\"alarm_event\":{..}}}) go: Fetch last_alarm_event (server attribute {boot_id,seq}) -> Normalize+dedupe (drop when same boot_id and seq <= stored) -> Route -> Create Alarm (type rule_<rule_id>; critical=CRITICAL, warning=WARNING, info=INDETERMINATE; details = event) or Clear Alarm (type rule_<rule_id>) -> Save last_alarm_event (SERVER_SCOPE). Source of truth is this file; tb_setup.py imports it by name."
+      "description": "fishpump rule chain, modelled on the Root Rule Chain: Message Type Switch then Save Timeseries, Save Client Attributes, RPC and Log. Telemetry first passes the check Has alarm_event. Plain telemetry is saved. Alarm events (alarm_event at top level, or inside values with a ts) go through: fetch the server attribute last_alarm_event (boot_id and seq), normalize and dedupe (drop when boot_id is equal and seq is not greater than the stored one), route, then Create Alarm (type rule_ plus the rule id; critical is CRITICAL, warning is WARNING, info is INDETERMINATE; details are the event) or Clear Alarm (same type), then save last_alarm_event as a SERVER_SCOPE attribute. The source of truth is this file and tb_setup.py imports it by name."
     },
     "name": "fishpump",
     "type": "CORE",
@@ -159,7 +159,7 @@
         "additionalInfo": {
           "layoutX": 1210,
           "layoutY": 200,
-          "description": "data := event object; metadata.alarmType=rule_<id>, alarmRoute, evBootId, evSeq"
+          "description": "data becomes the event object; metadata gets alarmType (rule_ plus rule id), alarmRoute, evBootId, evSeq"
         }
       },
       {
@@ -284,7 +284,7 @@
         "additionalInfo": {
           "layoutX": 2080,
           "layoutY": 200,
-          "description": "data := {last_alarm_event:{boot_id,seq}} from metadata"
+          "description": "data becomes last_alarm_event with boot_id and seq taken from metadata"
         }
       },
       {

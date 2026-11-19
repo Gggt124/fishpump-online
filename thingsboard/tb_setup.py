@@ -29,6 +29,36 @@ P_CUSTOMERS = "/api/customers"
 P_CUSTOMER = "/api/customer"
 
 
+UNSAFE_CHARS = "<>&\"'"  # ThingsBoard NoXss validator rejects these in human-text fields
+
+
+def _walk_text(obj, path, in_text, out):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            _walk_text(v, "%s.%s" % (path, k), in_text or k in ("additionalInfo", "description"), out)
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            _walk_text(v, "%s[%d]" % (path, i), in_text, out)
+    elif isinstance(obj, str) and in_text:
+        bad = sorted(set(c for c in obj if c in UNSAFE_CHARS))
+        if bad:
+            out.append("%s contains %s" % (path, " ".join(bad)))
+
+
+def check_text_fields(*named_docs):
+    """Return problems for every additionalInfo/description string holding < > & quote chars."""
+    out = []
+    for name, doc in named_docs:
+        _walk_text(doc, name, False, out)
+    return out
+
+
+def preflight():
+    doc = json.loads(RULE_CHAIN_FILE.read_text(encoding="utf-8"))
+    return check_text_fields(("ruleChain", doc["ruleChain"]), ("metadata", doc["metadata"]),
+                             ("profile", profile_body(PROFILE_NAME, "k", "s", None)))
+
+
 def rand_token(n=20):
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(n))
@@ -161,8 +191,18 @@ def main():
     utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_common_args(ap)
+    ap.add_argument("--check", action="store_true", help="offline: validate text fields, no login")
     ap.add_argument("--assign", metavar="DEVICE_NAME", help="assign this device to the test customer (after provisioning)")
     args = ap.parse_args()
+    problems = preflight()
+    if problems:
+        print("ERROR: unsafe characters in ThingsBoard text fields (NoXss validator would reject):", file=sys.stderr)
+        for pr in problems:
+            print("  " + pr, file=sys.stderr)
+        return 1
+    if args.check:
+        print("check OK: no unsafe characters in additionalInfo/description strings")
+        return 0
     api = connect_from_args(args, ap)
     try:
         rc_id = ensure_rule_chain(api)
