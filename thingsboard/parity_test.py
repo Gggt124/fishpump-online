@@ -109,7 +109,9 @@ def apply_change(old, change):
         return old + change["add"]
     if "value" in change:
         return change["value"]
-    raise ValueError("change needs add or value")
+    if change.get("same"):
+        return old
+    raise ValueError("change needs add, value or same")
 
 
 def write_body(get_result, case, subst):
@@ -247,6 +249,11 @@ def selftest():
     ocase = {"path": "b", "change": {"add": 60}, "omit": ["ro"]}
     obody, oold, onew = write_body({"ok": True, "a": 1, "b": 5, "ro": 9}, ocase, {})
     check("write_body omit", obody == {"a": 1, "b": 65} and (oold, onew) == (5, 65))
+    check("apply_change same keeps the value", apply_change("auto", {"same": True}) == "auto")
+    mcase = [w for w in cases_for_selftest()["cooling"]["writes"] if w["set"] == "cooling.mode.set"][0]
+    mget = {"ok": True, "mode": "auto", "auto_enable": True, "points": [], "status": {"mode": "auto"}}
+    mbody, mold, mnew = write_body(mget, mcase, {})
+    check("cooling mode write sends only the current mode", mbody == {"mode": "auto"} and mold == mnew == "auto")
     wcase = cases_for_selftest()["pump"]["writes"][0]
     wget = {"ok": True, "water_set1_off": 30, "float_gpio": 4, "relay_gpio": 5, "debounce_ms": 2000,
             "hardware_reboot_required": False, "pump_relay1_gpio": 5, "pump_relay2_gpio": 6, "ds18b20_gpio": 7,

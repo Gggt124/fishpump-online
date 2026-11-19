@@ -340,8 +340,11 @@ def test_source_contracts():
     assert_test("/api/cooling/mode" in content, "REST endpoint /api/cooling/mode implemented")
 
     # Negative test voltage rejection
-    assert_test("value_out_of_range" in content and "test_volts" in content,
-                "Negative / out-of-range test voltage explicitly rejected in web_server.c")
+    dapi_cooling_c = MAIN_DIR / "dapi_cooling.c"
+    assert_test(dapi_cooling_c.exists(), "dapi_cooling.c exists")
+    cooling_content = dapi_cooling_c.read_text(encoding="utf-8")
+    assert_test("value_out_of_range" in cooling_content and "test_volts" in cooling_content,
+                "Negative / out-of-range test voltage explicitly rejected in dapi_cooling.c")
 
     # SSE Event format
     assert_test("TELEMETRY_EVT_COOLING" in content or "telemetry_cooling" in content,

@@ -246,6 +246,41 @@ def test_pump_group():
                 "pump.status keeps the json_gen bytes via cJSON_CreateRaw")
 
 
+def test_cooling_group():
+    methods = [
+        ("cooling.status", r"DAPI_F_READ", "0"),
+        ("cooling.config.get", r"DAPI_F_READ", "0"),
+        ("cooling.config.set", r"DAPI_F_WRITE", "COOLING_CONFIG_BODY_BYTES"),
+        ("cooling.mode.set", r"DAPI_F_WRITE", "COOLING_MODE_BODY_BYTES"),
+    ]
+    handlers = [
+        ("handle_api_cooling_status", "cooling.status"),
+        ("handle_api_cooling_config_get", "cooling.config.get"),
+        ("handle_api_cooling_config_post", "cooling.config.set"),
+        ("handle_api_cooling_mode_post", "cooling.mode.set"),
+    ]
+    forbidden = ["cooling_control_", "nvs_store_save_cooling", "nvs_store_load_cooling"]
+    check_group("cooling", "dapi_cooling.c", "dapi_cooling_register", methods, handlers, forbidden)
+    ws = read(MAIN_DIR / "web_server.c")
+    hdr = read(MAIN_DIR / "dapi_cooling.h")
+    assert_test(re.search(r"#define\s+COOLING_CONFIG_BODY_BYTES\s+1536$", hdr, re.M) is not None,
+                "COOLING_CONFIG_BODY_BYTES is 1536")
+    assert_test(re.search(r"#define\s+COOLING_MODE_BODY_BYTES\s+256$", hdr, re.M) is not None,
+                "COOLING_MODE_BODY_BYTES is 256")
+    for h in ("handle_api_cooling_config_get", "handle_api_cooling_status"):
+        assert_test("require_auth(req)" in function_body(ws, h), f"{h} keeps its unauthorized pre-check")
+    for h in ("handle_api_cooling_config_post", "handle_api_cooling_mode_post"):
+        body = function_body(ws, h)
+        assert_test("require_auth(req)" in body and "is_same_origin(req, false)" in body and "cJSON_Delete(root)" in body,
+                    f"{h} keeps auth and same-origin pre-checks and frees the tree")
+    src = read(MAIN_DIR / "dapi_cooling.c")
+    assert_test("cJSON_CreateRaw" in function_body(src, "dapi_cooling_status"),
+                "cooling.status keeps the json_gen bytes via cJSON_CreateRaw")
+    setm = function_body(src, "dapi_cooling_config_set")
+    assert_test("api_cooling_parse_config_payload" in setm and setm.find("api_cooling_parse_config_payload") < setm.find("nvs_store_save_cooling_settings"),
+                "cooling.config.set validates the payload before saving")
+
+
 if __name__ == "__main__":
     test_component()
     test_logging_and_lock()
@@ -254,5 +289,6 @@ if __name__ == "__main__":
     test_alarms_group()
     test_protection_group()
     test_pump_group()
+    test_cooling_group()
     print(f"\nPassed: {passed_tests}  Failed: {failed_tests}")
     sys.exit(1 if failed_tests else 0)

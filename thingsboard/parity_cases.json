@@ -70,5 +70,44 @@
        "omit": ["float_gpio", "relay_gpio", "debounce_ms", "pump_relay1_gpio", "pump_relay2_gpio", "ds18b20_gpio", "cooling_relay_gpio", "cooling_relay_polarity", "hardware_reboot_required"],
        "path": "water_set1_off", "change": {"add": 60}, "set": "pump.config.set", "set_http": "/api/pump/config"}
     ]
+  },
+  "cooling": {
+    "reads": [
+      {"method": "cooling.status", "http": "/api/cooling/status", "ignore": ["temperature_c", "temperature_valid", "sensor_state", "fault", "fault_code", "relay_energized", "output_volts", "output_mv", "duty_percent", "lockout_active", "lockout_remaining_sec", "test_remaining_sec", "cooling_demand", "blocked_reason"]},
+      {"method": "cooling.config.get", "http": "/api/cooling/config", "ignore": ["temperature_c", "temperature_valid", "sensor_state", "fault", "fault_code", "relay_energized", "duty_percent", "lockout_active", "lockout_remaining_sec", "test_remaining_sec", "cooling_demand", "blocked_reason"]}
+    ],
+    "errors": [
+      {"method": "cooling.config.set", "params": {}, "http": "/api/cooling/config", "error": "missing_field"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": "x"}, "http": "/api/cooling/config", "error": "invalid_type"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 9999, "hysteresis_c_x10": 10, "auto_enable": true, "test_timeout_sec": 30, "compressor_min_off_sec": 180}, "http": "/api/cooling/config", "error": "value_out_of_range"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 0, "auto_enable": true, "test_timeout_sec": 30, "compressor_min_off_sec": 180}, "http": "/api/cooling/config", "error": "value_out_of_range"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 10, "auto_enable": "x", "test_timeout_sec": 30, "compressor_min_off_sec": 180}, "http": "/api/cooling/config", "error": "invalid_type"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 10, "auto_enable": true, "test_timeout_sec": 0, "compressor_min_off_sec": 180}, "http": "/api/cooling/config", "error": "value_out_of_range"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 10, "auto_enable": true, "test_timeout_sec": 30, "compressor_min_off_sec": 10}, "http": "/api/cooling/config", "error": "value_out_of_range"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 10, "auto_enable": true, "test_timeout_sec": 30, "compressor_min_off_sec": 180, "mode": "bogus", "cooling_relay_polarity": "active_low"}, "http": "/api/cooling/config", "error": "invalid_cooling_mode"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 10, "auto_enable": true, "test_timeout_sec": 30, "compressor_min_off_sec": 180, "mode": "test_on", "cooling_relay_polarity": "active_low"}, "http": "/api/cooling/config", "error": "test_mode_not_persistent"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 10, "auto_enable": true, "test_timeout_sec": 30, "compressor_min_off_sec": 180, "mode": "auto", "cooling_relay_polarity": "sideways"}, "http": "/api/cooling/config", "error": "invalid_relay_polarity"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 20, "output_mv": 1000}]}, "http": "/api/cooling/config", "error": "invalid_points_count"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 999, "output_mv": 1000}, {"temp_c": 30, "output_mv": 5000}]}, "http": "/api/cooling/config", "error": "value_out_of_range"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 20, "output_mv": 1000}, {"temp_c": 30, "output_mv": 5000}], "min_off_sec": 10}, "http": "/api/cooling/config", "error": "hardware_safety"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 20, "output_mv": 1000}, {"temp_c": 30, "output_mv": 5000}], "test_timeout_sec": 99999}, "http": "/api/cooling/config", "error": "value_out_of_range"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 20, "output_mv": 1000}, {"temp_c": 30, "output_mv": 5000}], "curve_type": "wavy"}, "http": "/api/cooling/config", "error": "invalid_curve_type"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 20, "output_mv": 1000}, {"temp_c": 30, "output_mv": 5000}], "mode": "test_on"}, "http": "/api/cooling/config", "error": "test_mode_not_persistent"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 30, "output_mv": 1000}, {"temp_c": 20, "output_mv": 5000}]}, "http": "/api/cooling/config", "error": "invalid_curve_points"},
+      {"method": "cooling.config.set", "params": [1], "http": "/api/cooling/config", "error": "invalid_json"},
+      {"method": "cooling.mode.set", "params": {"mode": "bogus"}, "http": "/api/cooling/mode", "error": "invalid_cooling_mode"},
+      {"method": "cooling.mode.set", "params": {}, "http": "/api/cooling/mode", "error": "missing_field"},
+      {"method": "cooling.mode.set", "params": {"mode": "test_on", "test_mv": 99999}, "http": "/api/cooling/mode", "error": "value_out_of_range"}
+    ],
+    "writes": [
+      {"name": "cooling.config.set min_off +1 sec",
+       "get": "cooling.config.get", "get_http": "/api/cooling/config",
+       "omit": ["settings_status", "point_count", "threshold_c", "threshold_c_x10", "hysteresis_c", "hysteresis_c_x10", "limits", "modes", "relay_polarities", "curve_types", "status"],
+       "path": "min_off_sec", "change": {"add": 1}, "set": "cooling.config.set", "set_http": "/api/cooling/config"},
+      {"name": "cooling.mode.set current mode (no-op)",
+       "get": "cooling.config.get", "get_http": "/api/cooling/config",
+       "omit": ["settings_status", "auto_enable", "curve_type", "point_count", "points", "min_off_sec", "test_timeout_sec", "threshold_c", "threshold_c_x10", "hysteresis_c", "hysteresis_c_x10", "compressor_min_off_sec", "cooling_relay_polarity", "limits", "modes", "relay_polarities", "curve_types", "status"],
+       "path": "mode", "change": {"same": true}, "set": "cooling.mode.set", "set_http": "/api/cooling/mode"}
+    ]
   }
 }

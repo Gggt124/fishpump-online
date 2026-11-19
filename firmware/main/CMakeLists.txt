@@ -36,6 +36,7 @@ idf_component_register(
         "dapi_alarms.c"
         "dapi_protection.c"
         "dapi_pump.c"
+        "dapi_cooling.c"
     INCLUDE_DIRS
         "."
     EMBED_FILES

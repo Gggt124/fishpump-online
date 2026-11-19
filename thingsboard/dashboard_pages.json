@@ -50,5 +50,18 @@
       {"label": "pump.start", "method": "pump.start", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "pump.stop", "method": "pump.stop", "params": null, "edit": false, "load": null, "confirm": null}
     ]
+  },
+  {
+    "id": "cooling",
+    "title": "ทำความเย็น (Cooling)",
+    "telemetry": ["pt100_temp_c", "cooling_mode", "cooling_on", "cooling_duty_pct", "cooling_output_mv", "cooling_lockout_sec", "pt100_fault"],
+    "actions": [
+      {"label": "cooling.status", "method": "cooling.status", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "cooling.config.get", "method": "cooling.config.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "cooling.config.set (แม่แบบ: ต้องกรอกทุกค่าก่อนส่ง)", "method": "cooling.config.set",
+       "params": {"threshold_c_x10": "แก้ก่อนส่ง", "hysteresis_c_x10": "แก้ก่อนส่ง", "auto_enable": "แก้ก่อนส่ง", "test_timeout_sec": "แก้ก่อนส่ง", "compressor_min_off_sec": "แก้ก่อนส่ง", "mode": "แก้ก่อนส่ง", "cooling_relay_polarity": "แก้ก่อนส่ง"},
+       "edit": true, "load": null, "confirm": null},
+      {"label": "cooling.mode.set (โหมดอัตโนมัติ)", "method": "cooling.mode.set", "params": {"mode": "auto"}, "edit": true, "load": null, "confirm": null}
+    ]
   }
 ]
