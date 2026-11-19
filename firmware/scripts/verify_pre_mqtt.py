@@ -221,19 +221,20 @@ def test_task6():
     assert_test(m is not None, "measure_start returns ESP_ERR_NOT_FOUND when the flow switch cannot be read")
     assert_test(m is not None and "xSemaphoreGive(s_apply)" in m.group(0),
                 "the NOT_FOUND path releases s_apply")
-    h = function_body(ws, "handle_api_protection_measure_post")
-    assert_test(re.search(r"ESP_ERR_NOT_FOUND[^;]*\{?[^}]*\"flow_unavailable\"[^;]*503", h, re.S) is not None,
+    dp = read(MAIN_DIR / "dapi_protection.c")
+    h = function_body(dp, "dapi_protection_measure_set")
+    assert_test(re.search(r"ESP_ERR_NOT_FOUND[^;]*\{?[^}]*\"flow_unavailable\"[^;]*;\s*return DAPI_UNAVAILABLE", h, re.S) is not None,
                 "web handler maps ESP_ERR_NOT_FOUND to 503 flow_unavailable")
-    assert_test("flow_already_on" in h and "409" in h and "measure_unavailable" in h,
+    assert_test("flow_already_on" in h and "DAPI_CONFLICT" in h and "measure_unavailable" in h,
                 "web handler keeps the 409 flow_already_on / measure_unavailable mapping")
-    assert_test(re.search(r"is_start\s*&&\s*err\s*==\s*ESP_ERR_INVALID_STATE\)\s*\{\s*return send_api_error\(req,\s*"
-                          r"\"measure_unavailable\"[^;]*409", h, re.S) is not None,
+    assert_test(re.search(r"is_start\s*&&\s*err\s*==\s*ESP_ERR_INVALID_STATE\)\s*\{\s*\*out\s*=\s*dapi_error\("
+                          r"\"measure_unavailable\"[^;]*;\s*return DAPI_CONFLICT", h, re.S) is not None,
                 "ESP_ERR_INVALID_STATE on start maps to 409 measure_unavailable")
     ghdr = read(COMP_DIR / "dry_run_guard" / "include" / "dry_run_guard.h")
     mc = re.search(r"/\*(?:(?!\*/).)*\*/\s*esp_err_t dry_run_guard_measure_start\(void\);", ghdr, re.S)
     assert_test(mc is not None and "ESP_ERR_NOT_FOUND" in mc.group(0),
                 "the measure_start contract comment lists ESP_ERR_NOT_FOUND")
-    assert_test(re.search(r"\"unavailable\"[^;]*503", h, re.S) is not None, "other start errors map to 503 unavailable")
+    assert_test(re.search(r"return protection_unavailable\(out\)", h) is not None, "other start errors map to 503 unavailable")
     assert_test("flow_unavailable" in js and "อ่านสถานะ flow switch ไม่ได้ ตรวจสายแล้วลองใหม่" in js,
                 "app.js shows the Thai flow_unavailable message")
     ac = function_body(g, "apply_change")

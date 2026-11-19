@@ -31,3 +31,11 @@ const char *alarms_type_name(uint8_t type) {
     return "acked";
   }
 }
+
+void dry_run_add_runtime_fields(cJSON *obj, const dry_run_guard_status_t *gs) {
+  cJSON_AddStringToObject(obj, "state", dry_run_state_name(gs->state));
+  cJSON_AddNumberToObject(obj, "trips", gs->trips);
+  cJSON_AddNumberToObject(obj, "max_retries", gs->cfg.max_retries);
+  cJSON_AddNumberToObject(obj, "wait_remaining_sec", gs->wait_remaining_sec);
+  cJSON_AddNumberToObject(obj, "dry_accum_sec", gs->dry_accum_sec);
+}

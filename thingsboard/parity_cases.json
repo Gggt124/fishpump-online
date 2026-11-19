@@ -25,5 +25,23 @@
        "path": "delay_sec", "change": {"add": 1},
        "set": "alarms.rules.set", "set_http": "/api/alarms/rules"}
     ]
+  },
+  "protection": {
+    "reads": [
+      {"method": "protection.get", "http": "/api/protection", "ignore": ["wait_remaining_sec", "dry_accum_sec", "trips"]},
+      {"method": "protection.measure.get", "http": "/api/protection/measure", "ignore": ["elapsed_ms"]}
+    ],
+    "errors": [
+      {"method": "protection.set", "params": {}, "http": "/api/protection", "error": "missing_field"},
+      {"method": "protection.set", "params": {"pump": 5}, "http": "/api/protection", "error": "invalid_type"},
+      {"method": "protection.set", "params": {"pump": {}}, "http": "/api/protection", "error": "missing_field"},
+      {"method": "protection.set", "params": {"pump": {"enabled": "yes"}}, "http": "/api/protection", "error": "invalid_type"},
+      {"method": "protection.set", "params": {"pump": {"enabled": true, "prime_sec": 70000}}, "http": "/api/protection", "error": "value_out_of_range"},
+      {"method": "protection.measure.set", "params": {"action": "nope"}, "http": "/api/protection/measure", "error": "invalid_action"},
+      {"method": "protection.measure.set", "params": {"action": "save"}, "http": "/api/protection/measure", "error": "invalid_action"}
+    ],
+    "writes": [
+      {"name": "protection.set prime_sec +1", "get": "protection.get", "get_http": "/api/protection", "rule_path": "pump", "path": "prime_sec", "change": {"add": 1}, "wrap": "pump", "set": "protection.set", "set_http": "/api/protection"}
+    ]
   }
 }

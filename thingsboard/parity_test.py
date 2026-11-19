@@ -114,13 +114,17 @@ def apply_change(old, change):
 
 def write_body(get_result, case, subst):
     """Body for the set call: the GET result without ok, narrowed to rule_path, the path changed by `change`.
+    A case with "wrap" nests the body under that key (the set method wants {"pump": {...}}).
     Returns (set_body, old_value, new_value)."""
     base = {k: v for k, v in get_result.items() if k != "ok"}
     if case.get("rule_path"):
         base = get_path(base, case["rule_path"], subst)
     old = get_path(base, case["path"], subst)
     new = apply_change(old, case["change"])
-    return set_path(base, case["path"], new, subst), old, new
+    body = set_path(base, case["path"], new, subst)
+    if case.get("wrap"):
+        body = {case["wrap"]: body}
+    return body, old, new
 
 
 def guard_ok(get_result, case, subst):
@@ -200,6 +204,10 @@ def _quiet(fn, *a, **kw):
         return fn(*a, **kw)
 
 
+def cases_for_selftest():
+    return json.loads(CASES_FILE.read_text(encoding="utf-8"))
+
+
 def selftest():
     fails = []
 
@@ -228,11 +236,17 @@ def selftest():
     check("guard disabled", guard_ok(sample, dict(case, guard={"path": "enabled", "equals": False}), {"RULE_ID": 3}))
     check("guard enabled", not guard_ok({"rules": [{"id": 3, "enabled": True}]},
                                         dict(case, guard={"path": "enabled", "equals": False}), {"RULE_ID": 3}))
+    pcase = cases_for_selftest()["protection"]["writes"][0]
+    pget = {"ok": True, "pump": {"enabled": True, "prime_sec": 5, "max_retries": 3}, "pump_status": {"trips": 0}}
+    pbody, pold, pnew = write_body(pget, pcase, {})
+    check("write_body wrap", pbody == {"pump": {"enabled": True, "prime_sec": 6, "max_retries": 3}}
+          and (pold, pnew) == (5, 6) and pcase["path"] == "prime_sec")
+    check("no rule id needed", "$RULE_ID" not in json.dumps(pcase))
     check("burst ok", burst_verdict([{"ok": True}, {"ok": False, "error": "busy"}], [200, 200]) == [])
     check("burst bad reply", len(burst_verdict([{"ok": False, "error": "x"}, None], [200])) == 2)
     check("burst bad poll", len(burst_verdict([{"ok": True}], [200, 503])) == 1)
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
-    check("cases file has alarms", "alarms" in cases)
+    check("cases file has alarms and protection", "alarms" in cases and "protection" in cases)
     # run_write must never leave the board changed (Runner is defined below; resolved at call time)
     r, rules, tb = _quiet(_write_scenario)
     check("write ok restores", r.counts["PASS"] == 1 and rules[0]["delay_sec"] == 4)
@@ -334,7 +348,7 @@ class Runner:
         name = "%s/write %s" % (group, c["name"])
         if self.stop_writes:
             return self.report("SKIP", name, "an earlier restore failed, writes stopped")
-        if rule_id is None:
+        if rule_id is None and "$RULE_ID" in json.dumps(c):
             return self.report("SKIP", name, "needs --rule-id (a disabled rule)")
         subst = {"RULE_ID": rule_id}
         rs, rb = self.rpc(c["get"], {})

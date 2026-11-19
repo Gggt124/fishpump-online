@@ -167,11 +167,43 @@ def test_alarms_group():
                     f"{h} keeps its unauthorized pre-check")
 
 
+def test_protection_group():
+    methods = [
+        ("protection.get", r"DAPI_F_READ", "0"),
+        ("protection.set", r"DAPI_F_WRITE", "PROTECTION_POST_BODY_BYTES"),
+        ("protection.measure.get", r"DAPI_F_READ", "0"),
+        ("protection.measure.set", r"DAPI_F_WRITE", "PROTECTION_MEASURE_BODY_BYTES"),
+    ]
+    handlers = [
+        ("handle_api_protection_get", "protection.get"),
+        ("handle_api_protection_post", "protection.set"),
+        ("handle_api_protection_measure_get", "protection.measure.get"),
+        ("handle_api_protection_measure_post", "protection.measure.set"),
+    ]
+    forbidden = ["dry_run_guard_", "nvs_store_save_dry_run", "nvs_store_load_dry_run"]
+    check_group("protection", "dapi_protection.c", "dapi_protection_register", methods, handlers, forbidden)
+    ws = read(MAIN_DIR / "web_server.c")
+    hdr = read(MAIN_DIR / "dapi_protection.h")
+    assert_test(re.search(r"#define\s+PROTECTION_POST_BODY_BYTES\s+384\b", hdr) is not None,
+                "PROTECTION_POST_BODY_BYTES is 384")
+    assert_test(re.search(r"#define\s+PROTECTION_MEASURE_BODY_BYTES\s+128\b", hdr) is not None,
+                "PROTECTION_MEASURE_BODY_BYTES is 128")
+    for h in ("handle_api_protection_post", "handle_api_protection_measure_post"):
+        body = function_body(ws, h)
+        assert_test("api_begin_json_post(" in body and "cJSON_Delete(root)" in body,
+                    f"{h} keeps its body pre-check and frees the tree")
+    for h in ("handle_api_protection_get", "handle_api_protection_measure_get"):
+        body = function_body(ws, h)
+        assert_test("require_auth(req)" in body and "alarms_unauthorized(req)" in body,
+                    f"{h} keeps its unauthorized pre-check")
+
+
 if __name__ == "__main__":
     test_component()
     test_logging_and_lock()
     test_app_main()
     test_http_dapi()
     test_alarms_group()
+    test_protection_group()
     print(f"\nPassed: {passed_tests}  Failed: {failed_tests}")
     sys.exit(1 if failed_tests else 0)

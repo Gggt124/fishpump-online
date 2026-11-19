@@ -34,6 +34,7 @@ idf_component_register(
         "web_server.c"
         "api_json.c"
         "dapi_alarms.c"
+        "dapi_protection.c"
     INCLUDE_DIRS
         "."
     EMBED_FILES

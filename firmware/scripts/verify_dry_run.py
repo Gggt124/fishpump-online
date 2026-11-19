@@ -264,7 +264,8 @@ def test_final_review_fixes():
     i_flow = start.find("flow_switch_get_status")
     i_test = start.find("pump_control_water_test(true)")
     assert_test(0 <= i_flow < i_test, "measure_start reads flow_switch_get_status before starting the relay")
-    assert_test('"flow_already_on"' in ws, "web_server.c maps measure refusal to flow_already_on")
+    dp = read(MAIN_DIR / "dapi_protection.c")
+    assert_test('"flow_already_on"' in dp, "dapi_protection.c maps measure refusal to flow_already_on")
     assert_test("'flow_already_on'" in js, "app.js handles flow_already_on")
 
 

@@ -18,5 +18,22 @@
        "confirm": "รับทราบการแจ้งเตือนทั้งหมดที่กำลังเกิดอยู่? การรับทราบจะปลดล็อกระบบป้องกันเดินแห้ง และปั๊มน้ำอาจเริ่มทำงานอีกครั้ง"},
       {"label": "alarms.ack (ตาม id)", "method": "alarms.ack", "params": {"id": 1}, "edit": true, "load": null, "confirm": null}
     ]
+  },
+  {
+    "id": "protection",
+    "title": "ป้องกันเดินแห้ง (Protection)",
+    "telemetry": ["pump_dry_run_state"],
+    "actions": [
+      {"label": "protection.get", "method": "protection.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "protection.set", "method": "protection.set",
+       "params": {"pump": {"enabled": true, "prime_sec": 5, "dry_trip_sec": 10, "retry_wait_min": 5, "retry_backoff": true, "max_retries": 3}},
+       "edit": true, "load": "protection.get", "confirm": null},
+      {"label": "protection.measure.get", "method": "protection.measure.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "protection.measure.set (เริ่มวัด)", "method": "protection.measure.set", "params": {"action": "start"}, "edit": false, "load": null,
+       "confirm": "ปั๊มอาจเดินแห้งได้นานสุด 120 วินาทีระหว่างวัด ดำเนินการต่อ?"},
+      {"label": "protection.measure.set (หยุดวัด)", "method": "protection.measure.set", "params": {"action": "stop"}, "edit": false, "load": null, "confirm": null},
+      {"label": "alarms.ack (ปลดล็อกเดินแห้ง id 65001)", "method": "alarms.ack", "params": {"id": 65001}, "edit": true, "load": null,
+       "confirm": "การรับทราบจะปลดล็อกระบบป้องกันเดินแห้ง และปั๊มน้ำอาจเริ่มทำงานอีกครั้ง"}
+    ]
   }
 ]
