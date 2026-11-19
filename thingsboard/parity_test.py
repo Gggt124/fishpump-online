@@ -150,6 +150,56 @@ def burst_verdict(replies, poll_statuses):
     return bad
 
 
+
+class _FakeBoard:
+    """Board stand-in: holds one rule; options simulate the failures run_write must survive."""
+    def __init__(self, rules, force_pw=False, raise_on_post=False, restore_status=200):
+        self.rules, self.force_pw, self.raise_on_post, self.restore_status = rules, force_pw, raise_on_post, restore_status
+
+    def request(self, verb, path, body=None):
+        if self.force_pw:
+            return 403, json.dumps({"ok": False, "error": "force_password_change"})
+        if verb == "GET":
+            return 200, json.dumps({"ok": True, "rules": copy.deepcopy(self.rules), "max": 8})
+        if self.raise_on_post:
+            raise board_http.BoardError("POST %s: connection reset" % path)
+        if self.restore_status != 200:
+            return self.restore_status, "{}"
+        self.rules[0].update(body)
+        return 200, json.dumps({"ok": True})
+
+
+class _FakeTb:
+    def __init__(self, rules, write_status=200, apply_on_fail=True):
+        self.rules, self.write_status, self.apply_on_fail, self.writes = rules, write_status, apply_on_fail, 0
+
+    def rpc_twoway(self, dev, method, params, timeout_ms=10000):
+        if method == "alarms.rules.get":
+            return 200, {"ok": True, "rules": copy.deepcopy(self.rules), "max": 8}
+        self.writes += 1
+        if self.write_status == 200 or self.apply_on_fail:
+            self.rules[0].update(params)
+        if self.write_status == 200:
+            return 200, {"ok": True}
+        return self.write_status, "timeout"
+
+
+def _write_scenario(board_kw=None, tb_kw=None):
+    rules = [{"id": 3, "enabled": False, "delay_sec": 4}]
+    board, tb = _FakeBoard(rules, **(board_kw or {})), _FakeTb(rules, **(tb_kw or {}))
+    r = Runner(tb, "dev", board)
+    case = json.loads(CASES_FILE.read_text(encoding="utf-8"))["alarms"]["writes"][0]
+    r.run_write("alarms", case, 3)
+    return r, rules, tb
+
+
+def _quiet(fn, *a, **kw):
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()):
+        return fn(*a, **kw)
+
+
 def selftest():
     fails = []
 
@@ -183,6 +233,18 @@ def selftest():
     check("burst bad poll", len(burst_verdict([{"ok": True}], [200, 503])) == 1)
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
     check("cases file has alarms", "alarms" in cases)
+    # run_write must never leave the board changed (Runner is defined below; resolved at call time)
+    r, rules, tb = _quiet(_write_scenario)
+    check("write ok restores", r.counts["PASS"] == 1 and rules[0]["delay_sec"] == 4)
+    r, rules, tb = _quiet(_write_scenario, None, {"write_status": 504})
+    check("a: TB timeout, applied -> restored, FAIL", r.counts["FAIL"] == 1 and rules[0]["delay_sec"] == 4
+          and not r.stop_writes)
+    r, rules, tb = _quiet(_write_scenario, {"restore_status": 500}, {"write_status": 504})
+    check("a: TB timeout, restore fails -> stop", r.counts["FAIL"] == 1 and r.stop_writes)
+    r, rules, tb = _quiet(_write_scenario, {"force_pw": True})
+    check("b: default password -> SKIP, no write", r.counts["SKIP"] == 1 and tb.writes == 0 and rules[0]["delay_sec"] == 4)
+    r, rules, tb = _quiet(_write_scenario, {"raise_on_post": True})
+    check("c: BoardError on restore -> stop", r.counts["FAIL"] == 1 and r.stop_writes)
     if fails:
         print("SELFTEST FAIL: " + ", ".join(fails))
         return 1
@@ -254,6 +316,20 @@ class Runner:
             return self.report("FAIL", name, "rpc error %r but HTTP %s gave %r" % (code, hs, hcode))
         self.report("PASS", name, "error=%s" % code)
 
+    def _value(self, body, c, subst):
+        base = {k: v for k, v in body.items() if k != "ok"}
+        return get_path(base, c["rule_path"] + "." + c["path"] if c.get("rule_path") else c["path"], subst)
+
+    def _http_value(self, c, subst):
+        """(value, error_text) read through the board's HTTP side; never raises."""
+        try:
+            hs, hb = self.http("GET", c["get_http"])
+            if hs != 200 or not isinstance(hb, dict):
+                return None, "HTTP %s" % hs
+            return self._value(hb, c, subst), None
+        except (board_http.BoardError, KeyError, IndexError, TypeError, AttributeError) as e:
+            return None, str(e)
+
     def run_write(self, group, c, rule_id):
         name = "%s/write %s" % (group, c["name"])
         if self.stop_writes:
@@ -271,42 +347,49 @@ class Runner:
             original_body = write_body(rb, dict(c, change={"value": old}), subst)[0]
         except (KeyError, IndexError, ValueError, TypeError) as e:
             return self.report("SKIP", name, "rule %s not usable: %s" % (rule_id, e))
+        # preflight: the HTTP side must be usable, otherwise we could not read back or restore
+        try:
+            ps, pb = self.http("GET", c["get_http"])
+        except board_http.BoardError as e:
+            return self.report("SKIP", name, "board HTTP not reachable, no write done: %s" % e)
+        if self.default_pw(ps, pb):
+            return self.report("SKIP", name, FORCE_PW_MSG)
+        if ps != 200:
+            return self.report("SKIP", name, "board HTTP preflight gave %s, no write done" % ps)
+        # the write; whatever happens next the value is read back and restored if it differs from the original
         ws, wb = self.rpc(c["set"], set_body)
-        if self.rpc_failed(ws) or not isinstance(wb, dict) or wb.get("ok") is not True:
-            return self.report("FAIL", name, "write via TB failed: %s %s" % (ws, _short(wb, 100)))
-        problem = None
-        hs, hb = self.http("GET", c["get_http"])
-        if self.default_pw(hs, hb):
-            problem = FORCE_PW_MSG
-        elif hs != 200:
-            problem = "readback HTTP %s" % hs
-        else:
+        write_ok = not self.rpc_failed(ws) and isinstance(wb, dict) and wb.get("ok") is True
+        problem = None if write_ok else "write via TB failed: %s %s" % (ws, _short(wb, 100))
+        seen, err = self._http_value(c, subst)
+        if err is None and write_ok and seen != new:
+            problem = "HTTP readback shows %r, expected %r" % (seen, new)
+        restored = err is None and seen == old
+        rest_note = ""
+        if not restored:
             try:
-                seen = get_path({k: v for k, v in hb.items() if k != "ok"}, c["rule_path"] + "." + c["path"]
-                                if c.get("rule_path") else c["path"], subst)
-            except (KeyError, IndexError, TypeError) as e:
-                seen, problem = None, "readback has no value: %s" % e
-            else:
-                if seen != new:
-                    problem = "HTTP readback shows %r, expected %r" % (seen, new)
-        # restore through HTTP regardless of the readback result
-        restored = False
-        rest_status, rest_body = self.http("POST", c["set_http"], original_body)
-        if rest_status == 200 and isinstance(rest_body, dict) and rest_body.get("ok") is True:
+                rest_status, rest_body = self.http("POST", c["set_http"], original_body)
+                rest_ok = rest_status == 200 and isinstance(rest_body, dict) and rest_body.get("ok") is True
+                rest_note = "restore HTTP %s" % rest_status
+            except board_http.BoardError as e:
+                rest_ok, rest_note = False, "restore raised: %s" % e
+            if rest_ok:
+                back, berr = self._http_value(c, subst)
+                restored = berr is None and back == old
+                if not restored:
+                    rest_note = "restore verify: %s" % (berr or "value %r" % (back,))
+        if restored and write_ok:
             ts, tb_ = self.rpc(c["get"], {})
             try:
-                back = get_path({k: v for k, v in tb_.items() if k != "ok"}, c["rule_path"] + "." + c["path"]
-                                if c.get("rule_path") else c["path"], subst)
-                restored = ts == 200 and back == old
+                restored = ts == 200 and self._value(tb_, c, subst) == old
             except (KeyError, IndexError, TypeError, AttributeError):
                 restored = False
-            if not restored and problem is None:
-                problem = "restore read via TB shows a different value than the original %r" % (old,)
+            if not restored:
+                rest_note = "read via TB after restore does not show the original"
         if not restored:
             self.stop_writes = True
             print("      RESTORE FAILED: set %s.%s back to %r by hand (rule %s); remaining writes stopped"
                   % (c.get("rule_path", ""), c["path"], old, rule_id))
-            return self.report("FAIL", name, problem or "restore failed (HTTP %s)" % rest_status)
+            return self.report("FAIL", name, "; ".join(x for x in (problem, rest_note) if x) or "restore failed")
         self.report("FAIL" if problem else "PASS", name, problem or "%r -> %r -> restored" % (old, new))
 
     def run_burst(self, n):

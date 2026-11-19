@@ -281,8 +281,22 @@ def ensure_widget_type(api):
     return saved
 
 
+def find_bundle(api):
+    """Bundle by title. /api/widgetsBundles may answer a bare list or a paged {"data":...} object."""
+    page = 0
+    while True:
+        res = api.get(P_BUNDLES, {"pageSize": 100, "page": page})
+        items = res if isinstance(res, list) else (res or {}).get("data", [])
+        for item in items:
+            if item.get("title") == BUNDLE_TITLE:
+                return item
+        if isinstance(res, list) or not (res or {}).get("hasNext"):
+            return None
+        page += 1
+
+
 def ensure_bundle(api, widget_type):
-    existing = api.find_by_name(P_BUNDLES, BUNDLE_TITLE, key="title")
+    existing = find_bundle(api)
     if existing is None:
         existing = api.post(P_BUNDLE, {"title": BUNDLE_TITLE})
         state = "created"

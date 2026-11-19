@@ -2,7 +2,7 @@
   {
     "id": "alarms",
     "title": "แจ้งเตือน (Alarms)",
-    "telemetry": ["last_alarm_event"],
+    "telemetry": ["alarm_active", "alarm_critical", "alarm_unacked", "alarm_max_severity"],
     "actions": [
       {"label": "alarms.signals", "method": "alarms.signals", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "alarms.values", "method": "alarms.values", "params": null, "edit": false, "load": null, "confirm": null},
