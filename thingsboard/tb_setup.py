@@ -10,6 +10,7 @@ import string
 import sys
 from pathlib import Path
 
+import tb_dashboard
 from tb_api import NULL_UUID, TbError, add_common_args, connect_from_args, utf8_stdout
 
 HERE = Path(__file__).resolve().parent
@@ -196,7 +197,9 @@ def main():
     utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_common_args(ap)
-    ap.add_argument("--check", action="store_true", help="offline: validate text fields, no login")
+    ap.add_argument("--check", action="store_true", help="offline: validate text fields and the dashboard files, no login")
+    ap.add_argument("--device", default=tb_dashboard.DEFAULT_DEVICE,
+                    help="device name the test dashboard targets (default %(default)s)")
     ap.add_argument("--assign", metavar="DEVICE_NAME", help="assign this device to the test customer (after provisioning)")
     args = ap.parse_args()
     problems = preflight()
@@ -206,13 +209,20 @@ def main():
             print("  " + pr, file=sys.stderr)
         return 1
     if args.check:
-        print("check OK: no unsafe characters in additionalInfo/description strings")
+        dash_problems = tb_dashboard.run_check()
+        if dash_problems:
+            print("ERROR: dashboard check failed:", file=sys.stderr)
+            for pr in dash_problems:
+                print("  " + pr, file=sys.stderr)
+            return 1
+        print("check OK: no unsafe characters in additionalInfo/description strings; dashboard files consistent")
         return 0
     api = connect_from_args(args, ap)
     try:
         rc_id = ensure_rule_chain(api)
         ensure_profile(api, rc_id)
         customer = ensure_customer(api)
+        tb_dashboard.ensure_all(api, customer, args.device)
         if args.assign:
             assign(api, customer, args.assign)
     except TbError as e:

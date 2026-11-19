@@ -1,0 +1,29 @@
+{
+  "alarms": {
+    "reads": [
+      {"method": "alarms.signals", "http": "/api/alarms/signals", "ignore": []},
+      {"method": "alarms.values", "http": "/api/alarms/values", "ignore": ["age_ms", "error", "v", "value", "reason", "pending"]},
+      {"method": "alarms.status", "http": "/api/alarms/status", "ignore": ["age_ms", "error", "v", "value", "reason", "pending", "uptime_ms", "since_ms"]},
+      {"method": "alarms.summary", "http": "/api/alarms/summary", "ignore": ["age_ms", "error", "v", "value", "reason", "pending", "uptime_ms", "since_ms"]},
+      {"method": "alarms.rules.get", "http": "/api/alarms/rules", "ignore": []}
+    ],
+    "errors": [
+      {"method": "alarms.rules.delete", "params": {"id": 0}, "http": "/api/alarms/rules/delete", "error": "value_out_of_range"},
+      {"method": "alarms.rules.delete", "params": {"id": 65000}, "http": "/api/alarms/rules/delete", "error": "not_found"},
+      {"method": "alarms.ack", "params": {"id": 65000}, "http": "/api/alarms/ack", "error": "not_found"},
+      {"method": "alarms.rules.set", "params": {}, "http": "/api/alarms/rules", "error": "missing_field"},
+      {"method": "alarms.rules.set", "params": {"name": "parity", "signal": "water_ph", "condition": "above", "threshold": 9, "severity": "x"},
+       "http": "/api/alarms/rules", "error": null},
+      {"method": "alarms.rules.set", "params": [1], "http": "/api/alarms/rules", "error": "invalid_json"},
+      {"method": "nope.nope", "params": {}, "http": null, "error": "unknown_method"}
+    ],
+    "writes": [
+      {"name": "alarms.rules.set delay_sec +1",
+       "get": "alarms.rules.get", "get_http": "/api/alarms/rules",
+       "rule_path": "rules[id=$RULE_ID]",
+       "guard": {"path": "enabled", "equals": false},
+       "path": "delay_sec", "change": {"add": 1},
+       "set": "alarms.rules.set", "set_http": "/api/alarms/rules"}
+    ]
+  }
+}

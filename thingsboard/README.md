@@ -13,6 +13,8 @@
   พิมพ์ตาราง PASS/FAIL และคืนจำนวนที่ FAIL เป็น exit code
 - `mqtt_mini.py` MQTT 3.1.1 client ขนาดเล็ก (`python thingsboard/mqtt_mini.py --selftest` เช็ค packet แบบออฟไลน์)
 - `tb_api.py` ตัวช่วยเรียก REST API
+- `tb_dashboard.py` สร้าง widget bundle `fishpump`, widget `fishpump_rpc_panel` และ dashboard `Fishpump — ทดสอบ` (หนึ่ง state ต่อหนึ่งหน้า) ให้ลูกค้าทดสอบ; `tb_setup.py` เรียกให้เองหลังขั้นตอน customer; `--check` ตรวจไฟล์แบบออฟไลน์
+- `dashboard_pages.json`, `parity_cases.json`, `parity_test.py`, `tb_dump.py` ดูหัวข้อ "Dashboard ทดสอบและ parity" ด้านล่าง
 - `board_http.py`, `api_golden.py`, `golden_cases.json` ชุดเช็คคำตอบ HTTP ของบอร์ด (ดูหัวข้อ "Golden run" ด้านล่าง)
 
 ## วิธีรัน
@@ -58,3 +60,42 @@ python thingsboard/api_golden.py compare --base base --label new --with-writes  
   และไม่ครอบคลุม `/api/tb*`, login/logout/credentials, `/api/confirm`, `/api/ota`, `/api/events`
 - `/api/wifi/scan` รันเป็นเคสสุดท้ายเสมอ
 - ถ้าเคส `exact` ต่างกันเองระหว่างสองรอบบนเฟิร์มแวร์เดิม ให้ย้ายเป็น `shape` แล้วใส่ key ที่เปลี่ยนใน `ignore`
+
+## Dashboard ทดสอบและ parity
+
+dashboard เขียน JSON ด้วยมือตามไฟล์ตัวอย่างจาก ThingsBoard 4.3.1 (`tb_dump.py` เก็บไว้ที่ `.local/dump/`) รอบแรกที่รันจริงอาจต้องแก้
+
+```
+python thingsboard/tb_dump.py --user <อีเมล> --widget-type control_widgets.rpcbutton   # หรือ --dashboard <ชื่อ>
+python thingsboard/tb_dashboard.py --check                                             # ออฟไลน์
+python thingsboard/tb_dashboard.py --user <อีเมล> [--device fishpump-1de564]           # หรือผ่าน tb_setup.py
+python thingsboard/parity_test.py --selftest
+python thingsboard/parity_test.py --user <อีเมล> --device fishpump-1de564 [--group alarms] [--writes --rule-id N] [--burst 30]
+```
+
+### dashboard_pages.json
+
+ลิสต์ของหน้า `{"id","title","telemetry":[key],"actions":[...]}` กลุ่มถัดไปเพิ่มหน้าต่อท้าย แต่ละ action:
+`{"label","method","params":obj|null,"edit":bool,"load":"<method อ่านค่า>"|null,"confirm":"<ข้อความไทย>"|null}`
+ส่วนเสริม `load_path` (เช่น `rules.0`) เลือกส่วนย่อยของผลที่โหลดมาใส่ช่อง params
+- `edit: true` มีช่อง params ให้แก้ก่อนส่ง, `load` เติมช่อง params จากผลของ method อ่านค่า (ตัด `ok` ออก)
+- `confirm` แสดง `window.confirm` ก่อนส่ง ใช้ข้อความเดียวกับเว็บแอป (ถ้าเว็บแอปไม่ถาม หน้านี้ก็ไม่ถาม)
+- ทุกหน้ามี widget ค่าล่าสุดของ `telemetry` และปุ่มสลับหน้า
+- `tb_dashboard.py --check`: id หน้าไม่ซ้ำ, method ทุกตัวต้องอยู่ใน `parity_cases.json` (หรือ allow-list `NON_PARITY_METHODS`),
+  `confirm` ต้องเป็นข้อความไทยไม่ว่าง, ไม่มีอักขระ `<>&"'` ในข้อความ, สคริปต์ widget ผ่าน `node --check` (ถ้ามี node)
+
+### parity_cases.json
+
+`{"<group>":{"reads":[...],"errors":[...],"writes":[...]}}`
+- `reads`: `{"method","http":"/api/...","ignore":[key]}` เทียบ body ของ RPC กับ HTTP โดยข้าม key ที่ระบุทุกระดับ
+- `errors`: `{"method","params","http":"/api/..."|null,"error":"<code>"|null,"body":<ตัวเลือก>}`
+  ส่ง RPC ต้องได้ `ok:false` และ error code เท่ากับ `error` (ถ้าระบุ) แล้ว POST `body` (ค่าเริ่มต้น = `params`) ไป `http` ต้องได้ code เดียวกัน; `http: null` = ไม่มีฝั่ง HTTP
+- `writes`: `{"name","get","get_http","rule_path","guard","path","change","set","set_http"}`
+  - `rule_path` เลือก sub-object ของผล GET ที่ใช้เป็น body ของ set (`rules[id=$RULE_ID]` เลือก element ที่ `id` เท่ากับ `--rule-id`)
+  - `guard` `{"path","equals"}` ต้องเป็นจริงก่อนเขียน (เช่น กฎต้อง `enabled:false`) ไม่งั้น SKIP
+  - `path` จุดที่แก้ (แบบจุด เช่น `delay_sec`) ภายใน `rule_path`; `change` เป็น `{"add":n}` หรือ `{"value":v}`
+  - ลำดับ: อ่านทาง TB, เขียนทาง TB, อ่านกลับทาง HTTP (ต้องเห็นค่าใหม่), คืนค่าทาง HTTP, อ่านทาง TB (ต้องเป็นค่าเดิม)
+    ถ้าคืนค่าไม่สำเร็จ จะหยุดเคสเขียนที่เหลือและพิมพ์ค่าเดิม
+- `parity_test.py` ผลลัพธ์ `PASS`/`FAIL`/`SKIP` ต่อเคส exit code 0 เมื่อไม่มี FAIL; เคสเขียนรันเมื่อใส่ `--writes` และต้องมี `--rule-id`
+  (กฎที่ปิดอยู่); `--burst N` ส่ง `alarms.rules.get` N ครั้งติดกันขณะ poll `/api/alarms/summary` ทุก 200 ms
+- ถ้าบอร์ดตอบ 403 `force_password_change` เคสนั้น SKIP ("board web password is still the default")

@@ -100,6 +100,27 @@ class TbApi:
     def delete(self, path, **kw):
         return self.request("DELETE", path, **kw)
 
+    def rpc_twoway(self, device_id, method, params, timeout_ms=10000):
+        """Two-way RPC to a device: returns (http_status, body_obj_or_text). HTTP errors are returned, not raised
+        (a timeout is 408/504 and the caller decides). Status 0 = could not reach ThingsBoard."""
+        url = "%s/api/plugins/rpc/twoway/%s" % (self.base, device_id)
+        payload = json.dumps({"method": method, "params": params, "timeout": timeout_ms}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, method="POST", headers={
+            "Accept": "application/json", "Content-Type": "application/json",
+            "X-Authorization": "Bearer " + self.token})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_ms / 1000.0 + 10) as r:
+                status, raw = r.status, r.read()
+        except urllib.error.HTTPError as e:
+            status, raw = e.code, e.read()
+        except (urllib.error.URLError, OSError) as e:
+            return 0, "cannot reach ThingsBoard: %s" % e
+        text = raw.decode("utf-8", "replace")
+        try:
+            return status, json.loads(text)
+        except ValueError:
+            return status, text
+
     def find_by_name(self, list_path, name, key="name", extra=None):
         """Page through a ThingsBoard list endpoint and return the entity whose `key` equals name."""
         page = 0

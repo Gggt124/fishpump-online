@@ -1,0 +1,22 @@
+[
+  {
+    "id": "alarms",
+    "title": "แจ้งเตือน (Alarms)",
+    "telemetry": ["last_alarm_event"],
+    "actions": [
+      {"label": "alarms.signals", "method": "alarms.signals", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "alarms.values", "method": "alarms.values", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "alarms.status", "method": "alarms.status", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "alarms.summary", "method": "alarms.summary", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "alarms.rules.get", "method": "alarms.rules.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "alarms.rules.set (ไม่มี id = สร้าง, มี id = แทนที่)", "method": "alarms.rules.set",
+       "params": {"name": "ทดสอบ", "signal": "water_ph", "condition": "above", "threshold": 9, "severity": "warning"},
+       "edit": true, "load": "alarms.rules.get", "load_path": "rules.0", "confirm": null},
+      {"label": "alarms.rules.delete", "method": "alarms.rules.delete", "params": {"id": 1}, "edit": true, "load": null,
+       "confirm": "ลบกฎแจ้งเตือน ใช่หรือไม่?"},
+      {"label": "alarms.ack (ทั้งหมด)", "method": "alarms.ack", "params": {"all": true}, "edit": false, "load": null,
+       "confirm": "รับทราบการแจ้งเตือนทั้งหมดที่กำลังเกิดอยู่? การรับทราบจะปลดล็อกระบบป้องกันเดินแห้ง และปั๊มน้ำอาจเริ่มทำงานอีกครั้ง"},
+      {"label": "alarms.ack (ตาม id)", "method": "alarms.ack", "params": {"id": 1}, "edit": true, "load": null, "confirm": null}
+    ]
+  }
+]
