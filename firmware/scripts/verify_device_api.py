@@ -198,6 +198,54 @@ def test_protection_group():
                     f"{h} keeps its unauthorized pre-check")
 
 
+def test_pump_group():
+    methods = [
+        ("pump.status", r"DAPI_F_READ", "0"),
+        ("pump.config.get", r"DAPI_F_READ", "0"),
+        ("pump.config.set", r"DAPI_F_WRITE", "PUMP_CONFIG_BODY_BYTES"),
+        ("pump.control", r"DAPI_F_WRITE", "PUMP_CONTROL_BODY_BYTES"),
+        ("pump.start", r"DAPI_F_WRITE", "0"),
+        ("pump.stop", r"DAPI_F_WRITE", "0"),
+    ]
+    handlers = [
+        ("handle_api_pump_status", "pump.status"),
+        ("handle_api_pump_config_get", "pump.config.get"),
+        ("handle_api_pump_config_post", "pump.config.set"),
+        ("handle_api_pump_control_post", "pump.control"),
+        ("handle_api_pump_start", "pump.start"),
+        ("handle_api_pump_stop", "pump.stop"),
+    ]
+    forbidden = ["pump_control_", "nvs_store_save_pump", "nvs_store_load_pump", "hardware_map_"]
+    check_group("pump", "dapi_pump.c", "dapi_pump_register", methods, handlers, forbidden)
+    ws = read(MAIN_DIR / "web_server.c")
+    hdr = read(MAIN_DIR / "dapi_pump.h")
+    assert_test(re.search(r"#define\s+PUMP_CONFIG_BODY_BYTES\s+512\b", hdr) is not None,
+                "PUMP_CONFIG_BODY_BYTES is 512")
+    assert_test(re.search(r"#define\s+PUMP_CONTROL_BODY_BYTES\s+256\b", hdr) is not None,
+                "PUMP_CONTROL_BODY_BYTES is 256")
+    for h in ("handle_api_pump_config_get", "handle_api_pump_status"):
+        assert_test("require_auth(req)" in function_body(ws, h), f"{h} keeps its unauthorized pre-check")
+    for h in ("handle_api_pump_config_post", "handle_api_pump_control_post", "handle_api_pump_start",
+              "handle_api_pump_stop"):
+        body = function_body(ws, h)
+        assert_test("require_auth(req)" in body and "is_password_default()" in body and "is_same_origin(req, false)" in body,
+                    f"{h} keeps auth, force_password_change and same-origin pre-checks")
+    for h in ("handle_api_pump_config_post", "handle_api_pump_control_post"):
+        assert_test("cJSON_Delete(root)" in function_body(ws, h), f"{h} frees the parsed tree")
+    src = read(MAIN_DIR / "dapi_pump.c")
+    start = function_body(src, "dapi_pump_start")
+    assert_test(start.find("pump_start_blocked") != -1 and start.find("pump_start_blocked") < start.find("pump_control_start_water"),
+                "pump.start checks the dry-run/measure block before pump_control_start_water")
+    ctl = function_body(src, "dapi_pump_control")
+    assert_test(ctl.find("pump_start_blocked") != -1 and ctl.find("pump_start_blocked") < ctl.find("pump_control_start_water"),
+                "pump.control checks the dry-run/measure block before pump_control_start_water")
+    blocked = function_body(src, "pump_start_blocked")
+    assert_test("pump_control_stop_water" not in blocked and "dry_run_guard_get_measure" in blocked,
+                "pump start block reads guard and measure and never stops the pump")
+    assert_test("cJSON_CreateRaw" in function_body(src, "dapi_pump_status"),
+                "pump.status keeps the json_gen bytes via cJSON_CreateRaw")
+
+
 if __name__ == "__main__":
     test_component()
     test_logging_and_lock()
@@ -205,5 +253,6 @@ if __name__ == "__main__":
     test_http_dapi()
     test_alarms_group()
     test_protection_group()
+    test_pump_group()
     print(f"\nPassed: {passed_tests}  Failed: {failed_tests}")
     sys.exit(1 if failed_tests else 0)

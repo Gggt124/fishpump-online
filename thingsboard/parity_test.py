@@ -115,8 +115,10 @@ def apply_change(old, change):
 def write_body(get_result, case, subst):
     """Body for the set call: the GET result without ok, narrowed to rule_path, the path changed by `change`.
     A case with "wrap" nests the body under that key (the set method wants {"pump": {...}}).
+    A case with "omit" drops those top-level keys first (read-only fields the set method rejects).
     Returns (set_body, old_value, new_value)."""
-    base = {k: v for k, v in get_result.items() if k != "ok"}
+    omit = set(case.get("omit") or ())
+    base = {k: v for k, v in get_result.items() if k != "ok" and k not in omit}
     if case.get("rule_path"):
         base = get_path(base, case["rule_path"], subst)
     old = get_path(base, case["path"], subst)
@@ -242,11 +244,21 @@ def selftest():
     check("write_body wrap", pbody == {"pump": {"enabled": True, "prime_sec": 6, "max_retries": 3}}
           and (pold, pnew) == (5, 6) and pcase["path"] == "prime_sec")
     check("no rule id needed", "$RULE_ID" not in json.dumps(pcase))
+    ocase = {"path": "b", "change": {"add": 60}, "omit": ["ro"]}
+    obody, oold, onew = write_body({"ok": True, "a": 1, "b": 5, "ro": 9}, ocase, {})
+    check("write_body omit", obody == {"a": 1, "b": 65} and (oold, onew) == (5, 65))
+    wcase = cases_for_selftest()["pump"]["writes"][0]
+    wget = {"ok": True, "water_set1_off": 30, "float_gpio": 4, "relay_gpio": 5, "debounce_ms": 2000,
+            "hardware_reboot_required": False, "pump_relay1_gpio": 5, "pump_relay2_gpio": 6, "ds18b20_gpio": 7,
+            "cooling_relay_gpio": 8, "cooling_relay_polarity": "active_low", "relay1_polarity": "active_low"}
+    wbody, wold, wnew = write_body(wget, wcase, {})
+    check("pump write drops read-only fields", wnew == wold + 60 and "float_gpio" not in wbody and "ok" not in wbody
+          and wbody["relay1_polarity"] == "active_low")
     check("burst ok", burst_verdict([{"ok": True}, {"ok": False, "error": "busy"}], [200, 200]) == [])
     check("burst bad reply", len(burst_verdict([{"ok": False, "error": "x"}, None], [200])) == 2)
     check("burst bad poll", len(burst_verdict([{"ok": True}], [200, 503])) == 1)
     cases = json.loads(CASES_FILE.read_text(encoding="utf-8"))
-    check("cases file has alarms and protection", "alarms" in cases and "protection" in cases)
+    check("cases file has alarms, protection and pump", "alarms" in cases and "protection" in cases and "pump" in cases)
     # run_write must never leave the board changed (Runner is defined below; resolved at call time)
     r, rules, tb = _quiet(_write_scenario)
     check("write ok restores", r.counts["PASS"] == 1 and rules[0]["delay_sec"] == 4)

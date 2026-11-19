@@ -43,5 +43,32 @@
     "writes": [
       {"name": "protection.set prime_sec +1", "get": "protection.get", "get_http": "/api/protection", "rule_path": "pump", "path": "prime_sec", "change": {"add": 1}, "wrap": "pump", "set": "protection.set", "set_http": "/api/protection"}
     ]
+  },
+  "pump": {
+    "reads": [
+      {"method": "pump.status", "http": "/api/pump/status", "ignore": ["countdown_sec", "cooldown_remaining_sec", "total_duration_sec", "wait_remaining_sec", "dry_accum_sec", "trips"]},
+      {"method": "pump.config.get", "http": "/api/pump/config", "ignore": []}
+    ],
+    "errors": [
+      {"method": "pump.config.set", "params": {"float_gpio": 1}, "http": "/api/pump/config", "error": "read_only_field"},
+      {"method": "pump.config.set", "params": {}, "http": "/api/pump/config", "error": "missing_or_invalid_field"},
+      {"method": "pump.config.set", "params": {"water_set1_on": "abc"}, "http": "/api/pump/config", "error": "missing_or_invalid_field"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "min_dwell_sec": "x"}, "http": "/api/pump/config", "error": "invalid_type"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "min_dwell_sec": 99999}, "http": "/api/pump/config", "error": "min_dwell_out_of_range"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false}, "http": "/api/pump/config", "error": "missing_field"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "relay1_polarity": "sideways"}, "http": "/api/pump/config", "error": "invalid_relay_polarity"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "relay1_polarity": "active_low"}, "http": "/api/pump/config", "error": "missing_field"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "relay1_polarity": "active_low", "timer1_start_phase": "maybe", "timer2_start_phase": "on"}, "http": "/api/pump/config", "error": "invalid_start_phase"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "relay1_polarity": "active_low", "timer1_start_phase": "on", "timer2_start_phase": "on", "wash_on": "x"}, "http": "/api/pump/config", "error": "invalid_type"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "relay1_polarity": "active_low", "timer1_start_phase": "on", "timer2_start_phase": "on", "wash_on": 99999999}, "http": "/api/pump/config", "error": "duration_out_of_range"},
+      {"method": "pump.config.set", "params": [1], "http": "/api/pump/config", "error": "invalid_json"},
+      {"method": "pump.control", "params": {"action": "bogus"}, "http": "/api/pump/control", "error": "invalid_action"},
+      {"method": "pump.control", "params": {"system": "bogus", "action": "stop"}, "http": "/api/pump/control", "error": "invalid_system"}
+    ],
+    "writes": [
+      {"name": "pump.config.set water_set1_off +1 min", "get": "pump.config.get", "get_http": "/api/pump/config",
+       "omit": ["float_gpio", "relay_gpio", "debounce_ms", "pump_relay1_gpio", "pump_relay2_gpio", "ds18b20_gpio", "cooling_relay_gpio", "cooling_relay_polarity", "hardware_reboot_required"],
+       "path": "water_set1_off", "change": {"add": 60}, "set": "pump.config.set", "set_http": "/api/pump/config"}
+    ]
   }
 }

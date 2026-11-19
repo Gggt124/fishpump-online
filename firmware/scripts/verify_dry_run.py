@@ -174,25 +174,26 @@ def test_api():
         assert_test("api_begin_json_post(" in function_body(ws, fn), f"{fn} uses api_begin_json_post")
     for fn in ("handle_api_protection_get", "handle_api_protection_measure_get"):
         assert_test("require_auth(" in function_body(ws, fn), f"{fn} requires auth")
-    for fn in ("handle_api_pump_start", "handle_api_pump_control_post"):
-        body = function_body(ws, fn)
-        i_blocked = body.find("pump_start_blocked_response")
+    pump = read(MAIN_DIR / "dapi_pump.c")
+    for fn in ("dapi_pump_start", "dapi_pump_control"):
+        body = function_body(pump, fn)
+        i_blocked = body.find("pump_start_blocked")
         i_start = body.find("pump_control_start_water")
         assert_test(0 <= i_blocked < i_start,
                     f"{fn} checks the dry-run guard (helper) before pump_control_start_water")
-        assert_test("pump_start_blocked_response" in body, f"{fn} calls pump_start_blocked_response")
-    blocked = function_body(ws, "pump_start_blocked_response")
+        assert_test("pump_start_blocked(" in body, f"{fn} calls pump_start_blocked")
+    blocked = function_body(pump, "pump_start_blocked")
     assert_test("dry_run_guard_get_status" in blocked and "dry_run_guard_get_measure" in blocked,
-                "pump_start_blocked_response reads guard and measure status")
-    assert_test("pump_control_stop_water" not in blocked, "pump_start_blocked_response never stops the pump")
+                "pump_start_blocked reads guard and measure status")
+    assert_test("pump_control_stop_water" not in blocked, "pump_start_blocked never stops the pump")
     for code in ("dry_run_locked", "dry_run_waiting", "measuring", "wait_remaining_sec"):
-        assert_test(f'"{code}"' in blocked, f"pump_start_blocked_response emits {code}")
-    assert_test("dry_run_add_status_object(" in function_body(ws, "api_pump_add_status_object")
-                and '"dry_run"' in function_body(ws, "dry_run_add_status_object"),
+        assert_test(f'"{code}"' in blocked, f"pump_start_blocked emits {code}")
+    assert_test("dry_run_add_status_object(" in function_body(pump, "api_pump_add_status_object")
+                and '"dry_run"' in function_body(pump, "dry_run_add_status_object"),
                 "api_pump_add_status_object adds dry_run")
-    assert_test("dry_run_add_status_gen(" in function_body(ws, "handle_api_pump_status")
-                and '"dry_run"' in function_body(ws, "dry_run_add_status_gen"),
-                "GET /api/pump/status adds dry_run")
+    assert_test("dry_run_add_status_gen(" in function_body(pump, "dapi_pump_status")
+                and '"dry_run"' in function_body(pump, "dry_run_add_status_gen"),
+                "pump.status adds dry_run")
     assert_test("ALARM_SYSTEM_ID_DRY_RUN" in function_body(read(MAIN_DIR / "dapi_alarms.c"), "dapi_alarms_status"),
                 "alarms status adds dry_run detail to the system alarm")
     assert_test("ALARM_MAX_RULES + ALARM_ENGINE_MAX_SYSTEM" in function_body(read(MAIN_DIR / "dapi_alarms.c"), "dapi_alarms_status"),

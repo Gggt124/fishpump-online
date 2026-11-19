@@ -33,6 +33,7 @@
 #include "api_json.h"
 #include "dapi_alarms.h"
 #include "dapi_protection.h"
+#include "dapi_pump.h"
 #include "device_api.h"
 #include "dry_run_guard.h"
 #include "alarm_rules.h"
@@ -156,81 +157,8 @@ typedef struct {
 
 static web_server_diag_t s_web_diag = {0};
 
-static bool api_pump_add_status_object(cJSON *root);
-
-/* --------------- JSON Generator --------------- */
-typedef struct {
-  char *buf;
-  size_t capacity;
-  size_t len;
-  bool first_item;
-} json_gen_t;
-
-static void json_gen_init(json_gen_t *gen, char *buf, size_t capacity) {
-  if (gen) {
-    gen->buf = buf;
-    gen->capacity = capacity;
-    gen->len = 0;
-    gen->first_item = true;
-    if (capacity > 0 && buf)
-      buf[0] = '\0';
-  }
-}
-
-static void json_gen_append(json_gen_t *gen, const char *fmt, ...) {
-  if (!gen || !gen->buf || gen->len >= gen->capacity)
-    return;
-  va_list args;
-  va_start(args, fmt);
-  int space = gen->capacity - gen->len;
-  int written = vsnprintf(gen->buf + gen->len, space, fmt, args);
-  va_end(args);
-  if (written > 0) {
-    if (written >= space) {
-      gen->len = gen->capacity;
-    } else {
-      gen->len += written;
-    }
-  }
-}
-
-static void json_gen_start_object(json_gen_t *gen) {
-  if (!gen->first_item)
-    json_gen_append(gen, ",");
-  json_gen_append(gen, "{");
-  gen->first_item = true;
-}
-
-static void json_gen_end_object(json_gen_t *gen) {
-  json_gen_append(gen, "}");
-  gen->first_item = false;
-}
-
-static void json_gen_add_key(json_gen_t *gen, const char *key) {
-  if (!gen->first_item)
-    json_gen_append(gen, ",");
-  json_gen_append(gen, "\"%s\":", key);
-  gen->first_item = false;
-}
-
-static void json_gen_add_bool(json_gen_t *gen, const char *key, bool val) {
-  json_gen_add_key(gen, key);
-  json_gen_append(gen, val ? "true" : "false");
-}
-
-static void json_gen_add_string(json_gen_t *gen, const char *key,
-                                const char *val) {
-  json_gen_add_key(gen, key);
-  if (val)
-    json_gen_append(gen, "\"%s\"", val);
-  else
-    json_gen_append(gen, "null");
-}
-
-static void json_gen_add_number(json_gen_t *gen, const char *key, double val) {
-  json_gen_add_key(gen, key);
-  json_gen_append(gen, "%g", val);
-}
+static esp_err_t http_dapi(httpd_req_t *req, const char *method,
+                           const cJSON *params);
 
 /* --------------- Helpers --------------- */
 
@@ -684,62 +612,6 @@ static esp_err_t send_api_error(httpd_req_t *req, const char *code,
   return result;
 }
 
-static esp_err_t send_api_error_with_pump_status(httpd_req_t *req,
-                                                 const char *code,
-                                                 const char *message,
-                                                 const char *status) {
-  cJSON *root = cJSON_CreateObject();
-  if (!root) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  cJSON_AddBoolToObject(root, "ok", false);
-  cJSON_AddStringToObject(root, "error", code);
-  cJSON_AddStringToObject(root, "message", message);
-  api_pump_add_status_object(root);
-
-  char *json_str = cJSON_PrintUnformatted(root);
-  cJSON_Delete(root);
-  if (!json_str) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  esp_err_t result = send_json(req, json_str, status);
-  free(json_str);
-  return result;
-}
-
-static const char *
-api_pump_settings_status_name(nvs_store_pump_settings_load_status_t status) {
-  switch (status) {
-  case NVS_STORE_PUMP_SETTINGS_LOADED:
-    return "loaded";
-  case NVS_STORE_PUMP_SETTINGS_DEFAULTS_MISSING:
-    return "defaults_missing";
-  case NVS_STORE_PUMP_SETTINGS_DEFAULTS_INVALID:
-    return "defaults_invalid";
-  case NVS_STORE_PUMP_SETTINGS_DEFAULTS_ERROR:
-  default:
-    return "defaults_error";
-  }
-}
-
-static const char *
-api_hardware_map_status_name(nvs_store_hardware_map_load_status_t status) {
-  switch (status) {
-  case NVS_STORE_HARDWARE_MAP_LOADED:
-    return "loaded";
-  case NVS_STORE_HARDWARE_MAP_DEFAULTS_MISSING:
-    return "defaults_missing";
-  case NVS_STORE_HARDWARE_MAP_DEFAULTS_INVALID:
-    return "defaults_invalid";
-  case NVS_STORE_HARDWARE_MAP_DEFAULTS_ERROR:
-  default:
-    return "defaults_error";
-  }
-}
 
 static const char *api_pending_hardware_map_status_name(
     nvs_store_pending_hardware_map_load_status_t status) {
@@ -997,184 +869,6 @@ static esp_err_t api_hardware_map_send(httpd_req_t *req) {
   return result;
 }
 
-static const char *api_pump_relay_polarity_name(bool relay_active_low) {
-  return relay_active_low ? "active_low" : "active_high";
-}
-
-static bool api_pump_parse_relay_polarity(const cJSON *item,
-                                          bool *relay_active_low) {
-  if (!item || !cJSON_IsString(item) || !relay_active_low) {
-    return false;
-  }
-  if (strcmp(item->valuestring, "active_low") == 0) {
-    *relay_active_low = true;
-    return true;
-  }
-  if (strcmp(item->valuestring, "active_high") == 0) {
-    *relay_active_low = false;
-    return true;
-  }
-  return false;
-}
-
-
-
-static bool api_pump_parse_start_phase(const cJSON *item,
-                                       hardware_timer_start_phase_t *phase) {
-  if (!item || !cJSON_IsString(item) || !phase) {
-    return false;
-  }
-  if (strcasecmp(item->valuestring, "on") == 0) {
-    *phase = HARDWARE_TIMER_START_PHASE_ON;
-    return true;
-  }
-  if (strcasecmp(item->valuestring, "off") == 0) {
-    *phase = HARDWARE_TIMER_START_PHASE_OFF;
-    return true;
-  }
-  return false;
-}
-
-static bool api_pump_load_active_hardware_map(
-    hardware_map_t *map, nvs_store_hardware_map_load_status_t *status) {
-  if (!map || !status) {
-    return false;
-  }
-
-  *status = nvs_store_load_hardware_map(map);
-  return *status != NVS_STORE_HARDWARE_MAP_DEFAULTS_ERROR;
-}
-
-static bool
-api_pump_add_config_fields(cJSON *root,
-                           const nvs_store_pump_settings_t *settings,
-                           nvs_store_pump_settings_load_status_t status) {
-  if (!root || !settings) {
-    return false;
-  }
-
-  hardware_map_t active_map = hardware_map_defaults();
-  nvs_store_hardware_map_load_status_t map_status =
-      NVS_STORE_HARDWARE_MAP_DEFAULTS_MISSING;
-  api_pump_load_active_hardware_map(&active_map, &map_status);
-  bool hardware_reboot_required = false;
-  bool hardware_reboot_status_ok =
-      nvs_store_hardware_reboot_required(&hardware_reboot_required);
-  nvs_store_cooling_settings_t cooling_settings;
-  nvs_store_cooling_settings_defaults(&cooling_settings);
-  nvs_store_load_cooling_settings(&cooling_settings);
-
-  cJSON_AddNumberToObject(root, "water_set1_on", settings->timer1_on_sec);
-  cJSON_AddNumberToObject(root, "water_set1_off", settings->timer1_off_sec);
-  cJSON_AddStringToObject(
-      root, "water_set1_start_phase",
-      hardware_map_timer_start_phase_name(settings->timer1_start_phase));
-  cJSON_AddNumberToObject(root, "water_set2_on", settings->timer2_on_sec);
-  cJSON_AddNumberToObject(root, "water_set2_off", settings->timer2_off_sec);
-  cJSON_AddStringToObject(
-      root, "water_set2_start_phase",
-      hardware_map_timer_start_phase_name(settings->timer2_start_phase));
-  cJSON_AddNumberToObject(root, "wash_on", settings->wash_on_sec);
-  cJSON_AddNumberToObject(root, "wash_off", settings->wash_off_sec);
-  cJSON_AddStringToObject(
-      root, "wash_start_phase",
-      settings->wash_start_phase == HARDWARE_TIMER_START_PHASE_ON ? "ON" : "OFF");
-  cJSON_AddBoolToObject(root, "water_auto_start", settings->auto_start);
-  cJSON_AddBoolToObject(root, "wash_auto_start", settings->wash_auto_start);
-
-  cJSON_AddNumberToObject(root, "timer1_on_sec", settings->timer1_on_sec);
-  cJSON_AddNumberToObject(root, "timer1_off_sec", settings->timer1_off_sec);
-  cJSON_AddNumberToObject(root, "timer2_on_sec", settings->timer2_on_sec);
-  cJSON_AddNumberToObject(root, "timer2_off_sec", settings->timer2_off_sec);
-  cJSON_AddBoolToObject(root, "auto_start", settings->auto_start);
-  cJSON_AddStringToObject(
-      root, "relay_polarity",
-      api_pump_relay_polarity_name(settings->relay1_active_low));
-  cJSON_AddNumberToObject(root, "float_gpio", active_map.float_input_gpio);
-  cJSON_AddNumberToObject(root, "relay_gpio", active_map.pump_relay1_gpio);
-  cJSON_AddNumberToObject(root, "debounce_ms", 2000);
-
-  cJSON_AddNumberToObject(root, "min_dwell_sec", settings->min_dwell_sec);
-  cJSON_AddNumberToObject(root, "pump_relay1_gpio",
-                          active_map.pump_relay1_gpio);
-  cJSON_AddNumberToObject(root, "pump_relay2_gpio",
-                          active_map.pump_relay2_gpio);
-  cJSON_AddNumberToObject(root, "ds18b20_gpio", active_map.ds18b20_data_gpio);
-  cJSON_AddNumberToObject(root, "cooling_relay_gpio",
-                          active_map.cooling_relay_gpio);
-  cJSON_AddStringToObject(
-      root, "relay1_polarity",
-      api_pump_relay_polarity_name(settings->relay1_active_low));
-  cJSON_AddStringToObject(
-      root, "relay2_polarity",
-      api_pump_relay_polarity_name(settings->relay2_active_low));
-  cJSON_AddStringToObject(
-      root, "timer1_start_phase",
-      hardware_map_timer_start_phase_name(settings->timer1_start_phase));
-  cJSON_AddStringToObject(
-      root, "timer2_start_phase",
-      hardware_map_timer_start_phase_name(settings->timer2_start_phase));
-  cJSON_AddStringToObject(
-      root, "cooling_relay_polarity",
-      hardware_map_polarity_name(cooling_settings.relay_polarity));
-  cJSON_AddBoolToObject(root, "hardware_reboot_required",
-                        hardware_reboot_status_ok && hardware_reboot_required);
-  cJSON_AddBoolToObject(root, "hardware_fields_read_only", true);
-  cJSON_AddStringToObject(root, "hardware_map_status",
-                          api_hardware_map_status_name(map_status));
-  cJSON_AddStringToObject(root, "settings_status",
-                          api_pump_settings_status_name(status));
-  return true;
-}
-
-static const char *api_pump_float_state_name(pump_control_float_state_t state) {
-  switch (state) {
-  case PUMP_CONTROL_FLOAT_OFF:
-    return "off";
-  case PUMP_CONTROL_FLOAT_ON:
-    return "on";
-  case PUMP_CONTROL_FLOAT_UNKNOWN:
-  default:
-    return "unknown";
-  }
-}
-
-static const char *
-api_pump_active_timer_name(pump_control_active_set_t set) {
-  switch (set) {
-  case PUMP_CONTROL_SET_1:
-    return "timer1";
-  case PUMP_CONTROL_SET_2:
-    return "timer2";
-  default:
-    return "none";
-  }
-}
-
-static const char *api_pump_timer_phase_name(pump_control_timer_phase_t phase) {
-  switch (phase) {
-  case PUMP_CONTROL_PHASE_ON:
-    return "on";
-  case PUMP_CONTROL_PHASE_OFF:
-    return "off";
-  case PUMP_CONTROL_PHASE_IDLE:
-  default:
-    return "idle";
-  }
-}
-
-static const char *api_pump_timer_phase_name_upper(pump_control_timer_phase_t phase) {
-  switch (phase) {
-  case PUMP_CONTROL_PHASE_ON:
-    return "ON";
-  case PUMP_CONTROL_PHASE_OFF:
-    return "OFF";
-  case PUMP_CONTROL_PHASE_IDLE:
-  default:
-    return "IDLE";
-  }
-}
-
 static const char *api_cooling_mode_name(cooling_control_mode_t mode) {
   switch (mode) {
   case COOLING_CONTROL_MODE_AUTO:
@@ -1328,236 +1022,6 @@ api_cooling_blocked_reason_name(cooling_control_blocked_reason_t reason) {
   default:
     return "none";
   }
-}
-
-static bool api_pump_add_status_fields_gen(json_gen_t *gen) {
-  if (!gen) {
-    return false;
-  }
-
-  pump_control_status_t status = {0};
-  if (!pump_control_get_status(&status)) {
-    return false;
-  }
-
-  nvs_store_pump_settings_t settings;
-  nvs_store_pump_settings_load_status_t settings_status =
-      nvs_store_load_pump_settings(&settings);
-  hardware_map_t active_map = hardware_map_defaults();
-  nvs_store_hardware_map_load_status_t map_status =
-      NVS_STORE_HARDWARE_MAP_DEFAULTS_MISSING;
-  api_pump_load_active_hardware_map(&active_map, &map_status);
-  bool hardware_reboot_required = false;
-  bool hardware_reboot_status_ok =
-      nvs_store_hardware_reboot_required(&hardware_reboot_required);
-  nvs_store_cooling_settings_t cooling_settings;
-  nvs_store_cooling_settings_defaults(&cooling_settings);
-  nvs_store_load_cooling_settings(&cooling_settings);
-
-  /* system_water JSON object */
-  json_gen_add_key(gen, "system_water");
-  json_gen_append(gen, "{");
-  gen->first_item = true;
-  json_gen_add_bool(gen, "running", status.water.running);
-  json_gen_add_bool(gen, "relay_energized", status.water.relay_energized);
-  json_gen_add_string(gen, "float_state",
-                      status.water.float_state == PUMP_CONTROL_FLOAT_ON ? "ON" : "OFF");
-  json_gen_add_number(gen, "active_set",
-                      (double)(status.water.active_set == PUMP_CONTROL_SET_2 ? 2 : 1));
-  json_gen_add_string(gen, "phase",
-                      api_pump_timer_phase_name_upper(status.water.phase));
-  json_gen_add_number(gen, "countdown_sec", (double)(status.water.countdown_sec));
-  json_gen_add_number(gen, "total_duration_sec",
-                      (double)(status.water.total_duration_sec));
-  json_gen_add_number(gen, "cooldown_remaining_sec",
-                      (double)(status.water.cooldown_remaining_sec));
-  json_gen_add_bool(gen, "auto_start", status.water.auto_start);
-  json_gen_end_object(gen);
-
-  /* system_wash JSON object */
-  json_gen_add_key(gen, "system_wash");
-  json_gen_append(gen, "{");
-  gen->first_item = true;
-  json_gen_add_bool(gen, "running", status.wash.running);
-  json_gen_add_bool(gen, "relay_energized", status.wash.relay_energized);
-  json_gen_add_string(gen, "phase",
-                      api_pump_timer_phase_name_upper(status.wash.phase));
-  json_gen_add_number(gen, "countdown_sec", (double)(status.wash.countdown_sec));
-  json_gen_add_number(gen, "total_duration_sec",
-                      (double)(status.wash.total_duration_sec));
-  json_gen_add_bool(gen, "auto_start", status.wash.auto_start);
-  json_gen_end_object(gen);
-
-  /* Root-level backward-compatible fields */
-  json_gen_add_bool(gen, "running", status.water.running);
-  json_gen_add_bool(gen, "initialized", status.initialized);
-  json_gen_add_bool(gen, "config_valid", true);
-  json_gen_add_bool(gen, "initial_stabilizing", false);
-  json_gen_add_bool(gen, "fault", status.fault);
-  json_gen_add_string(gen, "float_state",
-                      api_pump_float_state_name(status.water.float_state));
-  json_gen_add_string(gen, "active_timer",
-                      api_pump_active_timer_name(status.water.active_set));
-  json_gen_add_string(gen, "active_relay", status.water.active_set == PUMP_CONTROL_SET_1 ? "relay1" : "relay2");
-  json_gen_add_string(gen, "phase", api_pump_timer_phase_name(status.water.phase));
-  json_gen_add_number(gen, "countdown_sec", (double)(status.water.countdown_sec));
-  json_gen_add_number(gen, "min_dwell_sec", (double)settings.min_dwell_sec);
-  json_gen_add_number(gen, "cooldown_remaining_sec",
-                      (double)status.water.cooldown_remaining_sec);
-  json_gen_add_bool(gen, "relay_energized", status.water.relay_energized);
-  json_gen_add_bool(gen, "relay1_energized", status.water.relay_energized);
-  json_gen_add_bool(gen, "relay2_energized", status.wash.relay_energized);
-
-  json_gen_add_number(gen, "float_gpio", (double)(active_map.float_input_gpio));
-  json_gen_add_number(gen, "relay_gpio", (double)(active_map.pump_relay1_gpio));
-  json_gen_add_number(gen, "active_relay_gpio", (double)(active_map.pump_relay1_gpio));
-  json_gen_add_number(gen, "pump_relay1_gpio",
-                      (double)(active_map.pump_relay1_gpio));
-  json_gen_add_number(gen, "pump_relay2_gpio",
-                      (double)(active_map.pump_relay2_gpio));
-  json_gen_add_number(gen, "ds18b20_gpio",
-                      (double)(active_map.ds18b20_data_gpio));
-  json_gen_add_number(gen, "cooling_relay_gpio",
-                      (double)(active_map.cooling_relay_gpio));
-  json_gen_add_string(gen, "relay1_polarity",
-                      api_pump_relay_polarity_name(settings.relay1_active_low));
-  json_gen_add_string(gen, "relay2_polarity",
-                      api_pump_relay_polarity_name(settings.relay2_active_low));
-  json_gen_add_string(
-      gen, "cooling_relay_polarity",
-      hardware_map_polarity_name(cooling_settings.relay_polarity));
-  json_gen_add_string(
-      gen, "timer1_start_phase",
-      hardware_map_timer_start_phase_name(settings.timer1_start_phase));
-  json_gen_add_string(
-      gen, "timer2_start_phase",
-      hardware_map_timer_start_phase_name(settings.timer2_start_phase));
-  json_gen_add_bool(gen, "hardware_reboot_required",
-                    hardware_reboot_status_ok && hardware_reboot_required);
-  json_gen_add_string(gen, "hardware_map_status",
-                      api_hardware_map_status_name(map_status));
-  json_gen_add_bool(gen, "auto_start", settings.auto_start);
-
-  json_gen_add_string(gen, "settings_status",
-                      api_pump_settings_status_name(settings_status));
-  return true;
-}
-
-static bool api_pump_add_status_fields(cJSON *root) {
-  if (!root) {
-    return false;
-  }
-
-  pump_control_status_t status = {0};
-  if (!pump_control_get_status(&status)) {
-    return false;
-  }
-
-  nvs_store_pump_settings_t settings;
-  nvs_store_pump_settings_load_status_t settings_status =
-      nvs_store_load_pump_settings(&settings);
-  hardware_map_t active_map = hardware_map_defaults();
-  nvs_store_hardware_map_load_status_t map_status =
-      NVS_STORE_HARDWARE_MAP_DEFAULTS_MISSING;
-  api_pump_load_active_hardware_map(&active_map, &map_status);
-  bool hardware_reboot_required = false;
-  bool hardware_reboot_status_ok =
-      nvs_store_hardware_reboot_required(&hardware_reboot_required);
-  nvs_store_cooling_settings_t cooling_settings;
-  nvs_store_cooling_settings_defaults(&cooling_settings);
-  nvs_store_load_cooling_settings(&cooling_settings);
-
-  /* system_water JSON object */
-  cJSON *water_obj = cJSON_AddObjectToObject(root, "system_water");
-  if (water_obj) {
-    cJSON_AddBoolToObject(water_obj, "running", status.water.running);
-    cJSON_AddBoolToObject(water_obj, "relay_energized", status.water.relay_energized);
-    cJSON_AddStringToObject(
-        water_obj, "float_state",
-        status.water.float_state == PUMP_CONTROL_FLOAT_ON ? "ON" : "OFF");
-    cJSON_AddNumberToObject(
-        water_obj, "active_set",
-        status.water.active_set == PUMP_CONTROL_SET_2 ? 2 : 1);
-    cJSON_AddStringToObject(
-        water_obj, "phase",
-        api_pump_timer_phase_name_upper(status.water.phase));
-    cJSON_AddNumberToObject(water_obj, "countdown_sec", status.water.countdown_sec);
-    cJSON_AddNumberToObject(water_obj, "total_duration_sec",
-                            status.water.total_duration_sec);
-    cJSON_AddNumberToObject(water_obj, "cooldown_remaining_sec",
-                            status.water.cooldown_remaining_sec);
-    cJSON_AddBoolToObject(water_obj, "auto_start", status.water.auto_start);
-  }
-
-  /* system_wash JSON object */
-  cJSON *wash_obj = cJSON_AddObjectToObject(root, "system_wash");
-  if (wash_obj) {
-    cJSON_AddBoolToObject(wash_obj, "running", status.wash.running);
-    cJSON_AddBoolToObject(wash_obj, "relay_energized", status.wash.relay_energized);
-    cJSON_AddStringToObject(
-        wash_obj, "phase",
-        api_pump_timer_phase_name_upper(status.wash.phase));
-    cJSON_AddNumberToObject(wash_obj, "countdown_sec", status.wash.countdown_sec);
-    cJSON_AddNumberToObject(wash_obj, "total_duration_sec",
-                            status.wash.total_duration_sec);
-    cJSON_AddBoolToObject(wash_obj, "auto_start", status.wash.auto_start);
-  }
-
-  /* Root-level backward-compatible fields */
-  cJSON_AddBoolToObject(root, "running", status.water.running);
-  cJSON_AddBoolToObject(root, "initialized", status.initialized);
-  cJSON_AddBoolToObject(root, "config_valid", true);
-  cJSON_AddBoolToObject(root, "initial_stabilizing", false);
-  cJSON_AddBoolToObject(root, "fault", status.fault);
-  cJSON_AddStringToObject(root, "float_state",
-                          api_pump_float_state_name(status.water.float_state));
-  cJSON_AddStringToObject(root, "active_timer",
-                          api_pump_active_timer_name(status.water.active_set));
-  cJSON_AddStringToObject(root, "active_relay", status.water.active_set == PUMP_CONTROL_SET_1 ? "relay1" : "relay2");
-  cJSON_AddStringToObject(root, "phase",
-                          api_pump_timer_phase_name(status.water.phase));
-  cJSON_AddNumberToObject(root, "countdown_sec", status.water.countdown_sec);
-  cJSON_AddNumberToObject(root, "min_dwell_sec", settings.min_dwell_sec);
-  cJSON_AddNumberToObject(root, "cooldown_remaining_sec",
-                          status.water.cooldown_remaining_sec);
-  cJSON_AddBoolToObject(root, "relay_energized", status.water.relay_energized);
-  cJSON_AddBoolToObject(root, "relay1_energized", status.water.relay_energized);
-  cJSON_AddBoolToObject(root, "relay2_energized", status.wash.relay_energized);
-
-  cJSON_AddNumberToObject(root, "float_gpio", active_map.float_input_gpio);
-  cJSON_AddNumberToObject(root, "relay_gpio", active_map.pump_relay1_gpio);
-  cJSON_AddNumberToObject(root, "active_relay_gpio", active_map.pump_relay1_gpio);
-  cJSON_AddNumberToObject(root, "pump_relay1_gpio",
-                          active_map.pump_relay1_gpio);
-  cJSON_AddNumberToObject(root, "pump_relay2_gpio",
-                          active_map.pump_relay2_gpio);
-  cJSON_AddNumberToObject(root, "ds18b20_gpio", active_map.ds18b20_data_gpio);
-  cJSON_AddNumberToObject(root, "cooling_relay_gpio",
-                          active_map.cooling_relay_gpio);
-  cJSON_AddStringToObject(
-      root, "relay1_polarity",
-      api_pump_relay_polarity_name(settings.relay1_active_low));
-  cJSON_AddStringToObject(
-      root, "relay2_polarity",
-      api_pump_relay_polarity_name(settings.relay2_active_low));
-  cJSON_AddStringToObject(
-      root, "cooling_relay_polarity",
-      hardware_map_polarity_name(cooling_settings.relay_polarity));
-  cJSON_AddStringToObject(
-      root, "timer1_start_phase",
-      hardware_map_timer_start_phase_name(settings.timer1_start_phase));
-  cJSON_AddStringToObject(
-      root, "timer2_start_phase",
-      hardware_map_timer_start_phase_name(settings.timer2_start_phase));
-  cJSON_AddBoolToObject(root, "hardware_reboot_required",
-                        hardware_reboot_status_ok && hardware_reboot_required);
-  cJSON_AddStringToObject(root, "hardware_map_status",
-                          api_hardware_map_status_name(map_status));
-  cJSON_AddBoolToObject(root, "auto_start", settings.auto_start);
-
-  cJSON_AddStringToObject(root, "settings_status",
-                          api_pump_settings_status_name(settings_status));
-  return true;
 }
 
 static bool api_cooling_add_status_fields_gen(json_gen_t *gen) {
@@ -1856,99 +1320,6 @@ api_cooling_send_apply_error(httpd_req_t *req, const char *code,
   return result;
 }
 
-/* ---------------- Dry-run protection helpers ---------------- */
-
-/* Appends "dry_run":{enabled + runtime fields} to a pump status document. */
-static void dry_run_add_status_gen(json_gen_t *gen) {
-  dry_run_guard_status_t gs;
-  if (!dry_run_guard_get_status(&gs)) {
-    return;
-  }
-  json_gen_add_key(gen, "dry_run");
-  json_gen_append(gen, "{");
-  gen->first_item = true;
-  json_gen_add_bool(gen, "enabled", gs.cfg.enabled);
-  json_gen_add_string(gen, "state", dry_run_state_name(gs.state));
-  json_gen_add_number(gen, "trips", gs.trips);
-  json_gen_add_number(gen, "max_retries", gs.cfg.max_retries);
-  json_gen_add_number(gen, "wait_remaining_sec", (double)gs.wait_remaining_sec);
-  json_gen_add_number(gen, "dry_accum_sec", (double)gs.dry_accum_sec);
-  json_gen_end_object(gen);
-}
-
-static void dry_run_add_status_object(cJSON *root) {
-  dry_run_guard_status_t gs;
-  if (!dry_run_guard_get_status(&gs)) {
-    return;
-  }
-  cJSON *obj = cJSON_AddObjectToObject(root, "dry_run");
-  if (!obj) {
-    return;
-  }
-  cJSON_AddBoolToObject(obj, "enabled", gs.cfg.enabled);
-  dry_run_add_runtime_fields(obj, &gs);
-}
-
-/* Water start is refused while the dry-run guard waits or is locked, and while the measure test
- * holds relay 1. Sends the 409 and returns true when blocked. Never touches the pump (stopping it
- * would erase the user's running intent). A guard that is not initialised does not block. */
-static bool pump_start_blocked_response(httpd_req_t *req, esp_err_t *sent) {
-  dry_run_guard_status_t gs;
-  if (dry_run_guard_get_status(&gs)) {
-    if (gs.state == DRY_RUN_WAIT) {
-      cJSON *root = cJSON_CreateObject();
-      if (!root) {
-        *sent = send_api_error(req, "memory", "JSON allocation failed",
-                               "500 Internal Server Error");
-        return true;
-      }
-      cJSON_AddBoolToObject(root, "ok", false);
-      cJSON_AddStringToObject(root, "error", "dry_run_waiting");
-      cJSON_AddStringToObject(root, "message", "Water pump is waiting to retry after a dry run");
-      cJSON_AddNumberToObject(root, "wait_remaining_sec", gs.wait_remaining_sec);
-      char *json_str = cJSON_PrintUnformatted(root);
-      cJSON_Delete(root);
-      if (!json_str) {
-        *sent = send_api_error(req, "memory", "JSON allocation failed",
-                               "500 Internal Server Error");
-        return true;
-      }
-      *sent = send_json(req, json_str, "409 Conflict");
-      free(json_str);
-      return true;
-    }
-    if (gs.state == DRY_RUN_LOCKED) {
-      *sent = send_api_error(req, "dry_run_locked",
-                             "Water pump is locked after repeated dry runs; acknowledge the alarm",
-                             "409 Conflict");
-      return true;
-    }
-  }
-  dry_run_measure_status_t ms;
-  if (dry_run_guard_get_measure(&ms) && ms.state == DRY_RUN_MEASURE_RUNNING) {
-    *sent = send_api_error(req, "measuring", "Flow-time measurement is running",
-                           "409 Conflict");
-    return true;
-  }
-  return false;
-}
-
-static bool api_pump_add_status_object(cJSON *root) {
-  cJSON *status_obj = cJSON_AddObjectToObject(root, "status");
-  if (!status_obj) {
-    return false;
-  }
-  if (!api_pump_add_status_fields(status_obj)) {
-    return false;
-  }
-  dry_run_add_status_object(root);
-  return true;
-}
-
-static bool api_pump_json_has_field(const cJSON *root, const char *name) {
-  return cJSON_GetObjectItem(root, name) != NULL;
-}
-
 static bool __attribute__((unused)) api_pump_required_u32(const cJSON *root, const char *name,
                                   uint32_t *out, const char **error_code,
                                   const char **error_message) {
@@ -2166,15 +1537,6 @@ static bool api_cooling_required_bool(const cJSON *root, const char *name,
 
   *out = cJSON_IsTrue(item);
   return true;
-}
-
-static const cJSON *api_json_get_item(const cJSON *root, const char *key1,
-                                      const char *key2) {
-  const cJSON *item = cJSON_GetObjectItem(root, key1);
-  if (!item && key2) {
-    item = cJSON_GetObjectItem(root, key2);
-  }
-  return item;
 }
 
 static bool api_cooling_parse_config_payload(
@@ -2410,212 +1772,6 @@ static bool api_cooling_parse_config_payload(
   return true;
 }
 
-static const cJSON *api_pump_get_item(const cJSON *root, const char *key1, const char *key2) {
-  return api_json_get_item(root, key1, key2);
-}
-
-static bool api_pump_parse_settings_payload(const cJSON *root,
-                                            nvs_store_pump_settings_t *settings,
-                                            const char **error_code,
-                                            const char **error_message) {
-  if (!root || !settings) {
-    *error_code = "invalid_json";
-    *error_message = "Expected a JSON object";
-    return false;
-  }
-
-  const char *readonly_fields[] = {"float_gpio",
-                                   "relay_gpio",
-                                   "debounce_ms",
-                                   "pump_relay1_gpio",
-                                   "pump_relay2_gpio",
-                                   "ds18b20_gpio",
-                                   "cooling_relay_gpio",
-                                   "cooling_relay_polarity",
-                                   "hardware_reboot_required"};
-  for (size_t i = 0; i < sizeof(readonly_fields) / sizeof(readonly_fields[0]);
-       i++) {
-    if (api_pump_json_has_field(root, readonly_fields[i])) {
-      *error_code = "read_only_field";
-      *error_message = readonly_fields[i];
-      return false;
-    }
-  }
-
-  const cJSON *t1_on = api_pump_get_item(root, "water_set1_on", "timer1_on_sec");
-  const cJSON *t1_off = api_pump_get_item(root, "water_set1_off", "timer1_off_sec");
-  const cJSON *t2_on = api_pump_get_item(root, "water_set2_on", "timer2_on_sec");
-  const cJSON *t2_off = api_pump_get_item(root, "water_set2_off", "timer2_off_sec");
-  const cJSON *auto_st = api_pump_get_item(root, "water_auto_start", "auto_start");
-
-  if (!t1_on || !cJSON_IsNumber(t1_on) || t1_on->valuedouble < APP_TEMPLATE_PUMP_TIMER_MIN_SEC || t1_on->valuedouble > APP_TEMPLATE_PUMP_TIMER_MAX_SEC ||
-      !t1_off || !cJSON_IsNumber(t1_off) || t1_off->valuedouble < APP_TEMPLATE_PUMP_TIMER_MIN_SEC || t1_off->valuedouble > APP_TEMPLATE_PUMP_TIMER_MAX_SEC ||
-      !t2_on || !cJSON_IsNumber(t2_on) || t2_on->valuedouble < APP_TEMPLATE_PUMP_TIMER_MIN_SEC || t2_on->valuedouble > APP_TEMPLATE_PUMP_TIMER_MAX_SEC ||
-      !t2_off || !cJSON_IsNumber(t2_off) || t2_off->valuedouble < APP_TEMPLATE_PUMP_TIMER_MIN_SEC || t2_off->valuedouble > APP_TEMPLATE_PUMP_TIMER_MAX_SEC ||
-      !auto_st || !cJSON_IsBool(auto_st)) {
-    *error_code = "missing_or_invalid_field";
-    *error_message = "Required timer or auto_start fields missing or out of range";
-    return false;
-  }
-
-  settings->timer1_on_sec = (uint32_t)t1_on->valuedouble;
-  settings->timer1_off_sec = (uint32_t)t1_off->valuedouble;
-  settings->timer2_on_sec = (uint32_t)t2_on->valuedouble;
-  settings->timer2_off_sec = (uint32_t)t2_off->valuedouble;
-  settings->auto_start = cJSON_IsTrue(auto_st);
-
-  const cJSON *min_dwell = cJSON_GetObjectItem(root, "min_dwell_sec");
-  if (min_dwell) {
-    if (!cJSON_IsNumber(min_dwell) || min_dwell->valuedouble < 0.0) {
-      *error_code = "invalid_type";
-      *error_message = "min_dwell_sec";
-      return false;
-    }
-    uint32_t md = (uint32_t)min_dwell->valuedouble;
-    if ((double)md != min_dwell->valuedouble ||
-        md > APP_TEMPLATE_PUMP_FLOAT_MIN_DWELL_MAX_SEC) {
-      *error_code = "min_dwell_out_of_range";
-      *error_message = "min_dwell_sec";
-      return false;
-    }
-    settings->min_dwell_sec = md;
-  }
-
-  const cJSON *relay1_polarity = cJSON_GetObjectItem(root, "relay1_polarity");
-  const cJSON *legacy_polarity = cJSON_GetObjectItem(root, "relay_polarity");
-  const cJSON *relay1_source =
-      relay1_polarity ? relay1_polarity : legacy_polarity;
-  if (!relay1_source) {
-    *error_code = "missing_field";
-    *error_message = "relay1_polarity";
-    return false;
-  }
-  if (!api_pump_parse_relay_polarity(relay1_source,
-                                     &settings->relay1_active_low)) {
-    *error_code = "invalid_relay_polarity";
-    *error_message = relay1_polarity ? "relay1_polarity" : "relay_polarity";
-    return false;
-  }
-  settings->relay_active_low = settings->relay1_active_low;
-
-  const cJSON *relay2_polarity = cJSON_GetObjectItem(root, "relay2_polarity");
-  if (relay2_polarity && !api_pump_parse_relay_polarity(
-                             relay2_polarity, &settings->relay2_active_low)) {
-    *error_code = "invalid_relay_polarity";
-    *error_message = "relay2_polarity";
-    return false;
-  }
-
-  const cJSON *timer1_start = api_pump_get_item(root, "water_set1_start_phase", "timer1_start_phase");
-  if (!timer1_start) {
-    *error_code = "missing_field";
-    *error_message = "timer1_start_phase";
-    return false;
-  }
-  if (!api_pump_parse_start_phase(timer1_start,
-                                  &settings->timer1_start_phase) ||
-      !hardware_map_timer_start_phase_valid(settings->timer1_start_phase)) {
-    *error_code = "invalid_start_phase";
-    *error_message = "timer1_start_phase";
-    return false;
-  }
-
-  const cJSON *timer2_start = api_pump_get_item(root, "water_set2_start_phase", "timer2_start_phase");
-  if (!timer2_start) {
-    *error_code = "missing_field";
-    *error_message = "timer2_start_phase";
-    return false;
-  }
-  if (!api_pump_parse_start_phase(timer2_start,
-                                  &settings->timer2_start_phase) ||
-      !hardware_map_timer_start_phase_valid(settings->timer2_start_phase)) {
-    *error_code = "invalid_start_phase";
-    *error_message = "timer2_start_phase";
-    return false;
-  }
-
-  const cJSON *w_on = api_pump_get_item(root, "wash_on", "wash_on_sec");
-  if (w_on) {
-    if (!cJSON_IsNumber(w_on)) {
-      *error_code = "invalid_type";
-      *error_message = "wash_on";
-      return false;
-    }
-    if (w_on->valuedouble < APP_TEMPLATE_PUMP_TIMER_MIN_SEC ||
-        w_on->valuedouble > APP_TEMPLATE_PUMP_TIMER_MAX_SEC) {
-      *error_code = "duration_out_of_range";
-      *error_message = "wash_on";
-      return false;
-    }
-    settings->wash_on_sec = (uint32_t)w_on->valuedouble;
-  }
-
-  const cJSON *w_off = api_pump_get_item(root, "wash_off", "wash_off_sec");
-  if (w_off) {
-    if (!cJSON_IsNumber(w_off)) {
-      *error_code = "invalid_type";
-      *error_message = "wash_off";
-      return false;
-    }
-    if (w_off->valuedouble < APP_TEMPLATE_PUMP_TIMER_MIN_SEC ||
-        w_off->valuedouble > APP_TEMPLATE_PUMP_TIMER_MAX_SEC) {
-      *error_code = "duration_out_of_range";
-      *error_message = "wash_off";
-      return false;
-    }
-    settings->wash_off_sec = (uint32_t)w_off->valuedouble;
-  }
-
-  const cJSON *w_start = cJSON_GetObjectItem(root, "wash_start_phase");
-  if (w_start) {
-    hardware_timer_start_phase_t sp;
-    if (!api_pump_parse_start_phase(w_start, &sp) || !hardware_map_timer_start_phase_valid(sp)) {
-      *error_code = "invalid_start_phase";
-      *error_message = "wash_start_phase";
-      return false;
-    }
-    settings->wash_start_phase = sp;
-  }
-
-  const cJSON *w_auto = cJSON_GetObjectItem(root, "wash_auto_start");
-  if (w_auto) {
-    if (!cJSON_IsBool(w_auto)) {
-      *error_code = "invalid_type";
-      *error_message = "wash_auto_start";
-      return false;
-    }
-    settings->wash_auto_start = cJSON_IsTrue(w_auto);
-  }
-
-  return true;
-}
-
-static esp_err_t api_pump_send_config(
-    httpd_req_t *req, const nvs_store_pump_settings_t *settings,
-    nvs_store_pump_settings_load_status_t status, bool include_status) {
-  cJSON *root = cJSON_CreateObject();
-  if (!root) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  cJSON_AddBoolToObject(root, "ok", true);
-  api_pump_add_config_fields(root, settings, status);
-  if (include_status) {
-    api_pump_add_status_object(root);
-  }
-
-  char *json_str = cJSON_PrintUnformatted(root);
-  cJSON_Delete(root);
-  if (!json_str) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  esp_err_t result = send_json(req, json_str, "200 OK");
-  free(json_str);
-  return result;
-}
 
 /* Scan context for non-blocking callback */
 typedef struct {
@@ -4178,16 +3334,7 @@ static esp_err_t handle_api_pump_config_get(httpd_req_t *req) {
                      "403 Forbidden");
   }
 
-  nvs_store_pump_settings_t settings;
-  nvs_store_pump_settings_load_status_t status =
-      nvs_store_load_pump_settings(&settings);
-  if (status == NVS_STORE_PUMP_SETTINGS_DEFAULTS_ERROR) {
-    return send_api_error(req, "settings_load_failed",
-                          "Could not load pump settings",
-                          "500 Internal Server Error");
-  }
-
-  return api_pump_send_config(req, &settings, status, false);
+  return http_dapi(req, "pump.config.get", NULL);
 }
 
 /* POST /api/pump/config - protected, full replacement for editable pump
@@ -4209,7 +3356,7 @@ static esp_err_t handle_api_pump_config_post(httpd_req_t *req) {
                           "403 Forbidden");
   }
 
-  char body[512] = {0};
+  char body[PUMP_CONFIG_BODY_BYTES] = {0};
   if (req->content_len >= sizeof(body)) {
     return send_api_error(req, "payload_too_large", "Payload Too Large",
                           "413 Request Entity Too Large");
@@ -4228,62 +3375,9 @@ static esp_err_t handle_api_pump_config_post(httpd_req_t *req) {
                           "400 Bad Request");
   }
 
-  nvs_store_pump_settings_t settings;
-  nvs_store_pump_settings_defaults(&settings);
-  nvs_store_load_pump_settings(&settings);
-  const char *error_code = NULL;
-  const char *error_message = NULL;
-  bool valid = api_pump_parse_settings_payload(root, &settings, &error_code,
-                                               &error_message);
+  esp_err_t result = http_dapi(req, "pump.config.set", root);
   cJSON_Delete(root);
-  if (!valid) {
-    return send_api_error(req, error_code, error_message, "400 Bad Request");
-  }
-
-  pump_control_config_update_t update = {
-      .water_set1 =
-          {
-              .on_sec = settings.timer1_on_sec,
-              .off_sec = settings.timer1_off_sec,
-              .start_phase = (settings.timer1_start_phase == HARDWARE_TIMER_START_PHASE_ON)
-                                 ? PUMP_CONTROL_START_PHASE_ON
-                                 : PUMP_CONTROL_START_PHASE_OFF,
-          },
-      .water_set2 =
-          {
-              .on_sec = settings.timer2_on_sec,
-              .off_sec = settings.timer2_off_sec,
-              .start_phase = (settings.timer2_start_phase == HARDWARE_TIMER_START_PHASE_ON)
-                                 ? PUMP_CONTROL_START_PHASE_ON
-                                 : PUMP_CONTROL_START_PHASE_OFF,
-          },
-      .wash_timer =
-          {
-              .on_sec = settings.wash_on_sec,
-              .off_sec = settings.wash_off_sec,
-              .start_phase = (settings.wash_start_phase == HARDWARE_TIMER_START_PHASE_ON)
-                                 ? PUMP_CONTROL_START_PHASE_ON
-                                 : PUMP_CONTROL_START_PHASE_OFF,
-          },
-      .water_auto_start = settings.auto_start,
-      .wash_auto_start = settings.wash_auto_start,
-      .min_dwell_sec = settings.min_dwell_sec,
-  };
-
-  if (!nvs_store_save_pump_settings(&settings)) {
-    return send_api_error(req, "settings_save_failed",
-                          "Could not save pump settings",
-                          "500 Internal Server Error");
-  }
-
-  if (!pump_control_update_config(&update)) {
-    return send_api_error(req, "settings_apply_failed",
-                          "Could not apply pump settings to runtime",
-                          "500 Internal Server Error");
-  }
-
-  return api_pump_send_config(req, &settings, NVS_STORE_PUMP_SETTINGS_LOADED,
-                              true);
+  return result;
 }
 
 /* GET /api/pump/status - protected, return machine-friendly pump runtime status
@@ -4294,28 +3388,7 @@ static esp_err_t handle_api_pump_status(httpd_req_t *req) {
                      "401 Unauthorized");
   }
 
-  char *json_buf = malloc(3072);
-  if (!json_buf) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  json_gen_t gen;
-  json_gen_init(&gen, json_buf, 3072);
-  json_gen_start_object(&gen);
-  json_gen_add_bool(&gen, "ok", true);
-
-  if (!api_pump_add_status_fields_gen(&gen)) {
-    free(json_buf);
-    return send_api_error(req, "status_unavailable",
-                          "Pump status is unavailable", "409 Conflict");
-  }
-  dry_run_add_status_gen(&gen);
-  json_gen_end_object(&gen);
-
-  esp_err_t result = send_json(req, json_buf, "200 OK");
-  free(json_buf);
-  return result;
+  return http_dapi(req, "pump.status", NULL);
 }
 
 /* ---------------- Sensors (PZEM power + SEN0708 pH) ---------------- */
@@ -4821,50 +3894,7 @@ static esp_err_t handle_api_pump_start(httpd_req_t *req) {
                           "403 Forbidden");
   }
 
-  pump_control_status_t before_status = {0};
-  if (!pump_control_get_status(&before_status)) {
-    return send_api_error(req, "status_unavailable",
-                          "Pump status is unavailable", "409 Conflict");
-  }
-
-  esp_err_t blocked_sent = ESP_OK;
-  if (pump_start_blocked_response(req, &blocked_sent)) {
-    return blocked_sent;
-  }
-
-  bool already_running = before_status.water.running;
-  if (!already_running && !pump_control_start_water()) {
-    pump_control_stop_water();
-    return send_api_error_with_pump_status(req, "start_failed",
-                                           "Pump control could not be started",
-                                           "500 Internal Server Error");
-  }
-
-
-  cJSON *root = cJSON_CreateObject();
-  if (!root) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  cJSON_AddBoolToObject(root, "ok", true);
-  cJSON_AddBoolToObject(root, "already_running", already_running);
-  if (!api_pump_add_status_object(root)) {
-    cJSON_Delete(root);
-    return send_api_error(req, "status_unavailable",
-                          "Pump status is unavailable", "409 Conflict");
-  }
-
-  char *json_str = cJSON_PrintUnformatted(root);
-  cJSON_Delete(root);
-  if (!json_str) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  esp_err_t result = send_json(req, json_str, "200 OK");
-  free(json_str);
-  return result;
+  return http_dapi(req, "pump.start", NULL);
 }
 
 /* POST /api/pump/stop - protected, idempotently stop pump control */
@@ -4884,54 +3914,7 @@ static esp_err_t handle_api_pump_stop(httpd_req_t *req) {
                           "403 Forbidden");
   }
 
-  pump_control_status_t before_status = {0};
-  if (!pump_control_get_status(&before_status)) {
-    return send_api_error(req, "status_unavailable",
-                          "Pump status is unavailable", "409 Conflict");
-  }
-
-  bool already_stopped = !before_status.water.running;
-  if (!already_stopped || before_status.water.relay_energized) {
-    if (!pump_control_stop_water()) {
-      return send_api_error_with_pump_status(
-          req, "stop_failed", "Pump control could not be stopped",
-          "500 Internal Server Error");
-    }
-  }
-
-  pump_control_status_t after_status = {0};
-  if (!pump_control_get_status(&after_status) || after_status.water.running ||
-      after_status.water.relay_energized) {
-    return send_api_error_with_pump_status(
-        req, "stop_failed", "Pump relay inactive state could not be confirmed",
-        "409 Conflict");
-  }
-
-
-  cJSON *root = cJSON_CreateObject();
-  if (!root) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  cJSON_AddBoolToObject(root, "ok", true);
-  cJSON_AddBoolToObject(root, "already_stopped", already_stopped);
-  if (!api_pump_add_status_object(root)) {
-    cJSON_Delete(root);
-    return send_api_error(req, "status_unavailable",
-                          "Pump status is unavailable", "409 Conflict");
-  }
-
-  char *json_str = cJSON_PrintUnformatted(root);
-  cJSON_Delete(root);
-  if (!json_str) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  esp_err_t result = send_json(req, json_str, "200 OK");
-  free(json_str);
-  return result;
+  return http_dapi(req, "pump.stop", NULL);
 }
 
 /* POST /api/pump/control - protected, control water / wash / all system start/stop */
@@ -4951,14 +3934,13 @@ static esp_err_t handle_api_pump_control_post(httpd_req_t *req) {
                           "403 Forbidden");
   }
 
-  char body[256] = {0};
+  char body[PUMP_CONTROL_BODY_BYTES] = {0};
   read_request_body(req, body, sizeof(body));
 
-  char system_buf[32] = "water";
-  char action_buf[32] = "start";
-
+  /* An empty body is allowed: the method then uses its defaults (water, start). */
+  cJSON *root = NULL;
   if (body[0] != '\0') {
-    cJSON *root = cJSON_Parse(body);
+    root = cJSON_Parse(body);
     if (!root || !cJSON_IsObject(root)) {
       if (root) {
         cJSON_Delete(root);
@@ -4966,84 +3948,10 @@ static esp_err_t handle_api_pump_control_post(httpd_req_t *req) {
       return send_api_error(req, "invalid_json", "Invalid JSON payload",
                             "400 Bad Request");
     }
-    cJSON *sys_item = cJSON_GetObjectItem(root, "system");
-    if (sys_item && cJSON_IsString(sys_item) && sys_item->valuestring) {
-      strlcpy(system_buf, sys_item->valuestring, sizeof(system_buf));
-    }
-    cJSON *act_item = cJSON_GetObjectItem(root, "action");
-    if (act_item && cJSON_IsString(act_item) && act_item->valuestring) {
-      strlcpy(action_buf, act_item->valuestring, sizeof(action_buf));
-    }
-    cJSON_Delete(root);
   }
 
-  bool is_start = (strcmp(action_buf, "start") == 0);
-  bool is_stop = (strcmp(action_buf, "stop") == 0);
-  if (!is_start && !is_stop) {
-    return send_api_error(req, "invalid_action", "Action must be 'start' or 'stop'",
-                          "400 Bad Request");
-  }
-
-  bool do_water = (strcmp(system_buf, "water") == 0 || strcmp(system_buf, "all") == 0);
-  bool do_wash = (strcmp(system_buf, "wash") == 0 || strcmp(system_buf, "all") == 0);
-
-  if (!do_water && !do_wash) {
-    return send_api_error(req, "invalid_system", "System must be 'water', 'wash', or 'all'",
-                          "400 Bad Request");
-  }
-
-  if (is_start && do_water) {
-    esp_err_t blocked_sent = ESP_OK;
-    if (pump_start_blocked_response(req, &blocked_sent)) {
-      return blocked_sent;
-    }
-  }
-
-  bool success = true;
-  if (do_water) {
-    if (is_start) {
-      if (!pump_control_start_water()) success = false;
-    } else {
-      if (!pump_control_stop_water()) success = false;
-    }
-  }
-
-  if (do_wash) {
-    if (is_start) {
-      if (!pump_control_start_wash()) success = false;
-    } else {
-      if (!pump_control_stop_wash()) success = false;
-    }
-  }
-
-  if (!success) {
-    return send_api_error_with_pump_status(req, "control_failed",
-                                           "Pump control action failed",
-                                           "500 Internal Server Error");
-  }
-
-  cJSON *resp = cJSON_CreateObject();
-  if (!resp) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  cJSON_AddBoolToObject(resp, "ok", true);
-  if (!api_pump_add_status_object(resp)) {
-    cJSON_Delete(resp);
-    return send_api_error(req, "status_unavailable",
-                          "Pump status is unavailable", "409 Conflict");
-  }
-
-  char *json_str = cJSON_PrintUnformatted(resp);
-  cJSON_Delete(resp);
-  if (!json_str) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  esp_err_t result = send_json(req, json_str, "200 OK");
-  free(json_str);
+  esp_err_t result = http_dapi(req, "pump.control", root);
+  cJSON_Delete(root);
   return result;
 }
 
@@ -6317,6 +5225,7 @@ bool web_server_start(void) {
 
   dapi_alarms_register();
   dapi_protection_register();
+  dapi_pump_register();
   esp_err_t start_err = httpd_start(&s_server, &config);
   if (start_err != ESP_OK) {
     taskENTER_CRITICAL(&s_web_diag_lock);

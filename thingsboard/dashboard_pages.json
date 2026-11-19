@@ -35,5 +35,20 @@
       {"label": "alarms.ack (ปลดล็อกเดินแห้ง id 65001)", "method": "alarms.ack", "params": {"id": 65001}, "edit": true, "load": null,
        "confirm": "การรับทราบจะปลดล็อกระบบป้องกันเดินแห้ง และปั๊มน้ำอาจเริ่มทำงานอีกครั้ง"}
     ]
+  },
+  {
+    "id": "pump",
+    "title": "ปั๊มน้ำ (Pump)",
+    "telemetry": ["pump_is_running", "pump_active_set", "pump_dry_run_state"],
+    "actions": [
+      {"label": "pump.status", "method": "pump.status", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "pump.config.get", "method": "pump.config.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "pump.config.set (แม่แบบ: ต้องกรอกทุกค่าก่อนส่ง)", "method": "pump.config.set",
+       "params": {"water_set1_on": "แก้ก่อนส่ง", "water_set1_off": "แก้ก่อนส่ง", "water_set2_on": "แก้ก่อนส่ง", "water_set2_off": "แก้ก่อนส่ง", "water_auto_start": "แก้ก่อนส่ง", "relay1_polarity": "แก้ก่อนส่ง", "timer1_start_phase": "แก้ก่อนส่ง", "timer2_start_phase": "แก้ก่อนส่ง"},
+       "edit": true, "load": null, "confirm": null},
+      {"label": "pump.control (หยุดน้ำ)", "method": "pump.control", "params": {"system": "water", "action": "stop"}, "edit": true, "load": null, "confirm": null},
+      {"label": "pump.start", "method": "pump.start", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "pump.stop", "method": "pump.stop", "params": null, "edit": false, "load": null, "confirm": null}
+    ]
   }
 ]
