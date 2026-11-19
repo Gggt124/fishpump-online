@@ -31,6 +31,7 @@
 #include "time_sync.h"
 #include "device_api.h"
 #include "tb_link.h"
+#include "tb_state.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "led_strip.h"
@@ -835,6 +836,7 @@ void app_main(void) {
   esp_log_level_set("uplink", ESP_LOG_INFO);
   esp_log_level_set("time_sync", ESP_LOG_INFO);
   esp_log_level_set("tb_link", ESP_LOG_INFO);
+  esp_log_level_set("tb_state", ESP_LOG_INFO);
   esp_log_level_set("device_api", ESP_LOG_INFO); /* one line per WRITE call, never params */
   esp_log_level_set("dapi_wifi", ESP_LOG_INFO);  /* Wi-Fi profile save / forget / setauto lines */
   esp_log_level_set("dns_server",
@@ -1230,6 +1232,9 @@ void app_main(void) {
   /* 3c. Method table used by the web handlers and the ThingsBoard RPC worker */
   if (device_api_init() != ESP_OK) {
     ESP_LOGE(TAG, "device_api init failed");
+  }
+  if (tb_state_init() != ESP_OK) {
+    ESP_LOGE(TAG, "tb_state init failed");
   }
 
   /* 4. Start HTTP server */

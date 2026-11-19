@@ -354,3 +354,90 @@ Notes:
 - `wifi.scan` does not return a `scanning` flag (spec 6.1 suggested one). A scan in progress answers `scan_busy` (503). Poll again after a few seconds.
 - A method may run on the `tb_rpc` task (6144 B stack). Buffers over 256 B in method code live on the heap.
 - One method runs at a time. A caller that waits behind a slow one gets `busy` after 5 s.
+
+## 11. Client attributes and status telemetry (milestone 3)
+
+Sources: `firmware/main/tb_state.c` (builders), `firmware/components/uplink/uplink.c` (timing and sending), `firmware/components/uplink_format/uplink_format.c` (key table).
+
+`tb_state_init()` registers two builders with the uplink and a write hook with `device_api`. The uplink task calls the builders. Each builder reads the board through `device_api_call(method, NULL, DAPI_SRC_TB, &reply)`, the same methods the RPC uses.
+
+### 11.1 Client attributes
+
+Six keys. Each value is built from one or more reads.
+
+| Key | Value |
+|---|---|
+| `cfg_pump` | `pump.config.get` without `ok` |
+| `cfg_cooling` | `cooling.config.get` without `ok`, `status` |
+| `cfg_protection` | `protection.get` without `ok`, `pump_status` |
+| `hardware_map` | `hardware.map.get` without `ok`, `options` |
+| `wifi` | Built field by field. From `status.get`: `ssid` (from `sta_ssid`), `ip` (from `sta_ip`), `mode` (from `wifi_mode`), `ap_enabled`. From `wifi.profiles.get`: `auto_index`, `profiles` as a list of `{ssid, auto, connected}`. `auto` is the `auto` of the profile with `connected: true`, else false. |
+| `tb_link` | `{"device_name", "fw_version"}`: the device name from the link config and `APP_TEMPLATE_FIRMWARE_VERSION`. Nothing else of the link config is read. |
+
+Notes:
+
+- A read that does not return status `DAPI_OK` leaves its key out this round. The reply is dropped. No error object is sent. For `wifi`, a failed read leaves out only its own fields; the key is left out when both reads fail.
+- The builder returns nothing only when every key failed.
+- The uplink sends only the keys whose hash changed (a cache of the last sent hash per key). A key that was left out keeps its last sent value on ThingsBoard.
+- No Wi-Fi password and no link secret is in any attribute.
+
+### 11.2 Status telemetry
+
+One flat object. The first 28 rows come from `uplink_status_flatten` of the `pump.status`, `cooling.status` and `status.get` replies. A source whose read failed is skipped, so its keys are missing. A key whose path is missing or not a number, bool or string is skipped.
+
+| Key | Source | Path | Type | Watched |
+|---|---|---|---|---|
+| `pump_phase` | `pump.status` | `system_water.phase` | string | yes |
+| `pump_countdown_sec` | `pump.status` | `system_water.countdown_sec` | number | no |
+| `pump_cycle_sec` | `pump.status` | `system_water.total_duration_sec` | number | no |
+| `pump_cooldown_sec` | `pump.status` | `system_water.cooldown_remaining_sec` | number | no |
+| `pump_fault` | `pump.status` | `fault` | bool | yes |
+| `pump_stabilizing` | `pump.status` | `initial_stabilizing` | bool | yes |
+| `pump_config_valid` | `pump.status` | `config_valid` | bool | yes |
+| `wash_running` | `pump.status` | `system_wash.running` | bool | yes |
+| `wash_phase` | `pump.status` | `system_wash.phase` | string | yes |
+| `wash_countdown_sec` | `pump.status` | `system_wash.countdown_sec` | number | no |
+| `dry_run_enabled` | `pump.status` | `dry_run.enabled` | bool | yes |
+| `dry_run_state` | `pump.status` | `dry_run.state` | string | yes |
+| `dry_run_trips` | `pump.status` | `dry_run.trips` | number | yes |
+| `dry_run_max_retries` | `pump.status` | `dry_run.max_retries` | number | no |
+| `dry_run_wait_sec` | `pump.status` | `dry_run.wait_remaining_sec` | number | no |
+| `dry_run_accum_sec` | `pump.status` | `dry_run.dry_accum_sec` | number | no |
+| `cooling_mode_name` | `cooling.status` | `mode` | string | yes |
+| `cooling_auto_enable` | `cooling.status` | `auto_enable` | bool | yes |
+| `cooling_sensor_state` | `cooling.status` | `sensor_state` | string | yes |
+| `cooling_fault_code` | `cooling.status` | `fault_code` | number | yes |
+| `cooling_demand` | `cooling.status` | `cooling_demand` | bool | yes |
+| `cooling_blocked_reason` | `cooling.status` | `blocked_reason` | string | yes |
+| `cooling_temp_valid` | `cooling.status` | `temperature_valid` | bool | yes |
+| `cooling_test_sec` | `cooling.status` | `test_remaining_sec` | number | no |
+| `wifi_connected` | `status.get` | `sta_connected` | bool | yes |
+| `wifi_channel` | `status.get` | `sta_channel` | number | no |
+| `heap_min_free_bytes` | `status.get` | `min_free_heap` | number | no |
+| `heap_largest_block_bytes` | `status.get` | `largest_free_block` | number | no |
+| `stack_hwm_alarm` | firmware | `alarm_engine_stack_hwm()` (left out when below 0) | number | no |
+| `stack_hwm_uplink` | firmware | `uplink_stack_hwm()` (left out when below 0) | number | no |
+| `stack_hwm_dry_run` | firmware | `dry_run_guard_stack_hwm()` (left out when below 0) | number | no |
+| `stack_hwm_tb_link` | firmware | `tb_link_stack_hwm()` (left out when below 0) | number | no |
+| `stack_hwm_tb_rpc` | firmware | `tb_link_rpc_stack_hwm()` (left out when below 0) | number | no |
+| `tb_sent` | firmware | `tb_link_get_status` `sent` | number | no |
+| `tb_failed` | firmware | `tb_link_get_status` `failed` | number | no |
+
+The status object is sent as telemetry. "Watched" keys are the ones whose change triggers an early send (see below).
+
+### 11.3 Timing rules
+
+All values are in `uplink_format.h`.
+
+| Rule | Value |
+|---|---|
+| Attributes rebuilt after a settings change | on the next uplink task pass after `uplink_note_settings_changed()`, and once at start |
+| Attributes rebuilt with no change | every 60 s (`UPLINK_STATE_RECHECK_MS`) |
+| Status read | every 2 s while connected (`UPLINK_STATUS_POLL_MS`), every 30 s while not (`UPLINK_STATUS_OFFLINE_POLL_MS`) |
+| Status sent | every 30 s (`UPLINK_STATUS_INTERVAL_MS`), or sooner when a watched key changed, but never closer than 2 s (`UPLINK_STATUS_MIN_GAP_MS`) |
+| One attribute | at most 4096 bytes (`UPLINK_STATE_ATTR_MAX_BYTES`) |
+
+### 11.4 What marks the settings as changed
+
+- Any `DAPI_F_WRITE` method whose function ran (any status). The write hook calls `uplink_note_settings_changed()`.
+- Five web handlers that do not go through `device_api`: `POST /api/confirm`, `DELETE /api/confirm` (before the reboot), `/api/auth/credentials`, `/api/change-password` and the OTA upload (after the boot partition is set). The reply bodies are unchanged.

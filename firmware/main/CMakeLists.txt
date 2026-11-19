@@ -41,6 +41,7 @@ idf_component_register(
         "dapi_wifi.c"
         "dapi_status.c"
         "dapi_hardware.c"
+        "tb_state.c"
     INCLUDE_DIRS
         "."
     EMBED_FILES

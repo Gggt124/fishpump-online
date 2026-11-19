@@ -998,6 +998,7 @@ static esp_err_t handle_api_change_password(httpd_req_t *req) {
     xSemaphoreGive(s_password_state_mutex);
   }
 
+  uplink_note_settings_changed();
   return send_json(req, "{\"ok\":true}", "200 OK");
 }
 
@@ -1440,6 +1441,7 @@ static esp_err_t handle_api_auth_credentials(httpd_req_t *req) {
   }
 
   cJSON_Delete(root);
+  uplink_note_settings_changed();
   nvs_store_set_restart_detail("CRED_CHANGE");
   schedule_delayed_reboot();
   return send_json(req, "{\"ok\":true,\"reboot_pending\":true}", "200 OK");
@@ -2077,6 +2079,7 @@ static esp_err_t handle_api_confirm_post(httpd_req_t *req) {
 
   atomic_store(&g_cancel_rollback_timer, true);
 
+  uplink_note_settings_changed();
   return send_json(req, "{\"ok\":true}", "200 OK");
 }
 
@@ -2100,6 +2103,7 @@ static esp_err_t handle_api_confirm_delete(httpd_req_t *req) {
 
   atomic_store(&g_cancel_rollback_timer, true);
 
+  uplink_note_settings_changed();
   nvs_store_set_restart_detail("USER_ROLLBACK");
   schedule_delayed_reboot();
 
@@ -2252,6 +2256,7 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
                      "500 Internal Server Error");
   }
 
+  uplink_note_settings_changed();
   ESP_LOGI(TAG, "OTA successful, rebooting...");
   nvs_store_set_restart_detail("OTA_REBOOT");
   schedule_delayed_reboot();

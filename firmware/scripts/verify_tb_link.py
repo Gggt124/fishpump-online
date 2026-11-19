@@ -319,6 +319,31 @@ def test_uplink_state():
     assert_test(m is not None and "cjson" in m.group(1).split(), "uplink CMake REQUIRES contain cjson")
 
 
+def test_tb_state():
+    print("\n--- Milestone 3 Task 4: tb_state builders, wiring and the HTTP-only triggers ---")
+    cm = read(MAIN_DIR / "CMakeLists.txt")
+    app = read(MAIN_DIR / "app_main.c")
+    web = read(MAIN_DIR / "web_server.c")
+    src = read(MAIN_DIR / "tb_state.c")
+    assert_test('"tb_state.c"' in cm, "main CMake SRCS contain tb_state.c")
+    i_dapi = app.find("device_api_init()")
+    i_state = app.find("tb_state_init()")
+    assert_test(i_dapi != -1 and i_state > i_dapi, "app_main.c calls tb_state_init() after device_api_init()")
+    assert_test('esp_log_level_set("tb_state", ESP_LOG_INFO)' in app, "app_main.c sets the tb_state log level")
+    assert_test("uplink_set_state_source" in src and "device_api_set_write_hook" in src,
+                "tb_state.c registers the state source and the write hook")
+    assert_test("== DAPI_OK" in src, "tb_state.c compares each read with == DAPI_OK")
+    low = src.lower()
+    for word in ("password", "token", "secret", "provision"):
+        assert_test(word not in low, f"tb_state.c does not contain '{word}'")
+    for fn in ("handle_api_change_password", "handle_api_auth_credentials", "handle_api_confirm_post",
+               "handle_api_confirm_delete", "handle_api_ota"):
+        assert_test("uplink_note_settings_changed()" in function_body(web, fn),
+                    f"{fn} calls uplink_note_settings_changed()")
+    for key in ("cfg_pump", "cfg_cooling", "cfg_protection", "hardware_map", "wifi", "tb_link"):
+        assert_test(f'"{key}"' in src, f'tb_state.c names the attribute key "{key}"')
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
@@ -326,6 +351,7 @@ def main():
     test_web_card_and_api()
     test_rpc_transport()
     test_uplink_state()
+    test_tb_state()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 
