@@ -144,6 +144,8 @@ def validate_cases(cases):
         for p in FORBIDDEN_PREFIXES:
             if c["path"] == p or c["path"].startswith(p + "/"):
                 raise ValueError("%s: %s is not allowed in golden cases" % (name, c["path"]))
+        if not isinstance(c.get("expect_status", []), list):
+            raise ValueError("%s: expect_status must be a list" % name)
         needs = c.get("needs")
         if needs is not None:
             if not needs.startswith("get:") or needs[4:] not in seen:
@@ -247,9 +249,25 @@ def capture_path(label):
     return os.path.join(GOLDEN_DIR, label + ".json")
 
 
-def save_capture(label, results):
+def bad_results(cases, results):
+    """[(name, status)] for dead requests (0) or lost sessions (401/403) the case does not expect.
+
+    A case that legitimately expects one of these says so with "expect_status": [403].
+    """
+    by_name = {c["name"]: c for c in cases}
+    bad = []
+    for name, r in results.items():
+        st = r.get("status")
+        if st in (0, 401, 403) and st not in by_name[name].get("expect_status", []):
+            bad.append((name, st))
+    return bad
+
+
+def save_capture(label, results, force=False):
     os.makedirs(GOLDEN_DIR, exist_ok=True)
     path = capture_path(label)
+    if os.path.exists(path) and not force:
+        raise FileExistsError("%s already exists; pick another --label or pass --force" % path)
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"label": label, "cases": results}, f, ensure_ascii=False, indent=1)
     return path
@@ -415,8 +433,50 @@ def _selftest_cases_file():
     return bad
 
 
+def _selftest_guards():
+    bad = 0
+
+    def expect(name, cond):
+        nonlocal bad
+        if not cond:
+            bad += 1
+            print("  FAIL selftest: %s" % name)
+
+    cases = [{"name": "a", "method": "GET", "path": "/api/a"},
+             {"name": "b", "method": "GET", "path": "/api/b", "expect_status": [403]},
+             {"name": "c", "method": "GET", "path": "/api/c"}]
+    res = {"a": {"status": 200, "text": "{}"}, "b": {"status": 403, "text": "{}"},
+           "c": {"status": 0, "text": "request failed: x"}}
+    expect("dead request is flagged", bad_results(cases, res) == [("c", 0)])
+    res["c"] = {"status": 401, "text": "{}"}
+    expect("expired session is flagged", bad_results(cases, res) == [("c", 401)])
+    res["a"] = {"status": 403, "text": "{}"}
+    expect("an unexpected 403 is flagged, an expected one is not",
+           sorted(bad_results(cases, res)) == [("a", 403), ("c", 401)])
+    res = {"a": {"status": 200, "text": "{}"}, "c": {"skipped": "x"}}
+    expect("skipped and 200 are fine", bad_results(cases, res) == [])
+
+    global GOLDEN_DIR
+    import tempfile
+    old = GOLDEN_DIR
+    GOLDEN_DIR = tempfile.mkdtemp()
+    try:
+        save_capture("t", res)
+        try:
+            save_capture("t", {"a": {"status": 1, "text": ""}})
+            expect("existing label is refused", False)
+        except FileExistsError:
+            pass
+        expect("refused save left the file alone", load_capture("t") == res)
+        save_capture("t", {"a": {"status": 1, "text": ""}}, force=True)
+        expect("--force overwrites", load_capture("t")["a"]["status"] == 1)
+    finally:
+        GOLDEN_DIR = old
+    return bad
+
+
 def selftest():
-    bad = _selftest_compare() + _selftest_flow() + _selftest_cases_file()
+    bad = _selftest_compare() + _selftest_flow() + _selftest_cases_file() + _selftest_guards()
     print("SELFTEST PASS" if bad == 0 else "SELFTEST FAIL (%d)" % bad)
     return 0 if bad == 0 else 1
 
@@ -436,6 +496,7 @@ def main(argv=None):
         p.add_argument("--with-writes", action="store_true",
                        help="also run the idempotent writes (post back the value just read)")
         p.add_argument("--cases", default=DEFAULT_CASES)
+        p.add_argument("--force", action="store_true", help="overwrite an existing capture with this label")
         if name == "compare":
             p.add_argument("--base", required=True, help="label of the capture to compare against")
     args = ap.parse_args(argv)
@@ -447,11 +508,24 @@ def main(argv=None):
 
     import board_http
     cases = load_cases(args.cases)
-    base = load_capture(args.base) if args.cmd == "compare" else None
+    try:
+        if os.path.exists(capture_path(args.label)) and not args.force:
+            raise FileExistsError("%s already exists; pick another --label or pass --force"
+                                  % capture_path(args.label))
+        base = load_capture(args.base) if args.cmd == "compare" else None
+    except (OSError, ValueError) as e:
+        print("ERROR: %s" % e, file=sys.stderr)
+        return 1
     session = board_http.board_from_args(args)
     print("capturing %d cases%s" % (len(cases), " (with writes)" if args.with_writes else ""))
     results = run_cases(session, cases, args.with_writes, log=print)
-    print("saved", save_capture(args.label, results))
+    bad = bad_results(cases, results)
+    if bad:
+        print("ERROR: not saved; these cases got a dead request (0) or lost the session (401/403):", file=sys.stderr)
+        for name, st in bad:
+            print("  %s -> %s" % (name, st), file=sys.stderr)
+        return 1
+    print("saved", save_capture(args.label, results, args.force))
     if args.cmd == "capture":
         return 0
     lines, ok = compare_all(cases, base, results)

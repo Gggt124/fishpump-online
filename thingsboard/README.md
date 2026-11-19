@@ -44,6 +44,7 @@ python thingsboard/api_golden.py compare --base base --label new --with-writes  
 
 - `--board` (ค่าเริ่มต้น `http://192.168.1.34`) และ `--board-user` (ค่าเริ่มต้น `admin`)
 - ผลบันทึกที่ `thingsboard/.local/golden/<label>.json` (อยู่ใน `.local/` จึงไม่เข้า git) exit code เป็น 0 เมื่อทุกเคสผ่านเท่านั้น
+- ถ้ามีเคสได้ status 0 (request ตาย) หรือ 401/403 (session หลุด) จะไม่บันทึกและ exit 1 พร้อมรายชื่อเคส (เคสที่ตั้งใจให้ได้ 403 ใส่ `"expect_status":[403]`); ถ้า label มีไฟล์อยู่แล้วจะปฏิเสธ ต้องใส่ `--force` ถึงจะเขียนทับ (กันเขียนทับ baseline)
 - `golden_cases.json` เป็นลิสต์ของ `{"name","method","path","body","mode","ignore"}`
   - `mode: exact` เทียบ status กับ body ตรงตัว
   - `mode: shape` เทียบ status กับ key และชนิด JSON แบบ recursive ไม่สนค่า และข้าม key ใน `ignore` ทุกระดับ
