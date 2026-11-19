@@ -35,6 +35,7 @@ Rules:
 - A request longer than 1792 bytes (`TB_RPC_MAX_REQUEST`), or one that arrives in several MQTT fragments, gets `{"ok":false,"error":"too_large"}`.
 - The receive side only copies the request into a queue of depth 4. When the queue is full the reply is `{"ok":false,"error":"busy"}`.
 - The `tb_rpc` task (stack 6144 B) runs one request at a time and logs `rpc <method> id=<id> -> <status>` under the `tb_link` tag. Params are never logged.
+- Duplicate requests are answered from a cache. The task keeps the last 4 handled requests. The key is the request id, the payload length and a hash (FNV-1a) of the payload bytes, so a restarted id counter with a different payload is not mistaken for a repeat. A request with the same key within 30 s (`TB_RPC_DEDUP_WINDOW_MS`, longer than the widget's 10 s timeout) is not run again: the board publishes the stored reply bytes again and logs `rpc <method> id=<id> -> duplicate, cached reply`. This covers every method, and a reply that was lost while the link was down. A fifth request evicts the oldest entry. If there is no memory for the stored reply, that request is simply not cached.
 
 ### 1.2 Status to HTTP line
 
@@ -203,6 +204,10 @@ Read-only keys (`float_gpio`, `relay_gpio`, `debounce_ms`, `pump_relay1_gpio`, `
 
 `pump.control` params: `system` `"water"`, `"wash"` or `"all"` (default `"water"`); `action` `"start"` or `"stop"` (default `"start"`). A non-string value is ignored and the default is used. A water start runs the same block checks as `pump.start`.
 
+Always send `action`. A `pump.control` call without `action` (for example `{}` or `{"system":"water"}`) starts the water pump, because `"start"` is the default.
+
+Relay polarity from ThingsBoard: `relay1_polarity`, the legacy `relay_polarity` and `relay2_polarity` are accepted only when they equal the stored value. A different valid value is refused before anything is saved with 400 `{"ok":false,"error":"read_only_field","message":"<key>"}`. A value that is not `"active_low"` or `"active_high"` still gets `invalid_relay_polarity`. The check is `dapi_polarity_write_blocked()` in `firmware/components/dapi_guards/`. HTTP is not restricted. The dashboard template loads `pump.config.get` first. That reply is about 800 bytes compact and holds the read-only GPIO keys, so it is over the 512 byte `pump.config.set` limit and would be refused with `read_only_field`; remove the read-only keys and the aliases you do not need before sending.
+
 `pump.start` and `pump.stop` are idempotent. A blocked water start does not touch the pump.
 
 ## 5. Cooling (4 methods)
@@ -229,6 +234,8 @@ Source: `firmware/main/dapi_cooling.c`. Macros: `COOLING_CONFIG_BODY_BYTES` = 15
 
 - Curve form, when `points` is present. `points` is an array of 2 to 8 objects. Each has `temp_c` (or `temp_c_x10`) in -50.0..150.0 C, and `output_mv` 0..10000 (or `output_volts` 0.0..10.0). Temperatures must rise strictly. Optional: `curve_type` (`"linear"` or `"step"`), `min_off_sec` (alias `compressor_min_off_sec`) 120..86400, `auto_enable` bool, `test_timeout_sec` 1..3600, `mode`, `cooling_relay_polarity` (`"active_low"` or `"active_high"`).
 - Legacy form, without `points`. Required: `threshold_c_x10` -550..1250, `hysteresis_c_x10` 1..500, `auto_enable` bool, `test_timeout_sec` 1..3600, `compressor_min_off_sec` 120..86400, `mode`, `cooling_relay_polarity`. It builds a 2-point linear curve.
+
+Relay polarity from ThingsBoard: `cooling_relay_polarity` is accepted only when it equals the stored value. A different valid value gets 400 `{"ok":false,"error":"read_only_field","message":"cooling_relay_polarity"}` before anything is saved. A value that is not `"active_low"` or `"active_high"` still gets `invalid_relay_polarity`. HTTP is not restricted. The dashboard template loads `cooling.config.get` first.
 
 `cooling.config.set` 400 codes: `invalid_type`, `missing_field`, `value_out_of_range`, `invalid_points_count`, `invalid_point`, `invalid_curve_type`, `hardware_safety` (min off time), `invalid_cooling_mode`, `test_mode_not_persistent` (`test_on` cannot be saved; use `cooling.mode.set`), `invalid_relay_polarity`, `invalid_curve_points`.
 
@@ -267,8 +274,8 @@ Replies. Some `ok:false` replies carry status 200, as the old handlers did. The 
 |---|---|---|
 | `wifi.scan` | `ok`, `networks[]` (`ssid`, `rssi`, `auth`, `channel`, `connected`). Cached for 10 s. | `scan_busy` 503 (a scan is already running); `scan_failed` 200; `scan_timeout` 200 (waits 5 s); `memory` 500 |
 | `wifi.profiles.get` | `ok`, `auto_index`, `profiles[]` (`ssid`, `auto`, `connected`). No passwords. | 500 |
-| `wifi.profiles.save` | `ok`, `reboot_pending` (always false) | `invalid_ssid` 400, `invalid_password` 400, `missing_ssid` 400; `not_connected` 200 (only the connected SSID can be saved); `save_failed` 200 |
-| `wifi.profiles.setauto` | `ok` | `setauto_failed` 200 |
+| `wifi.profiles.save` | `ok`, `reboot_pending` (always false) | `invalid_ssid` 400, `invalid_password` 400, `missing_ssid` 400; `not_connected` 200 (only the connected SSID can be saved); `in_use` 409 (ThingsBoard only); `save_failed` 200 |
+| `wifi.profiles.setauto` | `ok` | `in_use` 409 (ThingsBoard only); `setauto_failed` 200 |
 | `wifi.profiles.forget` | `ok` | `invalid_ssid` 400, `missing_ssid` 400, `in_use` 409 (ThingsBoard only); `forget_failed` 200 |
 | `wifi.connect` | `ok`, `connecting`, `ssid`; or `ok`, `already_connected`, `ssid`, `ip` | `invalid_ssid`, `invalid_password`, `invalid_ip`, `invalid_gateway`, `invalid_netmask`, `invalid_dns` (too long) 400; `ssid_too_long`, `password_too_long`, `missing_gateway` 400; `missing_ssid` 200; `connect_error` 200 |
 | `wifi.disconnect` | `ok`, `disconnect_pending` (the link drops 500 ms after the reply) | `disconnect_task_failed` 500 |
@@ -276,13 +283,17 @@ Replies. Some `ok:false` replies carry status 200, as the old handlers did. The 
 Params:
 
 - `wifi.profiles.save`: `ssid` (req, up to 32 bytes), `password` (up to 64 bytes; empty keeps the saved one).
-- `wifi.profiles.setauto`: `index` (number, -1 clears) or `ssid` (string). An `ssid` that is not saved clears the setting (index -1).
+- `wifi.profiles.setauto`: `index` (number, -1 clears) or `ssid` (string). An `ssid` that is not saved clears the setting (index -1). An `index` that is not a valid profile number (for example 99 or 1e300) gets `setauto_failed` 200 on HTTP.
 - `wifi.profiles.forget`: `ssid` (req, up to 32 bytes).
 - `wifi.connect`: `ssid` (req), `password` (empty uses the saved one), and for a static address `ip` (then `gateway` is req), `netmask`, `dns`.
 
 ### 7.1 Forget guard
 
 `wifi.profiles.forget` from ThingsBoard fails with `in_use` (409) when `ssid` is the network the board is connected to now. The check is `dapi_wifi_forget_blocked()` in `firmware/components/dapi_guards/`. From HTTP it never blocks. If the board is not connected, it never blocks.
+
+`wifi.profiles.setauto` from ThingsBoard fails with `in_use` (409, "From ThingsBoard auto-connect can only be set to the network in use") unless the resolved target is the saved profile of the network the board is connected to now. Index -1, an unknown `ssid`, an out-of-range `index` and another profile are all refused, and so is every call while the board is not connected, because safety cannot be proven. Clearing auto-connect would leave the board AP-only after a power cycle, out of reach of ThingsBoard. The check is `dapi_wifi_setauto_blocked()`. From HTTP it never blocks. The dashboard template sends `{"ssid": "..."}` with an edit placeholder.
+
+`wifi.profiles.save` from ThingsBoard fails with `in_use` (409, "Cannot change the password of the network in use from ThingsBoard") when `password` is not empty and differs from the station's active password (read with `esp_wifi_get_config`). An empty password (keeps the saved one) or the same password is allowed. If the active password cannot be read it is refused. The check is `dapi_wifi_save_password_blocked()`, and it runs after the `not_connected` check, so it only concerns the connected network. The password is never logged. From HTTP it never blocks.
 
 ### 7.2 wifi.scan and the lock
 
@@ -338,7 +349,7 @@ Notes:
 
 - `wifi.connect` is LOCAL_ONLY until milestone 4 adds the staged commit. The `STAGED` flag is reserved for it.
 - `wifi.disconnect` and `hardware.map.set` are LOCAL_ONLY for good. The first would cut the link the command arrived on. The second needs a reboot and a local confirmation.
-- ThingsBoard may deliver an RPC again after a reconnect. This was seen at checkpoint A on a read (id 90). A write can therefore run twice. Callers should treat writes as at-least-once. Prefer methods that set a value (`pump.config.set`, `pump.stop`) over ones that count or reset (`power.reset_energy`).
+- ThingsBoard may deliver an RPC again after a reconnect (seen at checkpoint A, id 90). The board answers a repeat of the same id and payload within 30 s from its reply cache and does not run the method again (section 1.1). The cache holds 4 requests and is lost on a reboot. A repeat after 30 s, or after a restart, runs again.
 - `pump.start` has no confirm on the dashboard, as the web app has none.
 - `wifi.scan` does not return a `scanning` flag (spec 6.1 suggested one). A scan in progress answers `scan_busy` (503). Poll again after a few seconds.
 - A method may run on the `tb_rpc` task (6144 B stack). Buffers over 256 B in method code live on the heap.
