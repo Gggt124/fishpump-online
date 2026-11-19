@@ -57,7 +57,7 @@ Rules stay in firmware so alarms and protection work offline. ThingsBoard stores
   - `send` must not block (use `esp_mqtt_client_enqueue`).
   - The old `ctx` is never called after `set_sink` returns.
 - `uplink_set_wall_clock()` waits for a Unix-ms clock. Events are held for at most `UPLINK_CLOCK_HOLD_MAX_MS` (120 s), or until the ring is nearly full, waiting for it.
-- esp-mqtt is included in IDF 6.0.1 (`components/mqtt`), as are `esp-tls`, `esp_https_ota` and `esp_http_client`.
+- esp-mqtt is not bundled with IDF 6.0.1: it moved to the managed component `espressif/mqtt`, which `components/tb_link/idf_component.yml` pulls in (`^1.1.0`). `esp-tls`, `esp_https_ota` and `esp_http_client` are still part of IDF.
 - PSRAM is caps-alloc only (`CONFIG_SPIRAM_USE_CAPS_ALLOC=y`, no malloc redirect). On the 2026-11-18 bench, internal heap free was 158–172 KB. `CONFIG_LWIP_MAX_SOCKETS=32`. `CONFIG_LWIP_SNTP_MAX_SERVERS=1`.
 - App rollback is enabled (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`), with two 3.5 MB OTA slots. Today `app_main.c` marks a new app valid as soon as the HTTP server starts (around lines 1218 and 1362).
 - Wi-Fi changes are staged in NVS (`nvs_store_*staging*`). A timer in `app_main.c` rolls back unless `POST /api/confirm` commits; `DELETE /api/confirm` rolls back and reboots.
