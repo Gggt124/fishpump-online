@@ -23,6 +23,9 @@ const char *api_hardware_map_status_name(nvs_store_hardware_map_load_status_t st
 /* First of two accepted key spellings that is present, or NULL. */
 const cJSON *api_json_get_item(const cJSON *root, const char *key1, const char *key2);
 
+/* True for a non-empty string shorter than max_len with no control characters (tab allowed). */
+bool is_valid_utf8_printable(const char *s, size_t max_len);
+
 /* --------------- JSON Generator --------------- */
 /* Writes a JSON object into a caller buffer with "%g" numbers. */
 typedef struct {

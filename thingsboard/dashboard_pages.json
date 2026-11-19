@@ -87,5 +87,22 @@
       {"label": "power.reset_energy (ช่อง 1)", "method": "power.reset_energy", "params": {"channel": 1}, "edit": false, "load": null,
        "confirm": "รีเซ็ต kWh ของปั๊ม 2 เป็น 0? ย้อนกลับไม่ได้"}
     ]
+  },
+  {
+    "id": "wifi",
+    "title": "ไวไฟ (Wi-Fi)",
+    "telemetry": [],
+    "actions": [
+      {"label": "wifi.scan", "method": "wifi.scan", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "wifi.profiles.get", "method": "wifi.profiles.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "wifi.profiles.save (รหัสผ่านถูกส่งไปใน RPC)", "method": "wifi.profiles.save", "params": {"ssid": "แก้ก่อนส่ง", "password": "แก้ก่อนส่ง"},
+       "edit": true, "load": null, "confirm": null},
+      {"label": "wifi.profiles.setauto (ตาม index, -1 = ปิด)", "method": "wifi.profiles.setauto", "params": {"index": -1}, "edit": true, "load": null, "confirm": null},
+      {"label": "wifi.profiles.forget", "method": "wifi.profiles.forget", "params": {"ssid": "แก้ก่อนส่ง"}, "edit": true, "load": null,
+       "confirm": "ลืมเครือข่ายนี้ ใช่หรือไม่?"},
+      {"label": "wifi.connect (ใช้ได้เฉพาะเว็บแอปในเครื่องเท่านั้น)", "method": "wifi.connect", "params": {"ssid": "แก้ก่อนส่ง"}, "edit": true, "load": null, "confirm": null},
+      {"label": "wifi.disconnect (ใช้ได้เฉพาะเว็บแอปในเครื่องเท่านั้น)", "method": "wifi.disconnect", "params": null, "edit": false, "load": null,
+       "confirm": "คุณต้องการตัดการเชื่อมต่อ Wi-Fi ใช่หรือไม่?"}
+    ]
   }
 ]

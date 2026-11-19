@@ -38,6 +38,7 @@ idf_component_register(
         "dapi_pump.c"
         "dapi_cooling.c"
         "dapi_water_power.c"
+        "dapi_wifi.c"
     INCLUDE_DIRS
         "."
     EMBED_FILES
@@ -75,6 +76,7 @@ idf_component_register(
         tb_link
         tb_link_logic
         device_api
+        dapi_guards
         water_quality
         wifi_manager
         esp_http_server

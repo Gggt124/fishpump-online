@@ -312,6 +312,67 @@ def test_water_power_group():
                 "the queue helper answers DAPI_ACCEPTED with the queued body")
 
 
+def test_wifi_group():
+    local = r"DAPI_F_WRITE\s*\|\s*DAPI_F_LOCAL_ONLY"
+    methods = [
+        ("wifi.scan", r"DAPI_F_READ", "0"),
+        ("wifi.profiles.get", r"DAPI_F_READ", "0"),
+        ("wifi.profiles.save", r"DAPI_F_WRITE", "WIFI_SAVE_BODY_BYTES"),
+        ("wifi.profiles.setauto", r"DAPI_F_WRITE", "WIFI_PROFILE_BODY_BYTES"),
+        ("wifi.profiles.forget", r"DAPI_F_WRITE", "WIFI_PROFILE_BODY_BYTES"),
+        ("wifi.connect", local, "WIFI_CONNECT_BODY_BYTES"),
+        ("wifi.disconnect", local, "0"),
+    ]
+    handlers = [
+        ("handle_api_wifi_scan", "wifi.scan"),
+        ("handle_api_wifi_profiles", "wifi.profiles.get"),
+        ("handle_api_wifi_profiles_save", "wifi.profiles.save"),
+        ("handle_api_wifi_profiles_setauto", "wifi.profiles.setauto"),
+        ("handle_api_wifi_profiles_forget", "wifi.profiles.forget"),
+        ("handle_api_wifi_connect", "wifi.connect"),
+        ("handle_api_wifi_disconnect", "wifi.disconnect"),
+    ]
+    forbidden = ["wifi_manager_", "nvs_store_save_wifi", "nvs_store_load_wifi", "nvs_store_forget_wifi",
+                 "nvs_store_set_wifi", "esp_wifi_"]
+    check_group("wifi", "dapi_wifi.c", "dapi_wifi_register", methods, handlers, forbidden)
+    ws = read(MAIN_DIR / "web_server.c")
+    hdr = read(MAIN_DIR / "dapi_wifi.h")
+    for name, value in (("WIFI_CONNECT_BODY_BYTES", "512"), ("WIFI_PROFILE_BODY_BYTES", "256"),
+                        ("WIFI_SAVE_BODY_BYTES", "384")):
+        assert_test(re.search(r"#define\s+" + name + r"\s+" + value + r"$", hdr, re.M) is not None,
+                    f"{name} is {value}")
+    for h in ("handle_api_wifi_scan", "handle_api_wifi_profiles", "handle_api_wifi_profiles_forget",
+              "handle_api_wifi_profiles_setauto", "handle_api_wifi_connect", "handle_api_wifi_disconnect"):
+        assert_test("is_password_default()" in function_body(ws, h), f"{h} keeps its force_password_change check")
+    assert_test("is_password_default()" not in function_body(ws, "handle_api_wifi_profiles_save"),
+                "handle_api_wifi_profiles_save has no force_password_change check, as before")
+    for h in ("handle_api_wifi_profiles_save", "handle_api_wifi_profiles_setauto", "handle_api_wifi_profiles_forget",
+              "handle_api_wifi_connect", "handle_api_wifi_disconnect"):
+        assert_test("is_same_origin(req, true)" in function_body(ws, h), f"{h} keeps its same-origin check")
+    for h in ("handle_api_wifi_profiles_save", "handle_api_wifi_profiles_setauto", "handle_api_wifi_profiles_forget",
+              "handle_api_wifi_connect"):
+        body = function_body(ws, h)
+        assert_test("read_request_body(" in body and "cJSON_Delete(root)" in body,
+                    f"{h} keeps the body read and frees the parsed tree")
+    for sym in ("s_scan_in_progress", "s_scan_cache_json", "s_wifi_disconnect_task_pending",
+                "wifi_disconnect_after_response_task", "scan_complete_cb"):
+        assert_test(sym not in ws, f"web_server.c no longer holds {sym}")
+    src = read(MAIN_DIR / "dapi_wifi.c")
+    forget = function_body(src, "dapi_wifi_profiles_forget")
+    assert_test("dapi_wifi_forget_blocked(" in forget and "DAPI_CONFLICT" in forget and '"in_use"' in forget
+                and "Cannot forget the network in use" in forget
+                and forget.find("dapi_wifi_forget_blocked(") < forget.find("nvs_store_forget_wifi_profile"),
+                "wifi.profiles.forget refuses the connected network (in_use, 409) before forgetting")
+    guards_h = read(FIRMWARE_DIR / "components" / "dapi_guards" / "include" / "dapi_guards.h")
+    guards_c = read(FIRMWARE_DIR / "components" / "dapi_guards" / "dapi_guards.c")
+    assert_test(re.search(r"bool\s+dapi_wifi_forget_blocked\s*\(\s*dapi_source_t\s+src\s*,\s*const\s+char\s*\*\s*ssid\s*,"
+                          r"\s*const\s+char\s*\*\s*connected_ssid\s*\)", guards_h) is not None
+                and "DAPI_SRC_TB" in guards_c,
+                "dapi_guards declares dapi_wifi_forget_blocked and it checks the ThingsBoard source")
+    assert_test("dapi_guards" in read(MAIN_DIR / "CMakeLists.txt"), "main requires dapi_guards")
+    assert_test("cJSON_CreateRaw" in function_body(src, "dapi_wifi_scan"), "wifi.scan keeps the cached bytes via cJSON_CreateRaw")
+
+
 if __name__ == "__main__":
     test_component()
     test_logging_and_lock()
@@ -322,5 +383,6 @@ if __name__ == "__main__":
     test_pump_group()
     test_cooling_group()
     test_water_power_group()
+    test_wifi_group()
     print(f"\nPassed: {passed_tests}  Failed: {failed_tests}")
     sys.exit(1 if failed_tests else 0)

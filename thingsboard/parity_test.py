@@ -146,6 +146,42 @@ def guard_ok(get_result, case, subst):
     return get_path(base, g["path"], subst) == g["equals"]
 
 
+def shape_of(obj):
+    """Structure of a reply without its values: dict -> {key: shape}, list -> [shape of the first element], scalars -> type name."""
+    if isinstance(obj, dict):
+        return {k: shape_of(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [shape_of(obj[0])] if obj else []
+    if isinstance(obj, bool):
+        return "bool"
+    if isinstance(obj, (int, float)):
+        return "number"
+    return type(obj).__name__
+
+
+def shapes_match(a, b):
+    """True when two shape_of() results agree. An empty list matches any list (a scan may find no network)."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(shapes_match(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return not a or not b or shapes_match(a[0], b[0])
+    return a == b
+
+
+def fill_param(params, spec, reply):
+    """params with spec["key"] set to the non-empty string found in the reply at spec["path"]; None when there is none.
+    Lets an error case name something only the live board knows (the SSID it is connected to)."""
+    try:
+        value = get_path(reply, spec["path"])
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return None
+    if not isinstance(value, str) or not value:
+        return None
+    out = dict(params or {})
+    out[spec["key"]] = value
+    return out
+
+
 def burst_verdict(replies, poll_statuses):
     """replies: list of bodies (None = incomplete/failed). PASS when each is ok or exactly busy, and polls were all 200."""
     bad = []
@@ -200,6 +236,20 @@ class _FakeTb:
 class _FakeTbUnknown:
     def rpc_twoway(self, dev, method, params, timeout_ms=10000):
         return 200, {"ok": False, "error": "unknown_method"}
+
+
+class _FakeTbProfiles:
+    """TB stand-in for the in_use case: wifi.profiles.get returns the given reply, forget refuses the connected SSID."""
+    def __init__(self, profiles_reply):
+        self.reply = profiles_reply
+
+    def rpc_twoway(self, dev, method, params, timeout_ms=10000):
+        if method == "wifi.profiles.get":
+            return 200, copy.deepcopy(self.reply)
+        connected = [p["ssid"] for p in self.reply.get("profiles", []) if p.get("connected")]
+        if method == "wifi.profiles.forget" and params.get("ssid") in connected:
+            return 200, {"ok": False, "error": "in_use", "message": "Cannot forget the network in use"}
+        return 200, {"ok": True}
 
 
 def _write_scenario(board_kw=None, tb_kw=None):
@@ -286,6 +336,32 @@ def selftest():
     _quiet(r.run_write, "water_power", ocase2, None)
     check("write on a missing get method SKIPs with the method name", r.counts["SKIP"] == 1 and r.counts["FAIL"] == 0
           and r.skip_reasons == ["needs sensors.get"])
+    sh = shape_of({"ok": True, "networks": [{"ssid": "a", "rssi": -50, "auth": "WPA2", "channel": 6, "connected": False}]})
+    check("shape ignores values and list length",
+          shapes_match(sh, shape_of({"ok": True, "networks": [{"ssid": "b", "rssi": -70, "auth": "OPEN", "channel": 1, "connected": True},
+                                                                {"ssid": "c", "rssi": -80, "auth": "WPA", "channel": 11, "connected": False}]}))
+          and shapes_match(sh, shape_of({"ok": True, "networks": []})))
+    check("shape catches a missing key, a changed type and an error reply",
+          not shapes_match(sh, shape_of({"ok": True}))
+          and not shapes_match(sh, shape_of({"ok": True, "networks": [{"ssid": 5, "rssi": -50, "auth": "x", "channel": 6, "connected": False}]}))
+          and not shapes_match(sh, shape_of({"ok": False, "error": "scan_busy"})))
+    fspec = cases_for_selftest()["wifi"]["errors"][2]["params_from"]
+    prof = {"ok": True, "auto_index": 0, "profiles": [{"ssid": "farm", "auto": True, "connected": False},
+                                                       {"ssid": "shed", "auto": False, "connected": True}]}
+    check("fill_param takes the connected SSID from the reply", fill_param({}, fspec, prof) == {"ssid": "shed"})
+    check("fill_param gives None when nothing is connected or the reply is an error",
+          fill_param({}, fspec, {"ok": True, "profiles": [{"ssid": "farm", "connected": False}]}) is None
+          and fill_param({}, fspec, {"ok": False, "error": "x"}) is None)
+    r = Runner(_FakeTbProfiles(prof), "dev", None)
+    _quiet(r.run_error, "wifi", cases_for_selftest()["wifi"]["errors"][2])
+    check("in_use case sends the connected SSID and expects in_use", r.counts["PASS"] == 1 and r.counts["FAIL"] == 0)
+    r = Runner(_FakeTbProfiles({"ok": True, "profiles": []}), "dev", None)
+    _quiet(r.run_error, "wifi", cases_for_selftest()["wifi"]["errors"][2])
+    check("in_use case SKIPs when no network is connected", r.counts["SKIP"] == 1 and r.counts["FAIL"] == 0)
+    wifi = cases_for_selftest()["wifi"]
+    check("wifi case file: connect and disconnect have no HTTP side, setauto write is a no-op",
+          all(e["http"] is None for e in wifi["errors"] if e["method"] in ("wifi.connect", "wifi.disconnect"))
+          and wifi["writes"][0]["change"] == {"same": True} and wifi["writes"][0]["send_as"] == "index")
     check("burst ok", burst_verdict([{"ok": True}, {"ok": False, "error": "busy"}], [200, 200]) == [])
     check("burst bad reply", len(burst_verdict([{"ok": False, "error": "x"}, None], [200])) == 2)
     check("burst bad poll", len(burst_verdict([{"ok": True}], [200, 503])) == 1)
@@ -354,11 +430,23 @@ class Runner:
         if hs != 200:
             return self.report("FAIL", name, "board HTTP %s" % hs)
         diff = compare_bodies(rb, hb, c.get("ignore", []))
+        if c.get("shape"):  # the values change from scan to scan: only the structure must agree
+            diff = None if shapes_match(shape_of(rb), shape_of(hb)) else "shapes differ: rpc=%s http=%s" % (
+                _short(shape_of(rb)), _short(shape_of(hb)))
         self.report("FAIL" if diff else "PASS", name, diff or "")
 
     def run_error(self, group, c):
         name = "%s/error %s %s" % (group, c["method"], _short(c.get("params"), 40))
-        rs, rb = self.rpc(c["method"], c.get("params"))
+        params = c.get("params")
+        if c.get("params_from"):  # a value only the live board knows, read through TB first
+            spec = c["params_from"]
+            ps, pb = self.rpc(spec["method"], {})
+            if self.rpc_failed(ps) or not isinstance(pb, dict) or pb.get("ok") is not True:
+                return self.report("FAIL", name, "read %s via TB failed: %s %s" % (spec["method"], ps, _short(pb, 100)))
+            params = fill_param(params, spec, pb)
+            if params is None:
+                return self.report("SKIP", name, "no value for %s in %s" % (spec["key"], spec["method"]))
+        rs, rb = self.rpc(c["method"], params)
         if self.rpc_failed(rs):
             return self.report("FAIL", name, "rpc HTTP %s: %s" % (rs, _short(rb, 100)))
         code = error_code(rb)

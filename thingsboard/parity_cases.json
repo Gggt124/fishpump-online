@@ -130,5 +130,28 @@
        "rule_path": "water.offsets", "guard": {"path": "known", "equals": true},
        "path": "ph", "change": {"same": true}, "send_as": "ph_offset", "set": "water.offset", "set_http": "/api/water/offset"}
     ]
+  },
+  "wifi": {
+    "reads": [
+      {"method": "wifi.profiles.get", "http": "/api/wifi/profiles", "ignore": ["auto_index", "auto", "connected"]},
+      {"method": "wifi.scan", "http": "/api/wifi/scan", "ignore": [], "shape": true}
+    ],
+    "errors": [
+      {"method": "wifi.connect", "params": {"ssid": "parity-no-such-network"}, "http": null, "error": "local_only"},
+      {"method": "wifi.disconnect", "params": {}, "http": null, "error": "local_only"},
+      {"method": "wifi.profiles.forget", "params": {}, "http": null, "error": "in_use",
+       "params_from": {"key": "ssid", "method": "wifi.profiles.get", "path": "profiles[connected=True].ssid"}},
+      {"method": "wifi.profiles.forget", "params": {}, "http": "/api/wifi/profiles/forget", "error": "missing_ssid"},
+      {"method": "wifi.profiles.forget", "params": {"ssid": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}, "http": "/api/wifi/profiles/forget", "error": "invalid_ssid"},
+      {"method": "wifi.profiles.setauto", "params": {"index": 99}, "http": "/api/wifi/profiles/setauto", "error": "setauto_failed"},
+      {"method": "wifi.profiles.save", "params": {}, "http": "/api/wifi/profiles/save", "error": "missing_ssid"},
+      {"method": "wifi.profiles.save", "params": {"ssid": "parity-no-such-network"}, "http": "/api/wifi/profiles/save", "error": "not_connected"}
+    ],
+    "writes": [
+      {"name": "wifi.profiles.setauto current index (no-op)",
+       "get": "wifi.profiles.get", "get_http": "/api/wifi/profiles",
+       "path": "auto_index", "change": {"same": true}, "send_as": "index",
+       "set": "wifi.profiles.setauto", "set_http": "/api/wifi/profiles/setauto"}
+    ]
   }
 }

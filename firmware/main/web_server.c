@@ -36,6 +36,7 @@
 #include "dapi_protection.h"
 #include "dapi_pump.h"
 #include "dapi_water_power.h"
+#include "dapi_wifi.h"
 #include "device_api.h"
 #include "dry_run_guard.h"
 #include "alarm_rules.h"
@@ -107,14 +108,11 @@ extern const uint8_t _binary_jetbrains_mono_400_latin_woff2_end[] asm(
 
 #define RATE_LIMIT_MAX APP_TEMPLATE_LOGIN_RATE_LIMIT_MAX
 #define RATE_LIMIT_WINDOW APP_TEMPLATE_LOGIN_RATE_LIMIT_SEC
-#define WIFI_DISCONNECT_TASK_STACK_BYTES 2048
-#define WIFI_DISCONNECT_DELAY_MS 500
 
 #define STATIC_SEND_RETRY_MAX 2
 #define STATIC_SEND_RETRY_DELAY_TICKS pdMS_TO_TICKS(100)
 
-static bool s_wifi_disconnect_task_pending = false;
-static portMUX_TYPE s_wifi_disconnect_task_lock = portMUX_INITIALIZER_UNLOCKED;
+static portMUX_TYPE s_reboot_lock = portMUX_INITIALIZER_UNLOCKED;
 static portMUX_TYPE s_web_diag_lock = portMUX_INITIALIZER_UNLOCKED;
 static SemaphoreHandle_t s_login_rate_limit_mutex = NULL;
 static SemaphoreHandle_t s_password_state_mutex = NULL;
@@ -317,22 +315,6 @@ static void url_decode(char *dst, const char *src) {
     }
   }
   *dst = '\0';
-}
-
-/* Check that a string contains only printable UTF-8 characters (no control
- * chars 0x00-0x1F except tab/newline) */
-static bool is_valid_utf8_printable(const char *s, size_t max_len) {
-  if (!s || !s[0])
-    return false;
-  size_t len = strnlen(s, max_len);
-  if (len >= max_len)
-    return false;
-  for (size_t i = 0; i < len; i++) {
-    unsigned char c = (unsigned char)s[i];
-    if (c < 0x20 && c != '\t')
-      return false;
-  }
-  return true;
 }
 
 static void json_gen_add_string_safe(json_gen_t *gen, const char *key,
@@ -1007,23 +989,6 @@ static bool api_hardware_parse_map_payload(const cJSON *root,
 }
 
 
-
-/* Scan context for non-blocking callback */
-typedef struct {
-  SemaphoreHandle_t sem;
-  wifi_scan_entry_t entries[WIFI_SCAN_MAX];
-  int count;
-} wifi_scan_ctx_t;
-
-static void scan_complete_cb(void *user_ctx, wifi_scan_entry_t *entries,
-                             int count) {
-  wifi_scan_ctx_t *ctx = (wifi_scan_ctx_t *)user_ctx;
-  ctx->count = (count > WIFI_SCAN_MAX) ? WIFI_SCAN_MAX : count;
-  if (ctx->count > 0) {
-    memcpy(ctx->entries, entries, ctx->count * sizeof(wifi_scan_entry_t));
-  }
-  xSemaphoreGive(ctx->sem);
-}
 
 static bool static_asset_cacheable(const char *mime_type) {
   return strncmp(mime_type, "text/css", strlen("text/css")) == 0 ||
@@ -1790,14 +1755,14 @@ static void delayed_reboot_task(void *pvParameters) {
 }
 
 static void schedule_delayed_reboot(void) {
-  taskENTER_CRITICAL(&s_wifi_disconnect_task_lock);
+  taskENTER_CRITICAL(&s_reboot_lock);
   if (s_reboot_scheduled) {
-    taskEXIT_CRITICAL(&s_wifi_disconnect_task_lock);
+    taskEXIT_CRITICAL(&s_reboot_lock);
     ESP_LOGW(TAG, "Reboot already scheduled — ignoring duplicate request");
     return;
   }
   s_reboot_scheduled = true;
-  taskEXIT_CRITICAL(&s_wifi_disconnect_task_lock);
+  taskEXIT_CRITICAL(&s_reboot_lock);
   xTaskCreate(delayed_reboot_task, "delayed_reboot", 2048, NULL,
               tskIDLE_PRIORITY + 1, NULL);
 }
@@ -1891,16 +1856,6 @@ static esp_err_t handle_api_auth_credentials(httpd_req_t *req) {
   return send_json(req, "{\"ok\":true,\"reboot_pending\":true}", "200 OK");
 }
 
-/* ── Scan result cache ──────────────────────────────────────────────────── */
-/* Serves cached results for SCAN_CACHE_TTL_MS ms to prevent httpd task    */
-/* blocking on back-to-back scan requests.                                  */
-#define SCAN_CACHE_TTL_MS 10000u  /* 10 s — reuse previous results   */
-#define SCAN_CACHE_JSON_MAX 4096u /* max bytes of cached JSON string  */
-
-static volatile bool s_scan_in_progress = false;
-static uint32_t s_scan_cache_ts_ms = 0; /* 0 = cache empty       */
-static char s_scan_cache_json[SCAN_CACHE_JSON_MAX] = {0};
-
 /* GET /api/wifi/scan - protected, returns JSON scan results */
 static esp_err_t handle_api_wifi_scan(httpd_req_t *req) {
   if (!require_auth(req)) {
@@ -1913,94 +1868,14 @@ static esp_err_t handle_api_wifi_scan(httpd_req_t *req) {
                      "403 Forbidden");
   }
 
-  /* ── Cache check: serve previous results if still fresh ── */
-  uint32_t now_cache_ms = (uint32_t)(esp_timer_get_time() / 1000);
-  if (s_scan_cache_ts_ms != 0 &&
-      (now_cache_ms - s_scan_cache_ts_ms) < SCAN_CACHE_TTL_MS &&
-      s_scan_cache_json[0] != '\0') {
-    ESP_LOGI(TAG, "[SCAN] Serving cached results (age=%lums)",
-             (unsigned long)(now_cache_ms - s_scan_cache_ts_ms));
-    return send_json(req, s_scan_cache_json, "200 OK");
-  }
+  return http_dapi(req, "wifi.scan", NULL);
+}
 
-  /* ── In-progress guard: reject concurrent scan immediately ── */
-  if (s_scan_in_progress) {
-    ESP_LOGW(TAG, "[SCAN] Scan already in progress — returning busy");
-    return send_json(req, "{\"ok\":false,\"error\":\"scan_busy\"}",
-                     "503 Service Unavailable");
-  }
-  s_scan_in_progress = true;
-
-  wifi_scan_ctx_t ctx;
-  ctx.sem = xSemaphoreCreateBinary();
-  ctx.count = 0;
-  if (!ctx.sem) {
-    s_scan_in_progress = false;
-    return send_json(req, "{\"ok\":false,\"error\":\"memory\"}",
-                     "500 Internal Server Error");
-  }
-
-  if (!wifi_manager_scan(&ctx, scan_complete_cb)) {
-    vSemaphoreDelete(ctx.sem);
-    s_scan_in_progress = false;
-    return send_json(req, "{\"ok\":false,\"error\":\"scan_failed\"}", "200 OK");
-  }
-
-  if (xSemaphoreTake(ctx.sem, pdMS_TO_TICKS(5000)) != pdTRUE) {
-    wifi_manager_cancel_scan();
-    vSemaphoreDelete(ctx.sem);
-    s_scan_in_progress = false;
-    return send_json(req, "{\"ok\":false,\"error\":\"scan_timeout\"}",
-                     "200 OK");
-  }
-  vSemaphoreDelete(ctx.sem);
-
-  bool sta_connected = wifi_manager_is_sta_connected();
-  char connected_ssid[33] = {0};
-  if (sta_connected) {
-    strlcpy(connected_ssid, wifi_manager_get_sta_ssid(),
-            sizeof(connected_ssid));
-  }
-
-  cJSON *root = cJSON_CreateObject();
-  cJSON_AddBoolToObject(root, "ok", true);
-  cJSON *arr = cJSON_AddArrayToObject(root, "networks");
-  for (int i = 0; i < ctx.count; i++) {
-    cJSON *item = cJSON_CreateObject();
-    cJSON_AddStringToObject(item, "ssid", ctx.entries[i].ssid);
-    cJSON_AddNumberToObject(item, "rssi", ctx.entries[i].rssi);
-    cJSON_AddStringToObject(item, "auth", ctx.entries[i].auth);
-    cJSON_AddNumberToObject(item, "channel", ctx.entries[i].channel);
-    cJSON_AddBoolToObject(item, "connected",
-                          sta_connected &&
-                              strcmp(ctx.entries[i].ssid, connected_ssid) == 0);
-    cJSON_AddItemToArray(arr, item);
-  }
-
-  char *json_str = cJSON_PrintUnformatted(root);
-  cJSON_Delete(root);
-  if (!json_str) {
-    s_scan_in_progress = false;
-    return send_json(req, "{\"ok\":false,\"error\":\"memory\"}",
-                     "500 Internal Server Error");
-  }
-
-  /* ── Store to cache ── */
-  if (strlen(json_str) < SCAN_CACHE_JSON_MAX) {
-    strlcpy(s_scan_cache_json, json_str, SCAN_CACHE_JSON_MAX);
-    s_scan_cache_ts_ms = (uint32_t)(esp_timer_get_time() / 1000);
-    ESP_LOGI(TAG, "[SCAN] Results cached (%zu bytes, TTL=%dms)",
-             strlen(json_str), SCAN_CACHE_TTL_MS);
-  } else {
-    ESP_LOGW(TAG, "[SCAN] Result too large to cache (%zu bytes)",
-             strlen(json_str));
-  }
-  s_scan_in_progress = false;
-
-  esp_err_t result = send_json(req, json_str, "200 OK");
-  free(json_str);
-
-  return result;
+/* The Wi-Fi POST bodies are read leniently: text that is not JSON is treated
+ * as an empty object, so the method answers with its own missing-field reply. */
+static cJSON *wifi_parse_body(const char *body) {
+  cJSON *root = cJSON_Parse(body);
+  return root ? root : cJSON_CreateObject();
 }
 
 /* POST /api/wifi/connect - protected, connect to given SSID */
@@ -2014,184 +1889,24 @@ static esp_err_t handle_api_wifi_connect(httpd_req_t *req) {
     return send_json(req, "{\"ok\":false,\"error\":\"force_password_change\"}",
                      "403 Forbidden");
   }
-
   if (!is_same_origin(req, true)) {
     return send_json(req, "{\"ok\":false,\"error\":\"forbidden\"}",
                      "403 Forbidden");
   }
 
-  char body[512] = {0};
+  char body[WIFI_CONNECT_BODY_BYTES] = {0};
   if (!read_request_body(req, body, sizeof(body))) {
     return send_json(req, "{\"ok\":false,\"error\":\"empty_body\"}", "200 OK");
   }
 
-  char ssid[64] = {0};
-  char password[65] = {0};
-  wifi_sta_ip_config_t ip_cfg = {0};
-  bool has_static_ip = false;
-
-  cJSON *root = cJSON_Parse(body);
-  if (root) {
-    cJSON *s = cJSON_GetObjectItem(root, "ssid");
-    cJSON *p = cJSON_GetObjectItem(root, "password");
-    if (s && cJSON_IsString(s)) {
-      if (strlen(s->valuestring) >= sizeof(ssid)) {
-        cJSON_Delete(root);
-        return send_api_error(req, "invalid_ssid", "SSID is too long",
-                              "400 Bad Request");
-      }
-      strlcpy(ssid, s->valuestring, sizeof(ssid));
-    }
-    if (p && cJSON_IsString(p)) {
-      if (strlen(p->valuestring) >= sizeof(password)) {
-        cJSON_Delete(root);
-        return send_api_error(req, "invalid_password", "Password is too long",
-                              "400 Bad Request");
-      }
-      strlcpy(password, p->valuestring, sizeof(password));
-    }
-    cJSON *ip_item = cJSON_GetObjectItem(root, "ip");
-    if (ip_item && cJSON_IsString(ip_item) && ip_item->valuestring[0]) {
-      if (strlen(ip_item->valuestring) >= sizeof(ip_cfg.ip)) {
-        cJSON_Delete(root);
-        return send_api_error(req, "invalid_ip", "IP address is too long",
-                              "400 Bad Request");
-      }
-      strlcpy(ip_cfg.ip, ip_item->valuestring, sizeof(ip_cfg.ip));
-      has_static_ip = true;
-      cJSON *gw = cJSON_GetObjectItem(root, "gateway");
-      if (gw && cJSON_IsString(gw)) {
-        if (strlen(gw->valuestring) >= sizeof(ip_cfg.gateway)) {
-          cJSON_Delete(root);
-          return send_api_error(req, "invalid_gateway", "Gateway is too long",
-                                "400 Bad Request");
-        }
-        strlcpy(ip_cfg.gateway, gw->valuestring, sizeof(ip_cfg.gateway));
-      }
-      cJSON *nm = cJSON_GetObjectItem(root, "netmask");
-      if (nm && cJSON_IsString(nm)) {
-        if (strlen(nm->valuestring) >= sizeof(ip_cfg.netmask)) {
-          cJSON_Delete(root);
-          return send_api_error(req, "invalid_netmask", "Netmask is too long",
-                                "400 Bad Request");
-        }
-        strlcpy(ip_cfg.netmask, nm->valuestring, sizeof(ip_cfg.netmask));
-      }
-      cJSON *dns = cJSON_GetObjectItem(root, "dns");
-      if (dns && cJSON_IsString(dns)) {
-        if (strlen(dns->valuestring) >= sizeof(ip_cfg.dns)) {
-          cJSON_Delete(root);
-          return send_api_error(req, "invalid_dns", "DNS is too long",
-                                "400 Bad Request");
-        }
-        strlcpy(ip_cfg.dns, dns->valuestring, sizeof(ip_cfg.dns));
-      }
-    }
-    cJSON_Delete(root);
+  cJSON *root = wifi_parse_body(body);
+  if (!root) {
+    return send_api_error(req, "memory", "JSON allocation failed",
+                          "500 Internal Server Error");
   }
-
-  if (strlen(ssid) == 0) {
-    return send_json(req, "{\"ok\":false,\"error\":\"missing_ssid\"}",
-                     "200 OK");
-  }
-
-  /* If password is empty, try to lookup from saved profiles */
-  if (password[0] == '\0') {
-    wifi_profile_t profiles[WIFI_PROFILE_MAX] = {0};
-    int count = 0, auto_idx = -1;
-    nvs_store_load_wifi_profiles(profiles, &count, &auto_idx);
-    for (int i = 0; i < count; i++) {
-      if (strcmp(profiles[i].ssid, ssid) == 0) {
-        strlcpy(password, profiles[i].pass, sizeof(password));
-        ESP_LOGI(TAG, "Using saved password for SSID: %s", ssid);
-        break;
-      }
-    }
-  }
-
-  if (strlen(ssid) > 32) {
-    return send_json(req, "{\"ok\":false,\"error\":\"ssid_too_long\"}",
-                     "400 Bad Request");
-  }
-
-  if (!is_valid_utf8_printable(ssid, sizeof(ssid))) {
-    return send_json(req, "{\"ok\":false,\"error\":\"invalid_ssid\"}",
-                     "400 Bad Request");
-  }
-
-  if (strlen(password) > 64) {
-    return send_json(req, "{\"ok\":false,\"error\":\"password_too_long\"}",
-                     "400 Bad Request");
-  }
-
-  if (password[0] && !is_valid_utf8_printable(password, sizeof(password))) {
-    return send_json(req, "{\"ok\":false,\"error\":\"invalid_password\"}",
-                     "400 Bad Request");
-  }
-
-  if (has_static_ip && !ip_cfg.gateway[0]) {
-    return send_json(req, "{\"ok\":false,\"error\":\"missing_gateway\"}",
-                     "400 Bad Request");
-  }
-
-  if (wifi_manager_is_sta_connected() &&
-      strcmp(wifi_manager_get_sta_ssid(), ssid) == 0) {
-    cJSON *resp = cJSON_CreateObject();
-    if (!resp) {
-      return send_json(req, "{\"ok\":false,\"error\":\"memory\"}",
-                       "500 Internal Server Error");
-    }
-    cJSON_AddBoolToObject(resp, "ok", true);
-    cJSON_AddBoolToObject(resp, "already_connected", true);
-    cJSON_AddStringToObject(resp, "ssid", wifi_manager_get_sta_ssid());
-    cJSON_AddStringToObject(resp, "ip", wifi_manager_get_sta_ip());
-    char *json_str = cJSON_PrintUnformatted(resp);
-    cJSON_Delete(resp);
-    if (!json_str) {
-      return send_json(req, "{\"ok\":false,\"error\":\"memory\"}",
-                       "500 Internal Server Error");
-    }
-    esp_err_t result = send_json(req, json_str, "200 OK");
-    free(json_str);
-    return result;
-  }
-
-  if (!wifi_manager_connect_sta(ssid, password,
-                                has_static_ip ? &ip_cfg : NULL)) {
-    return send_json(req, "{\"ok\":false,\"error\":\"connect_error\"}",
-                     "200 OK");
-  }
-
-  cJSON *resp = cJSON_CreateObject();
-  if (!resp) {
-    return send_json(req, "{\"ok\":false,\"error\":\"memory\"}",
-                     "500 Internal Server Error");
-  }
-  cJSON_AddBoolToObject(resp, "ok", true);
-  cJSON_AddBoolToObject(resp, "connecting", true);
-  cJSON_AddStringToObject(resp, "ssid", ssid);
-  char *json_str = cJSON_PrintUnformatted(resp);
-  cJSON_Delete(resp);
-  if (!json_str) {
-    return send_json(req, "{\"ok\":false,\"error\":\"memory\"}",
-                     "500 Internal Server Error");
-  }
-  esp_err_t result = send_json(req, json_str, "200 OK");
-  free(json_str);
+  esp_err_t result = http_dapi(req, "wifi.connect", root);
+  cJSON_Delete(root);
   return result;
-}
-
-static void wifi_disconnect_after_response_task(void *arg) {
-  (void)arg;
-  vTaskDelay(pdMS_TO_TICKS(WIFI_DISCONNECT_DELAY_MS));
-  if (!wifi_manager_forget_sta()) {
-    ESP_LOGW(TAG, "Deferred STA disconnect/forget reported failure");
-  }
-
-  taskENTER_CRITICAL(&s_wifi_disconnect_task_lock);
-  s_wifi_disconnect_task_pending = false;
-  taskEXIT_CRITICAL(&s_wifi_disconnect_task_lock);
-  vTaskDelete(NULL);
 }
 
 /* GET /api/wifi/profiles - protected, returns saved credential profiles */
@@ -2206,37 +1921,7 @@ static esp_err_t handle_api_wifi_profiles(httpd_req_t *req) {
                      "403 Forbidden");
   }
 
-  wifi_profile_t profiles[WIFI_PROFILE_MAX] = {0};
-  int count = 0, auto_idx = -1;
-  nvs_store_load_wifi_profiles(profiles, &count, &auto_idx);
-
-  cJSON *root = cJSON_CreateObject();
-  if (!root) {
-    return send_json(req, "{\"ok\":false,\"error\":\"memory\"}",
-                     "500 Internal Server Error");
-  }
-  cJSON_AddBoolToObject(root, "ok", true);
-  cJSON_AddNumberToObject(root, "auto_index", auto_idx);
-  cJSON *arr = cJSON_AddArrayToObject(root, "profiles");
-  for (int i = 0; i < count; i++) {
-    cJSON *item = cJSON_CreateObject();
-    cJSON_AddStringToObject(item, "ssid", profiles[i].ssid);
-    cJSON_AddBoolToObject(item, "auto", i == auto_idx);
-    cJSON_AddBoolToObject(
-        item, "connected",
-        wifi_manager_is_sta_connected() &&
-            strcmp(wifi_manager_get_sta_ssid(), profiles[i].ssid) == 0);
-    cJSON_AddItemToArray(arr, item);
-  }
-  char *json_str = cJSON_PrintUnformatted(root);
-  cJSON_Delete(root);
-  if (!json_str) {
-    return send_json(req, "{\"ok\":false,\"error\":\"memory\"}",
-                     "500 Internal Server Error");
-  }
-  esp_err_t result = send_json(req, json_str, "200 OK");
-  free(json_str);
-  return result;
+  return http_dapi(req, "wifi.profiles.get", NULL);
 }
 
 /* POST /api/wifi/profiles/forget - protected, remove a saved credential */
@@ -2255,36 +1940,19 @@ static esp_err_t handle_api_wifi_profiles_forget(httpd_req_t *req) {
                      "403 Forbidden");
   }
 
-  char body[256] = {0};
+  char body[WIFI_PROFILE_BODY_BYTES] = {0};
   if (!read_request_body(req, body, sizeof(body))) {
-    return send_json(req, "{\"ok\":false,\"error\":\"empty_body\"}",
-                     "400 Bad Request");
+    return send_json(req, "{\"ok\":false,\"error\":\"empty_body\"}", "400 Bad Request");
   }
 
-  char ssid[33] = {0};
-  cJSON *root = cJSON_Parse(body);
-  if (root) {
-    cJSON *s = cJSON_GetObjectItem(root, "ssid");
-    if (s && cJSON_IsString(s)) {
-      if (strlen(s->valuestring) >= sizeof(ssid)) {
-        cJSON_Delete(root);
-        return send_api_error(req, "invalid_ssid", "SSID is too long",
-                              "400 Bad Request");
-      }
-      strlcpy(ssid, s->valuestring, sizeof(ssid));
-    }
-    cJSON_Delete(root);
+  cJSON *root = wifi_parse_body(body);
+  if (!root) {
+    return send_api_error(req, "memory", "JSON allocation failed",
+                          "500 Internal Server Error");
   }
-  if (ssid[0] == '\0') {
-    return send_json(req, "{\"ok\":false,\"error\":\"missing_ssid\"}",
-                     "400 Bad Request");
-  }
-
-  bool ok = nvs_store_forget_wifi_profile(ssid);
-  ESP_LOGI(TAG, "Forget Wi-Fi profile: SSID=%s ok=%d", ssid, ok);
-  return send_json(
-      req, ok ? "{\"ok\":true}" : "{\"ok\":false,\"error\":\"forget_failed\"}",
-      "200 OK");
+  esp_err_t result = http_dapi(req, "wifi.profiles.forget", root);
+  cJSON_Delete(root);
+  return result;
 }
 
 /* POST /api/wifi/profiles/setauto - protected, set or clear auto-connect
@@ -2304,41 +1972,19 @@ static esp_err_t handle_api_wifi_profiles_setauto(httpd_req_t *req) {
                      "403 Forbidden");
   }
 
-  char body[256] = {0};
+  char body[WIFI_PROFILE_BODY_BYTES] = {0};
   if (!read_request_body(req, body, sizeof(body))) {
-    return send_json(req, "{\"ok\":false,\"error\":\"empty_body\"}",
-                     "400 Bad Request");
+    return send_json(req, "{\"ok\":false,\"error\":\"empty_body\"}", "400 Bad Request");
   }
 
-  int target_idx = -1;
-  cJSON *root = cJSON_Parse(body);
-  if (root) {
-    /* Accept {"ssid":"..."} to find index, or {"index":-1} to clear */
-    cJSON *idx_item = cJSON_GetObjectItem(root, "index");
-    if (idx_item && cJSON_IsNumber(idx_item)) {
-      target_idx = (int)idx_item->valuedouble;
-    } else {
-      cJSON *s = cJSON_GetObjectItem(root, "ssid");
-      if (s && cJSON_IsString(s)) {
-        wifi_profile_t profiles[WIFI_PROFILE_MAX] = {0};
-        int count = 0, auto_idx = -1;
-        nvs_store_load_wifi_profiles(profiles, &count, &auto_idx);
-        for (int i = 0; i < count; i++) {
-          if (strcmp(profiles[i].ssid, s->valuestring) == 0) {
-            target_idx = i;
-            break;
-          }
-        }
-      }
-    }
-    cJSON_Delete(root);
+  cJSON *root = wifi_parse_body(body);
+  if (!root) {
+    return send_api_error(req, "memory", "JSON allocation failed",
+                          "500 Internal Server Error");
   }
-
-  bool ok = nvs_store_set_wifi_auto_connect(target_idx);
-  ESP_LOGI(TAG, "Set Wi-Fi auto-connect index=%d ok=%d", target_idx, ok);
-  return send_json(
-      req, ok ? "{\"ok\":true}" : "{\"ok\":false,\"error\":\"setauto_failed\"}",
-      "200 OK");
+  esp_err_t result = http_dapi(req, "wifi.profiles.setauto", root);
+  cJSON_Delete(root);
+  return result;
 }
 
 /* POST /api/wifi/profiles/save - protected, persist a credential after
@@ -2353,72 +1999,19 @@ static esp_err_t handle_api_wifi_profiles_save(httpd_req_t *req) {
                      "403 Forbidden");
   }
 
-  char body[384] = {0};
+  char body[WIFI_SAVE_BODY_BYTES] = {0};
   if (!read_request_body(req, body, sizeof(body))) {
-    return send_json(req, "{\"ok\":false,\"error\":\"empty_body\"}",
-                     "400 Bad Request");
+    return send_json(req, "{\"ok\":false,\"error\":\"empty_body\"}", "400 Bad Request");
   }
 
-  char ssid[33] = {0}, password[65] = {0};
-  cJSON *root = cJSON_Parse(body);
-  if (root) {
-    cJSON *s = cJSON_GetObjectItem(root, "ssid");
-    cJSON *p = cJSON_GetObjectItem(root, "password");
-    if (s && cJSON_IsString(s)) {
-      if (strlen(s->valuestring) >= sizeof(ssid)) {
-        cJSON_Delete(root);
-        return send_api_error(req, "invalid_ssid", "SSID is too long",
-                              "400 Bad Request");
-      }
-      strlcpy(ssid, s->valuestring, sizeof(ssid));
-    }
-    if (p && cJSON_IsString(p)) {
-      if (strlen(p->valuestring) >= sizeof(password)) {
-        cJSON_Delete(root);
-        return send_api_error(req, "invalid_password", "Password is too long",
-                              "400 Bad Request");
-      }
-      strlcpy(password, p->valuestring, sizeof(password));
-    }
-    cJSON_Delete(root);
+  cJSON *root = wifi_parse_body(body);
+  if (!root) {
+    return send_api_error(req, "memory", "JSON allocation failed",
+                          "500 Internal Server Error");
   }
-  if (ssid[0] == '\0') {
-    return send_json(req, "{\"ok\":false,\"error\":\"missing_ssid\"}",
-                     "400 Bad Request");
-  }
-  /* Only persist if the device is actually connected to this SSID */
-  if (!wifi_manager_is_sta_connected() ||
-      strcmp(wifi_manager_get_sta_ssid(), ssid) != 0) {
-    return send_json(req, "{\"ok\":false,\"error\":\"not_connected\"}",
-                     "200 OK");
-  }
-
-  wifi_profile_t profiles[WIFI_PROFILE_MAX] = {0};
-  int count = 0, auto_idx = -1;
-  bool exists_unchanged = false;
-  if (nvs_store_load_wifi_profiles(profiles, &count, &auto_idx)) {
-    for (int i = 0; i < count; i++) {
-      if (strcmp(profiles[i].ssid, ssid) == 0) {
-        if (password[0] == '\0' || strcmp(profiles[i].pass, password) == 0) {
-          exists_unchanged = true;
-          break;
-        }
-      }
-    }
-  }
-
-  if (exists_unchanged) {
-    ESP_LOGI(TAG, "Wi-Fi profile already exists and is unchanged for SSID=%s",
-             ssid);
-    return send_json(req, "{\"ok\":true,\"reboot_pending\":false}", "200 OK");
-  }
-
-  bool ok = nvs_store_save_wifi_profile(ssid, password);
-  ESP_LOGI(TAG, "Saved Wi-Fi profile: SSID=%s ok=%d", ssid, ok);
-  if (!ok) {
-    return send_json(req, "{\"ok\":false,\"error\":\"save_failed\"}", "200 OK");
-  }
-  return send_json(req, "{\"ok\":true,\"reboot_pending\":false}", "200 OK");
+  esp_err_t result = http_dapi(req, "wifi.profiles.save", root);
+  cJSON_Delete(root);
+  return result;
 }
 
 /* POST /api/wifi/disconnect - protected, disconnect STA */
@@ -2438,29 +2031,7 @@ static esp_err_t handle_api_wifi_disconnect(httpd_req_t *req) {
                      "403 Forbidden");
   }
 
-  taskENTER_CRITICAL(&s_wifi_disconnect_task_lock);
-  bool already_pending = s_wifi_disconnect_task_pending;
-  if (!already_pending) {
-    s_wifi_disconnect_task_pending = true;
-  }
-  taskEXIT_CRITICAL(&s_wifi_disconnect_task_lock);
-
-  if (already_pending) {
-    return send_json(req, "{\"ok\":true,\"disconnect_pending\":true}",
-                     "200 OK");
-  }
-
-  if (xTaskCreate(wifi_disconnect_after_response_task, "wifi_disconnect",
-                  WIFI_DISCONNECT_TASK_STACK_BYTES, NULL, tskIDLE_PRIORITY + 1,
-                  NULL) != pdPASS) {
-    taskENTER_CRITICAL(&s_wifi_disconnect_task_lock);
-    s_wifi_disconnect_task_pending = false;
-    taskEXIT_CRITICAL(&s_wifi_disconnect_task_lock);
-    return send_json(req, "{\"ok\":false,\"error\":\"disconnect_task_failed\"}",
-                     "500 Internal Server Error");
-  }
-
-  return send_json(req, "{\"ok\":true,\"disconnect_pending\":true}", "200 OK");
+  return http_dapi(req, "wifi.disconnect", NULL);
 }
 
 /* GET /status - protected, serves full status page */
@@ -4271,6 +3842,7 @@ bool web_server_start(void) {
   dapi_pump_register();
   dapi_cooling_register();
   dapi_water_power_register();
+  dapi_wifi_register();
   esp_err_t start_err = httpd_start(&s_server, &config);
   if (start_err != ESP_OK) {
     taskENTER_CRITICAL(&s_web_diag_lock);

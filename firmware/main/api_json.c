@@ -2,6 +2,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "alarm_engine.h"
 #include "dry_run_guard.h"
@@ -128,4 +129,18 @@ void json_gen_add_string(json_gen_t *gen, const char *key, const char *val) {
 void json_gen_add_number(json_gen_t *gen, const char *key, double val) {
   json_gen_add_key(gen, key);
   json_gen_append(gen, "%g", val);
+}
+
+bool is_valid_utf8_printable(const char *s, size_t max_len) {
+  if (!s || !s[0])
+    return false;
+  size_t len = strnlen(s, max_len);
+  if (len >= max_len)
+    return false;
+  for (size_t i = 0; i < len; i++) {
+    unsigned char c = (unsigned char)s[i];
+    if (c < 0x20 && c != '	')
+      return false;
+  }
+  return true;
 }
