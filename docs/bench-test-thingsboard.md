@@ -126,6 +126,16 @@ Plan: `docs/superpowers/plans/2026-11-18-thingsboard-link-m1.md` (Task 7)
   **ต้องเห็น:** ไม่มี crash `heap_free` ไม่ต่ำกว่า 100 KB และ HWM ทุกตัวรวม `tb_rpc_hwm` ไม่ต่ำกว่า 512
   บันทึก: burst 30 ได้ 30 คำตอบ (busy 0) poll HTTP 123 ครั้งได้ 200 ทั้งหมด (รันพร้อมอ่านและ error case ทุกกลุ่ม: 86 PASS 0 FAIL 7 SKIP ที่ SKIP คือ case เขียนที่ต้องใช้ `--writes`) หลังจากนั้นดู `BOARD_DIAG` อีก 15 นาที ช่วง uptime 22,299 → 25,031 วินาที (92 บรรทัด) ไม่มีรีบูตหรือ crash `heap_free` 142–149 KB (`heap_min` 110.6 KB) HWM ต่ำสุด `main_stack_hwm` 1188 `hwm_alarm` 2600 `hwm_uplink` 2048 `hwm_dry_run` 3204 `tb_hwm` 3700 `tb_rpc_hwm` 3456 HTTP `failed=0` จาก 475 request (หน้า Status ของเว็บแอปเปิดค้างไว้)
 
+### หลังแก้ตาม final review (firmware 4a698f6, ไฟล์ ThingsBoard 5eae70e)
+
+final review พบ 3 ข้อที่ต้องแก้ก่อน merge: RPC ที่ ThingsBoard ส่งซ้ำทำให้คำสั่งเขียนทำสองครั้ง, `setauto`/`save` จาก ThingsBoard ทำให้บอร์ดหลุดเน็ตถาวรได้, และ polarity ของรีเลย์แก้จาก ThingsBoard ได้โดยไม่เห็นค่าเดิม แก้แล้วทดสอบซ้ำ:
+
+- [/] **H1 แฟลชและบูต** — hash ตรง connected ที่ 4.1 วินาที `heap_min` 120.4 KB `tb_rpc_hwm` 5312 บรรทัด `E` มีแค่ pt100
+- [/] **H2 golden compare** — `--label h2 --with-writes` ALL PASS (เว็บแอปได้คำตอบเหมือนเดิมทุกไบต์)
+- [/] **H3 อัปเดต dashboard** — `tb_setup.py` อัปเดต widget และ dashboard 9 หน้า (แม่แบบ `protection.set` เป็นค่า "แก้ก่อนส่ง" และ `pump.config.set`/`cooling.config.set` มีปุ่มโหลดค่า)
+- [/] **H4 parity ทุกกลุ่มพร้อมการเขียน** — 92 PASS 0 FAIL 1 SKIP (SKIP คือ `water.offset` ไม่มีเซนเซอร์ pH) `setauto` จาก ThingsBoard ด้วย index 99 และ -1 ได้ `in_use` ส่วน index ของเครือข่ายที่ต่ออยู่ยังทำได้ การเขียน pump และ cooling ที่ส่ง polarity เดิมผ่าน log `dapi_wifi` ขึ้นใน serial แล้ว ไม่มีรีบูต `heap_min` 112.6 KB `tb_rpc_hwm` 3600
+- ยังไม่ได้ทดสอบบนบอร์ด: แคช RPC ซ้ำ (ไม่เกิดการส่งซ้ำในรอบนี้) และการปฏิเสธ polarity ที่ต่างจากค่าเดิม (ไม่ส่งจริงเพราะถ้า guard พลาดรีเลย์จะกลับขั้ว) ทั้งสองข้อมี selftest ใน QEMU
+
 ## หลังทดสอบ
 
 - [/] ปิดกฎที่เปิดไว้ทดสอบ ให้ลิงก์ยังตั้งค่าอยู่ และ host เป็น `192.168.1.51` — กฎ id 19 คืนเป็น `pump_is_running` และปิดแล้ว (ตรวจจาก attribute `alarm_rules` ใน ThingsBoard) host = `192.168.1.51` ลิงก์ connected
