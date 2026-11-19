@@ -258,3 +258,190 @@ uplink_clock_decision_t uplink_clock_hold_step(uplink_clock_hold_t *st, bool clo
     }
     return d;
 }
+
+/* ---- ThingsBoard state helpers ---- */
+
+static uint32_t fnv_update(uint32_t h, const char *data, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        h ^= (uint8_t)data[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+uint32_t uplink_hash32(const char *data, size_t len)
+{
+    return fnv_update(2166136261u, data, len);
+}
+
+void uplink_attr_cache_reset(uplink_attr_cache_t *c)
+{
+    if (c != NULL) {
+        memset(c, 0, sizeof(*c));
+    }
+}
+
+static uplink_attr_slot_t *cache_find(const uplink_attr_cache_t *c, const char *key)
+{
+    for (size_t i = 0; i < c->n; i++) {
+        if (strcmp(c->slot[i].key, key) == 0) {
+            return (uplink_attr_slot_t *)&c->slot[i];
+        }
+    }
+    return NULL;
+}
+
+bool uplink_attr_cache_changed(const uplink_attr_cache_t *c, const char *key, uint32_t hash)
+{
+    const uplink_attr_slot_t *s = (c != NULL && key != NULL) ? cache_find(c, key) : NULL;
+    return s == NULL || s->hash != hash;
+}
+
+bool uplink_attr_cache_commit(uplink_attr_cache_t *c, const char *key, uint32_t hash)
+{
+    if (c == NULL || key == NULL || strlen(key) >= UPLINK_STATE_KEY_MAX) {
+        return false;
+    }
+    uplink_attr_slot_t *s = cache_find(c, key);
+    if (s != NULL) {
+        s->hash = hash;
+        return true;
+    }
+    if (c->n >= UPLINK_STATE_ATTR_MAX) {
+        return false;
+    }
+    strcpy(c->slot[c->n].key, key);
+    c->slot[c->n].hash = hash;
+    c->n++;
+    return true;
+}
+
+bool uplink_state_rebuild_due(bool dirty, bool ever, uint32_t since_build_ms)
+{
+    return dirty || !ever || since_build_ms >= UPLINK_STATE_RECHECK_MS;
+}
+
+bool uplink_status_poll_due(bool connected, bool ever, uint32_t since_poll_ms)
+{
+    if (!ever) {
+        return true;
+    }
+    return since_poll_ms >= (connected ? UPLINK_STATUS_POLL_MS : UPLINK_STATUS_OFFLINE_POLL_MS);
+}
+
+bool uplink_status_send_due(bool ever, uint32_t since_sent_ms, bool watched_changed)
+{
+    return !ever || since_sent_ms >= UPLINK_STATUS_INTERVAL_MS ||
+           (watched_changed && since_sent_ms >= UPLINK_STATUS_MIN_GAP_MS);
+}
+
+cJSON *uplink_json_without(const cJSON *obj, const char *const *drop, size_t ndrop)
+{
+    if (!cJSON_IsObject(obj)) {
+        return NULL;
+    }
+    cJSON *copy = cJSON_Duplicate(obj, true);
+    if (copy == NULL) {
+        return NULL;
+    }
+    for (size_t i = 0; i < ndrop; i++) {
+        cJSON_DeleteItemFromObjectCaseSensitive(copy, drop[i]);
+    }
+    return copy;
+}
+
+/* Keep each row on one line in this exact shape: a verify script parses it. */
+const uplink_status_field_t uplink_status_fields[] = {
+    {UPLINK_SRC_PUMP, "system_water.phase", "pump_phase", true},
+    {UPLINK_SRC_PUMP, "system_water.countdown_sec", "pump_countdown_sec", false},
+    {UPLINK_SRC_PUMP, "system_water.total_duration_sec", "pump_cycle_sec", false},
+    {UPLINK_SRC_PUMP, "system_water.cooldown_remaining_sec", "pump_cooldown_sec", false},
+    {UPLINK_SRC_PUMP, "fault", "pump_fault", true},
+    {UPLINK_SRC_PUMP, "initial_stabilizing", "pump_stabilizing", true},
+    {UPLINK_SRC_PUMP, "config_valid", "pump_config_valid", true},
+    {UPLINK_SRC_PUMP, "system_wash.running", "wash_running", true},
+    {UPLINK_SRC_PUMP, "system_wash.phase", "wash_phase", true},
+    {UPLINK_SRC_PUMP, "system_wash.countdown_sec", "wash_countdown_sec", false},
+    {UPLINK_SRC_PUMP, "dry_run.enabled", "dry_run_enabled", true},
+    {UPLINK_SRC_PUMP, "dry_run.state", "dry_run_state", true},
+    {UPLINK_SRC_PUMP, "dry_run.trips", "dry_run_trips", true},
+    {UPLINK_SRC_PUMP, "dry_run.max_retries", "dry_run_max_retries", false},
+    {UPLINK_SRC_PUMP, "dry_run.wait_remaining_sec", "dry_run_wait_sec", false},
+    {UPLINK_SRC_PUMP, "dry_run.dry_accum_sec", "dry_run_accum_sec", false},
+    {UPLINK_SRC_COOLING, "mode", "cooling_mode_name", true},
+    {UPLINK_SRC_COOLING, "auto_enable", "cooling_auto_enable", true},
+    {UPLINK_SRC_COOLING, "sensor_state", "cooling_sensor_state", true},
+    {UPLINK_SRC_COOLING, "fault_code", "cooling_fault_code", true},
+    {UPLINK_SRC_COOLING, "cooling_demand", "cooling_demand", true},
+    {UPLINK_SRC_COOLING, "blocked_reason", "cooling_blocked_reason", true},
+    {UPLINK_SRC_COOLING, "temperature_valid", "cooling_temp_valid", true},
+    {UPLINK_SRC_COOLING, "test_remaining_sec", "cooling_test_sec", false},
+    {UPLINK_SRC_STATUS, "sta_connected", "wifi_connected", true},
+    {UPLINK_SRC_STATUS, "sta_channel", "wifi_channel", false},
+    {UPLINK_SRC_STATUS, "min_free_heap", "heap_min_free_bytes", false},
+    {UPLINK_SRC_STATUS, "largest_free_block", "heap_largest_block_bytes", false},
+};
+const size_t uplink_status_field_count = sizeof(uplink_status_fields) / sizeof(uplink_status_fields[0]);
+
+static const cJSON *path_get(const cJSON *root, const char *path)
+{
+    const cJSON *cur = root;
+    while (cur != NULL && *path != '\0') {
+        const char *dot = strchr(path, '.');
+        size_t len = dot != NULL ? (size_t)(dot - path) : strlen(path);
+        char seg[48];
+        if (len == 0 || len >= sizeof(seg) || !cJSON_IsObject(cur)) {
+            return NULL;
+        }
+        memcpy(seg, path, len);
+        seg[len] = '\0';
+        cur = cJSON_GetObjectItemCaseSensitive(cur, seg);
+        path += len;
+        if (*path == '.') {
+            path++;
+        }
+    }
+    return cur;
+}
+
+int uplink_status_flatten(const cJSON *const srcs[UPLINK_SRC_COUNT], cJSON *out, uint32_t *watched_hash)
+{
+    int added = 0;
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < uplink_status_field_count; i++) {
+        const uplink_status_field_t *f = &uplink_status_fields[i];
+        const cJSON *src = f->src < UPLINK_SRC_COUNT ? srcs[f->src] : NULL;
+        const cJSON *it = src != NULL ? path_get(src, f->path) : NULL;
+        bool usable = cJSON_IsNumber(it) || cJSON_IsBool(it) || cJSON_IsString(it);
+        if (usable) {
+            cJSON *dst;
+            if (cJSON_IsNumber(it)) {
+                dst = cJSON_AddNumberToObject(out, f->key, it->valuedouble);
+            } else if (cJSON_IsBool(it)) {
+                dst = cJSON_AddBoolToObject(out, f->key, cJSON_IsTrue(it));
+            } else {
+                dst = cJSON_AddStringToObject(out, f->key, it->valuestring != NULL ? it->valuestring : "");
+            }
+            if (dst != NULL) {
+                added++;
+            }
+        }
+        if (f->watched) {
+            h = fnv_update(h, f->key, strlen(f->key));
+            h = fnv_update(h, "=", 1);
+            char *txt = usable ? cJSON_PrintUnformatted(it) : NULL;
+            if (txt != NULL) {
+                h = fnv_update(h, txt, strlen(txt));
+                cJSON_free(txt);
+            } else {
+                h = fnv_update(h, "?", 1);
+            }
+            h = fnv_update(h, ";", 1);
+        }
+    }
+    if (watched_hash != NULL) {
+        *watched_hash = h;
+    }
+    return added;
+}

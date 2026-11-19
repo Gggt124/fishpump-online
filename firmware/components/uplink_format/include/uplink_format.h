@@ -11,6 +11,7 @@
 #include <stdint.h>
 
 #include "alarm_rules.h"
+#include "cJSON.h"
 #include "telemetry_hub.h"
 
 #ifdef __cplusplus
@@ -90,6 +91,60 @@ typedef enum {
 uplink_clock_decision_t uplink_clock_hold_step(uplink_clock_hold_t *st, bool clock_set, bool sink_ready,
                                                uint32_t pending, uint32_t ring_len, uint32_t now_ms,
                                                uplink_clock_hold_event_t *event);
+
+/* ---- ThingsBoard state (client attributes + status telemetry), milestone 3 ---- */
+#define UPLINK_STATE_ATTR_MAX 8
+#define UPLINK_STATE_KEY_MAX 24
+#define UPLINK_STATE_ATTR_MAX_BYTES 4096
+#define UPLINK_STATE_RECHECK_MS 60000u
+#define UPLINK_STATUS_INTERVAL_MS 30000u
+#define UPLINK_STATUS_MIN_GAP_MS 2000u
+#define UPLINK_STATUS_POLL_MS 2000u
+#define UPLINK_STATUS_OFFLINE_POLL_MS 30000u
+
+/* FNV-1a 32-bit. */
+uint32_t uplink_hash32(const char *data, size_t len);
+
+/* Per-key "last sent" hash of each attribute group. */
+typedef struct {
+    char key[UPLINK_STATE_KEY_MAX];
+    uint32_t hash;
+} uplink_attr_slot_t;
+
+typedef struct {
+    uplink_attr_slot_t slot[UPLINK_STATE_ATTR_MAX];
+    size_t n;
+} uplink_attr_cache_t;
+
+void uplink_attr_cache_reset(uplink_attr_cache_t *c);
+/* True for an unknown key or a different hash. */
+bool uplink_attr_cache_changed(const uplink_attr_cache_t *c, const char *key, uint32_t hash);
+/* False when the key is too long (>= UPLINK_STATE_KEY_MAX) or the table is full. */
+bool uplink_attr_cache_commit(uplink_attr_cache_t *c, const char *key, uint32_t hash);
+
+bool uplink_state_rebuild_due(bool dirty, bool ever, uint32_t since_build_ms);
+bool uplink_status_poll_due(bool connected, bool ever, uint32_t since_poll_ms);
+bool uplink_status_send_due(bool ever, uint32_t since_sent_ms, bool watched_changed);
+
+/* Deep copy of obj minus the listed top-level keys. NULL if obj is not an object or out of memory. */
+cJSON *uplink_json_without(const cJSON *obj, const char *const *drop, size_t ndrop);
+
+typedef enum { UPLINK_SRC_PUMP = 0, UPLINK_SRC_COOLING, UPLINK_SRC_STATUS, UPLINK_SRC_COUNT } uplink_status_src_t;
+
+typedef struct {
+    uint8_t src;
+    const char *path; /* dot-separated, into the method reply */
+    const char *key;
+    bool watched;
+} uplink_status_field_t;
+
+extern const uplink_status_field_t uplink_status_fields[];
+extern const size_t uplink_status_field_count;
+
+/* Adds each field found (number, bool or string) to out under its key. NULL source or missing path: skipped.
+ * Returns the number of keys added. *watched_hash (may be NULL): FNV-1a over "key=<value>;" of each watched
+ * field in table order ("key=?;" when missing). */
+int uplink_status_flatten(const cJSON *const srcs[UPLINK_SRC_COUNT], cJSON *out, uint32_t *watched_hash);
 
 #ifdef __cplusplus
 }

@@ -16,6 +16,7 @@ void app_main(void)
     test_alarm_eval_wrap();
     test_alarm_store();
     test_uplink_format();
+    test_uplink_state();
     test_dry_run_config();
     test_dry_run_machine();
     test_tb_link();
