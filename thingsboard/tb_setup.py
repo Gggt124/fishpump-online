@@ -146,7 +146,7 @@ def ensure_profile(api, rc_id):
         saved = api.post(P_PROFILE, body)
         state = "created"
     else:
-        # keep everything an operator set in the UI (alarms, queue, dashboard...), override only ours
+        # keep everything an operator set in the UI (alarms, dashboard...); the queue is overridden below, override only ours
         merged = dict(existing)
         for k in ("transportType", "provisionType", "provisionDeviceKey", "defaultRuleChainId",
                   "defaultQueueName"):

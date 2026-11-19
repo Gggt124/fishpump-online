@@ -166,9 +166,10 @@ def run_cases(ctx):
     boot3 = boot1 + 2
     loops = 5
     rule_ids = [910 + i for i in range(loops)]
-    for rid in rule_ids:
-        ctx.publish_burst([{"alarm_event": ev(boot3, 1, "raised", rid, "warning")},
-                           {"alarm_event": ev(boot3, 2, "cleared", rid, "warning")}])
+    # the dedupe keeps one last {boot_id, seq} per device, so seq must keep rising across loops on one boot
+    for i, rid in enumerate(rule_ids):
+        ctx.publish_burst([{"alarm_event": ev(boot3, 2 * i + 1, "raised", rid, "warning")},
+                           {"alarm_event": ev(boot3, 2 * i + 2, "cleared", rid, "warning")}])
 
     def c8():
         parts, ok = [], True
