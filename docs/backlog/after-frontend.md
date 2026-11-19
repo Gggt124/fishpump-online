@@ -100,6 +100,12 @@
   - ~~ThingsBoard ส่ง RPC เดิมซ้ำได้หลังต่อใหม่ (A6 เห็น id 90 ถูกทำสองครั้ง) การอ่านไม่มีผล แต่คำสั่งเขียนอาจทำซ้ำ เช่น `alarms.rules.set` แบบสร้างใหม่ได้กฎสองข้อ หรือ `power.reset_energy` ทางแก้: จำ id ของ RPC ล่าสุดที่ทำแล้วใน `tb_link` แล้วตอบซ้ำแทนการทำใหม่~~ **แก้แล้ว** ในชุดแก้ final review ของ milestone 2 (commit `fix: RPC re-delivery runs a write once`): `tb_rpc` จำคำขอล่าสุด 4 รายการ (id + ความยาว + hash ของ payload) ภายใน 30 วินาทีจะตอบซ้ำจากแคชโดยไม่เรียก `device_api` ดู `docs/firmware/device-api.md` ข้อ 1.1
   - `pump.config.set` มีเพดาน params 512 ไบต์ (เท่ากับ body ของ HTTP) เว็บแอปส่งกรณียาวที่สุด (ตั้งเวลา 86400 ทุกช่อง) 475 ไบต์ ยังผ่าน แต่ถ้าวางคำตอบของ `pump.config.get` ทั้งก้อนลงใน dashboard จะได้ `invalid_body` (case ทดสอบเคยพลาดแบบนี้ แก้ใน eb26c87) ถ้าเพิ่ม key ใน config ต้องเช็กเพดานนี้
   - ปุ่ม Wi-Fi ที่เขียนค่า (`wifi.profiles.save`, `setauto`, `wifi.connect`) ยังไม่ได้กดจริงจาก dashboard เพราะจะเปลี่ยนโปรไฟล์ Wi-Fi ของบอร์ด parity (F4) ทดสอบผ่าน RPC แล้ว ควรกดจริงหนึ่งรอบตอนทำ milestone 4 (staged commit ของ `wifi.connect`)
+  - ข้อเล็กจาก re-review ของชุดแก้ final review (ไม่มีข้อไหนทำให้บันทึกค่าผิด):
+    - ปุ่ม "โหลดค่าปัจจุบัน" ของ `pump.config.set` ได้ body ประมาณ 800 ไบต์ที่มี key อ่านอย่างเดียว ส่งทันทีจะได้ `invalid_body` ต้องลบ key เองก่อนส่ง ทางแก้: เพิ่ม `load_keys` (รายการ key ที่เก็บไว้ตอนโหลด) ใน widget และ `dashboard_pages.json` และให้ `tb_dashboard.py --check` ไม่ยอม `load_keys` ที่ไม่มี `load` ในข้อ 4 ของ `device-api.md` ยังเขียนว่าได้ `read_only_field` แต่ที่ได้จริงคือ `invalid_body`
+    - หน้าต่าง 30 วินาทีของแคช RPC เริ่มนับก่อนเรียก method ถ้ารอ lock 5 วินาทีจะเหลือประมาณ 25 วินาที (ยังนานกว่า timeout 10 วินาทีของ widget)
+    - โหลดค่า cooling ตอนอยู่โหมด `test_on` แล้วส่งทันทีจะได้ `test_mode_not_persistent` (ถูกปฏิเสธก่อนบันทึก)
+    - ที่มีอยู่ก่อนแล้ว: `wifi.profiles.save` จาก ThingsBoard ด้วยรหัสว่างสำหรับเครือข่ายที่ต่ออยู่แต่ยังไม่ได้บันทึก จะบันทึกโปรไฟล์ที่รหัสว่าง แล้ว `setauto` ไปที่โปรไฟล์นั้นอาจทำให้บอร์ดต่อเน็ตไม่ได้หลังปิดเปิดไฟ เงื่อนไขแคบ (ต้องต่อเครือข่ายที่ไม่ได้บันทึกไว้จากเว็บแอปก่อน) และการบันทึกตอนรายการเต็มจะไล่โปรไฟล์ 0 ออกแล้วปิด auto-connect ถ้าโปรไฟล์ 0 เป็นตัว auto ทางแก้: ฝั่ง ThingsBoard ถ้ารหัสว่างและยังไม่มีโปรไฟล์ ให้ตอบ `in_use`
+    - `relay_polarity` (ชื่อเก่า) ถูกตรวจด้วยแม้มี `relay1_polarity` อยู่แล้ว (เข้มเกินไปแต่ไม่มีผลเสีย)
 - [ ] ตามแผนแพลตฟอร์ม: กฎอยู่ในเฟิร์มแวร์ ThingsBoard เก็บข้อมูลและส่งแจ้งเตือน และรองรับหลายลูกค้า/หลาย firmware (`identity` ใน preview มี `fw_type` และ `contract_version` ไว้สำหรับเรื่องนี้)
 
 ---
