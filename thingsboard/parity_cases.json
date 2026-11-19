@@ -67,7 +67,10 @@
     ],
     "writes": [
       {"name": "pump.config.set water_set1_off +1 min", "get": "pump.config.get", "get_http": "/api/pump/config",
-       "omit": ["float_gpio", "relay_gpio", "debounce_ms", "pump_relay1_gpio", "pump_relay2_gpio", "ds18b20_gpio", "cooling_relay_gpio", "cooling_relay_polarity", "hardware_reboot_required"],
+       "omit": ["float_gpio", "relay_gpio", "debounce_ms", "pump_relay1_gpio", "pump_relay2_gpio", "ds18b20_gpio", "cooling_relay_gpio", "cooling_relay_polarity", "hardware_reboot_required",
+                 "hardware_fields_read_only", "hardware_map_status", "settings_status",
+                 "timer1_on_sec", "timer1_off_sec", "timer2_on_sec", "timer2_off_sec", "auto_start",
+                 "relay_polarity", "timer1_start_phase", "timer2_start_phase"],
        "path": "water_set1_off", "change": {"add": 60}, "set": "pump.config.set", "set_http": "/api/pump/config"}
     ]
   },

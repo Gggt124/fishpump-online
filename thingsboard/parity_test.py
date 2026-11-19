@@ -332,6 +332,18 @@ def selftest():
     wbody, wold, wnew = write_body(wget, wcase, {})
     check("pump write drops read-only fields", wnew == wold + 60 and "float_gpio" not in wbody and "ok" not in wbody
           and wbody["relay1_polarity"] == "active_low")
+    real_get = json.loads('{"ok":true,"water_set1_on":50,"water_set1_off":60,"water_set1_start_phase":"on","water_set2_on":10,"water_set2_off":180,"water_set2_start_phase":"on","wash_on":10,"wash_off":60,"wash_start_phase":"ON","water_auto_start":true,"wash_auto_start":false,"timer1_on_sec":50,"timer1_off_sec":60,"timer2_on_sec":10,"timer2_off_sec":180,"auto_start":true,"relay_polarity":"active_low","float_gpio":16,"relay_gpio":5,"debounce_ms":2000,"min_dwell_sec":30,"pump_relay1_gpio":5,"pump_relay2_gpio":6,"ds18b20_gpio":10,"cooling_relay_gpio":8,"relay1_polarity":"active_low","relay2_polarity":"active_low","timer1_start_phase":"on","timer2_start_phase":"on","cooling_relay_polarity":"active_low","hardware_reboot_required":false,"hardware_fields_read_only":true,"hardware_map_status":"defaults_missing","settings_status":"loaded"}')
+    rbody, _, _ = write_body(real_get, wcase, {})
+    dropped = ("hardware_fields_read_only", "hardware_map_status", "settings_status", "timer1_on_sec", "timer1_off_sec",
+               "timer2_on_sec", "timer2_off_sec", "auto_start", "relay_polarity", "timer1_start_phase", "timer2_start_phase")
+    kept = ("water_set1_on", "water_set1_off", "water_set1_start_phase", "water_set2_on", "water_set2_off",
+            "water_set2_start_phase", "wash_on", "wash_off", "wash_start_phase", "water_auto_start", "wash_auto_start",
+            "relay1_polarity", "relay2_polarity", "min_dwell_sec")
+    check("pump write body from the real get reply is under 512 bytes",
+          len(json.dumps(rbody, separators=(",", ":"))) < 512)
+    check("pump write body drops status keys and alias duplicates", not any(k in rbody for k in dropped))
+    check("pump write body keeps every editable primary key and changes water_set1_off to 120",
+          all(k in rbody for k in kept) and rbody.get("water_set1_off") == 120)
     r = Runner(_FakeTbUnknown(), "dev", None)
     _quiet(r.run_write, "water_power", ocase2, None)
     check("write on a missing get method SKIPs with the method name", r.counts["SKIP"] == 1 and r.counts["FAIL"] == 0
