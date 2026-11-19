@@ -33,8 +33,10 @@
 #include "api_json.h"
 #include "dapi_alarms.h"
 #include "dapi_cooling.h"
+#include "dapi_hardware.h"
 #include "dapi_protection.h"
 #include "dapi_pump.h"
+#include "dapi_status.h"
 #include "dapi_water_power.h"
 #include "dapi_wifi.h"
 #include "device_api.h"
@@ -317,17 +319,6 @@ static void url_decode(char *dst, const char *src) {
   *dst = '\0';
 }
 
-static void json_gen_add_string_safe(json_gen_t *gen, const char *key,
-                                     const char *val) {
-  if (!val || val[0] == '\0') {
-    json_gen_add_string(gen, key, val);
-  } else if (is_valid_utf8_printable(val, 128)) {
-    json_gen_add_string(gen, key, val);
-  } else {
-    json_gen_add_string(gen, key, NULL);
-  }
-}
-
 static void get_client_ip(httpd_req_t *req, char *ipstr, size_t ipstr_len) {
   ipstr[0] = '\0';
   int sockfd = httpd_req_to_sockfd(req);
@@ -398,66 +389,6 @@ static bool require_auth(httpd_req_t *req) {
              client_ip, (int)strlen(token));
   }
   return valid;
-}
-
-/* Convert chip model enum to string */
-static const char *chip_model_to_string(esp_chip_model_t model) {
-  switch (model) {
-  case CHIP_ESP32:
-    return "ESP32";
-  case CHIP_ESP32S2:
-    return "ESP32-S2";
-  case CHIP_ESP32S3:
-    return "ESP32-S3";
-  case CHIP_ESP32C2:
-    return "ESP32-C2";
-  case CHIP_ESP32C3:
-    return "ESP32-C3";
-  case CHIP_ESP32C5:
-    return "ESP32-C5";
-  case CHIP_ESP32C6:
-    return "ESP32-C6";
-  case CHIP_ESP32H2:
-    return "ESP32-H2";
-  case CHIP_ESP32P4:
-    return "ESP32-P4";
-  default:
-    return "Unknown";
-  }
-}
-
-static const char *reset_reason_to_string(esp_reset_reason_t reason) {
-  switch (reason) {
-  case ESP_RST_POWERON:
-    return "power_on";
-  case ESP_RST_EXT:
-    return "external_reset";
-  case ESP_RST_SW:
-    return "software_reset";
-  case ESP_RST_PANIC:
-    return "panic";
-  case ESP_RST_INT_WDT:
-    return "interrupt_watchdog";
-  case ESP_RST_TASK_WDT:
-    return "task_watchdog";
-  case ESP_RST_WDT:
-    return "other_watchdog";
-  case ESP_RST_DEEPSLEEP:
-    return "deep_sleep";
-  case ESP_RST_BROWNOUT:
-    return "brownout";
-  case ESP_RST_SDIO:
-    return "sdio";
-  case ESP_RST_UNKNOWN:
-  default:
-    return "unknown";
-  }
-}
-
-/* Format MAC address bytes to XX:XX:XX:XX:XX:XX string */
-static void format_mac(const uint8_t *mac, char *out) {
-  snprintf(out, 18, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2],
-           mac[3], mac[4], mac[5]);
 }
 
 static bool host_equals(const char *host_start, size_t host_len,
@@ -597,263 +528,6 @@ static esp_err_t send_api_error(httpd_req_t *req, const char *code,
 }
 
 
-static const char *api_pending_hardware_map_status_name(
-    nvs_store_pending_hardware_map_load_status_t status) {
-  switch (status) {
-  case NVS_STORE_PENDING_HARDWARE_MAP_LOADED:
-    return "loaded";
-  case NVS_STORE_PENDING_HARDWARE_MAP_NOT_FOUND:
-    return "not_found";
-  case NVS_STORE_PENDING_HARDWARE_MAP_INVALID:
-    return "invalid";
-  case NVS_STORE_PENDING_HARDWARE_MAP_ERROR:
-  default:
-    return "error";
-  }
-}
-
-static const char *api_hardware_map_field_for_role(hardware_role_t role) {
-  switch (role) {
-  case HARDWARE_ROLE_FLOAT_INPUT:
-    return "float_input_gpio";
-  case HARDWARE_ROLE_PUMP_RELAY_1:
-    return "pump_relay1_gpio";
-  case HARDWARE_ROLE_PUMP_RELAY_2:
-    return "pump_relay2_gpio";
-  case HARDWARE_ROLE_DS18B20_DATA:
-    return "ds18b20_gpio";
-  case HARDWARE_ROLE_COOLING_RELAY:
-    return "cooling_relay_gpio";
-  default:
-    return "unknown";
-  }
-}
-
-static bool api_hardware_map_add_json(cJSON *root, const char *name,
-                                      const hardware_map_t *map) {
-  if (!root || !name || !map) {
-    return false;
-  }
-
-  cJSON *obj = cJSON_AddObjectToObject(root, name);
-  if (!obj) {
-    return false;
-  }
-
-  cJSON_AddNumberToObject(obj, "float_input_gpio", map->float_input_gpio);
-  cJSON_AddNumberToObject(obj, "pump_relay1_gpio", map->pump_relay1_gpio);
-  cJSON_AddNumberToObject(obj, "pump_relay2_gpio", map->pump_relay2_gpio);
-  cJSON_AddNumberToObject(obj, "ds18b20_gpio", map->ds18b20_data_gpio);
-  cJSON_AddNumberToObject(obj, "cooling_relay_gpio", map->cooling_relay_gpio);
-  return true;
-}
-
-static bool api_hardware_options_add_role(cJSON *options_root,
-                                          hardware_role_t role) {
-  if (!options_root || !hardware_map_role_valid(role)) {
-    return false;
-  }
-
-  size_t option_count = 0;
-  const hardware_gpio_option_t *options =
-      hardware_map_options_for_role(role, &option_count);
-  if (!options) {
-    return false;
-  }
-
-  cJSON *arr = cJSON_AddArrayToObject(options_root,
-                                      api_hardware_map_field_for_role(role));
-  if (!arr) {
-    return false;
-  }
-
-  for (size_t i = 0; i < option_count; i++) {
-    cJSON *item = cJSON_CreateObject();
-    if (!item) {
-      return false;
-    }
-    cJSON_AddNumberToObject(item, "pin_id", (double)options[i].pin);
-    cJSON_AddNumberToObject(item, "gpio", options[i].gpio);
-    cJSON_AddStringToObject(item, "label", options[i].label);
-    cJSON_AddStringToObject(item, "role",
-                            hardware_map_role_name(options[i].role));
-    cJSON_AddBoolToObject(item, "input_capable", options[i].input_capable);
-    cJSON_AddBoolToObject(item, "output_capable", options[i].output_capable);
-    cJSON_AddBoolToObject(item, "internal_pull_capable",
-                          options[i].internal_pull_capable);
-    cJSON_AddBoolToObject(item, "is_default", options[i].is_default);
-    if (!cJSON_AddItemToArray(arr, item)) {
-      cJSON_Delete(item);
-      return false;
-    }
-  }
-
-  return true;
-}
-
-static bool api_hardware_map_add_options(cJSON *root) {
-  if (!root) {
-    return false;
-  }
-
-  cJSON *options = cJSON_AddObjectToObject(root, "options");
-  if (!options) {
-    return false;
-  }
-
-  for (hardware_role_t role = HARDWARE_ROLE_FLOAT_INPUT;
-       role < HARDWARE_ROLE_COUNT; role = (hardware_role_t)(role + 1)) {
-    if (!api_hardware_options_add_role(options, role)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-/* Report firmware-locked GPIO pins (buttons, LEDs) and board identity to
- * the web UI so the hardware page is not hardcoded to one board. Pin values
- * come from existing compile-time macros in app_config.h (not new assignments).
- */
-static bool api_hardware_add_board_info(cJSON *root) {
-  if (!root)
-    return false;
-
-  cJSON *board = cJSON_AddObjectToObject(root, "board");
-  if (!board)
-    return false;
-  cJSON_AddStringToObject(board, "target", APP_TEMPLATE_BOARD_TARGET);
-  cJSON_AddStringToObject(board, "name", APP_TEMPLATE_BOARD_NAME);
-  cJSON_AddNumberToObject(board, "flash_mb",
-                          (double)APP_TEMPLATE_BOARD_FLASH_MB);
-  cJSON_AddNumberToObject(board, "psram_mb",
-                          (double)APP_TEMPLATE_BOARD_PSRAM_MB);
-
-  cJSON *locked = cJSON_AddObjectToObject(root, "locked_pins");
-  if (!locked)
-    return false;
-  cJSON_AddNumberToObject(locked, "boot_btn", (double)APP_CONFIG_BOOT_BTN_GPIO);
-  cJSON_AddNumberToObject(locked, "ext_btn", (double)APP_CONFIG_EXT_BTN_GPIO);
-  cJSON_AddNumberToObject(locked, "ext_led", (double)APP_CONFIG_EXT_LED_GPIO);
-  cJSON_AddNumberToObject(locked, "rgb_led", (double)APP_CONFIG_RGB_LED_GPIO);
-
-  return true;
-}
-
-/* Fixed sensor UART pins and fixed inputs (read-only on the Hardware page). */
-static bool api_hardware_add_fixed_bus_pins(cJSON *root) {
-  size_t count = 0;
-  const hardware_bus_pin_t *bus = hardware_map_fixed_bus_pins(&count);
-  cJSON *arr = cJSON_AddArrayToObject(root, "fixed_bus_pins");
-  if (!arr) {
-    return false;
-  }
-  for (size_t i = 0; i < count; i++) {
-    cJSON *item = cJSON_CreateObject();
-    if (!item) {
-      return false;
-    }
-    cJSON_AddStringToObject(item, "id", bus[i].id);
-    cJSON_AddStringToObject(item, "label", bus[i].label);
-    cJSON_AddNumberToObject(item, "uart", bus[i].uart_port);
-    cJSON_AddNumberToObject(item, "tx", bus[i].tx_gpio);
-    cJSON_AddNumberToObject(item, "rx", bus[i].rx_gpio);
-    cJSON_AddNumberToObject(item, "baud", bus[i].baud);
-    cJSON_AddItemToArray(arr, item);
-  }
-
-  size_t in_count = 0;
-  const hardware_fixed_input_t *in = hardware_map_fixed_inputs(&in_count);
-  cJSON *inputs = cJSON_AddArrayToObject(root, "fixed_inputs");
-  if (!inputs) {
-    return false;
-  }
-  for (size_t i = 0; i < in_count; i++) {
-    cJSON *item = cJSON_CreateObject();
-    if (!item) {
-      return false;
-    }
-    cJSON_AddStringToObject(item, "id", in[i].id);
-    cJSON_AddStringToObject(item, "label", in[i].label);
-    cJSON_AddNumberToObject(item, "gpio", in[i].gpio);
-    cJSON_AddStringToObject(item, "wiring", in[i].wiring);
-    cJSON_AddItemToArray(inputs, item);
-  }
-  return true;
-}
-
-static esp_err_t api_hardware_map_send(httpd_req_t *req) {
-  hardware_map_t active = hardware_map_defaults();
-  hardware_map_t pending = hardware_map_defaults();
-  nvs_store_hardware_map_load_status_t active_status =
-      nvs_store_load_hardware_map(&active);
-  nvs_store_pending_hardware_map_load_status_t pending_status =
-      nvs_store_load_pending_hardware_map(&pending);
-
-  bool pending_valid = pending_status == NVS_STORE_PENDING_HARDWARE_MAP_LOADED;
-  bool reboot_required = false;
-  bool reboot_status_ok = nvs_store_hardware_reboot_required(&reboot_required);
-  if (!pending_valid) {
-    reboot_required = false;
-  }
-
-  cJSON *root = cJSON_CreateObject();
-  if (!root) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  cJSON_AddBoolToObject(root, "ok", true);
-  cJSON_AddStringToObject(root, "active_status",
-                          api_hardware_map_status_name(active_status));
-  cJSON_AddStringToObject(root, "pending_status",
-                          api_pending_hardware_map_status_name(pending_status));
-  cJSON_AddBoolToObject(root, "pending_valid", pending_valid);
-  cJSON_AddBoolToObject(root, "reboot_required",
-                        reboot_status_ok && reboot_required);
-  if (!api_hardware_map_add_json(root, "active", &active)) {
-    cJSON_Delete(root);
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-  if (pending_valid) {
-    if (!api_hardware_map_add_json(root, "pending", &pending)) {
-      cJSON_Delete(root);
-      return send_api_error(req, "memory", "JSON allocation failed",
-                            "500 Internal Server Error");
-    }
-  } else {
-    cJSON_AddNullToObject(root, "pending");
-  }
-  if (!api_hardware_map_add_options(root)) {
-    cJSON_Delete(root);
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-  if (!api_hardware_add_board_info(root)) {
-    cJSON_Delete(root);
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-  if (!api_hardware_add_fixed_bus_pins(root)) {
-    cJSON_Delete(root);
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  char *json_str = cJSON_PrintUnformatted(root);
-  cJSON_Delete(root);
-  if (!json_str) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-
-  esp_err_t result = send_json(req, json_str, "200 OK");
-  free(json_str);
-  return result;
-}
-
-
 static bool __attribute__((unused)) api_pump_required_u32(const cJSON *root, const char *name,
                                   uint32_t *out, const char **error_code,
                                   const char **error_message) {
@@ -904,91 +578,6 @@ static bool __attribute__((unused)) api_pump_required_bool(const cJSON *root, co
   *out = cJSON_IsTrue(item);
   return true;
 }
-
-static bool api_hardware_required_gpio(const cJSON *root, const char *name,
-                                       hardware_role_t role, gpio_num_t *out,
-                                       const char **error_code,
-                                       const char **error_message) {
-  const cJSON *item = cJSON_GetObjectItem(root, name);
-  if (!item) {
-    *error_code = "missing_field";
-    *error_message = name;
-    return false;
-  }
-  if (!cJSON_IsNumber(item) || item->valuedouble < 0.0) {
-    *error_code = "invalid_type";
-    *error_message = name;
-    return false;
-  }
-
-  int gpio = item->valueint;
-  if ((double)gpio != item->valuedouble) {
-    *error_code = "invalid_type";
-    *error_message = name;
-    return false;
-  }
-  if (!hardware_map_gpio_allowed_for_role(role, (gpio_num_t)gpio)) {
-    *error_code = "gpio_not_allowed";
-    *error_message = name;
-    return false;
-  }
-
-  *out = (gpio_num_t)gpio;
-  return true;
-}
-
-static bool api_hardware_parse_map_payload(const cJSON *root,
-                                           hardware_map_t *map,
-                                           const char **error_code,
-                                           const char **error_message) {
-  if (!root || !map) {
-    *error_code = "invalid_json";
-    *error_message = "Expected a JSON object";
-    return false;
-  }
-
-  const cJSON *map_obj = cJSON_GetObjectItem(root, "map");
-  if (!map_obj || !cJSON_IsObject(map_obj)) {
-    *error_code = "missing_field";
-    *error_message = "map";
-    return false;
-  }
-
-  const cJSON *confirm = cJSON_GetObjectItem(root, "confirm_reboot_required");
-  if (!confirm || !cJSON_IsBool(confirm) || !cJSON_IsTrue(confirm)) {
-    *error_code = "confirmation_required";
-    *error_message = "confirm_reboot_required";
-    return false;
-  }
-
-  if (!api_hardware_required_gpio(
-          map_obj, "float_input_gpio", HARDWARE_ROLE_FLOAT_INPUT,
-          &map->float_input_gpio, error_code, error_message) ||
-      !api_hardware_required_gpio(
-          map_obj, "pump_relay1_gpio", HARDWARE_ROLE_PUMP_RELAY_1,
-          &map->pump_relay1_gpio, error_code, error_message) ||
-      !api_hardware_required_gpio(
-          map_obj, "pump_relay2_gpio", HARDWARE_ROLE_PUMP_RELAY_2,
-          &map->pump_relay2_gpio, error_code, error_message) ||
-      !api_hardware_required_gpio(
-          map_obj, "ds18b20_gpio", HARDWARE_ROLE_DS18B20_DATA,
-          &map->ds18b20_data_gpio, error_code, error_message) ||
-      !api_hardware_required_gpio(
-          map_obj, "cooling_relay_gpio", HARDWARE_ROLE_COOLING_RELAY,
-          &map->cooling_relay_gpio, error_code, error_message)) {
-    return false;
-  }
-
-  if (!hardware_map_validate(map)) {
-    *error_code = "invalid_hardware_map";
-    *error_message = "map";
-    return false;
-  }
-
-  return true;
-}
-
-
 
 static bool static_asset_cacheable(const char *mime_type) {
   return strncmp(mime_type, "text/css", strlen("text/css")) == 0 ||
@@ -2060,7 +1649,7 @@ static esp_err_t handle_api_hardware_map_get(httpd_req_t *req) {
                      "403 Forbidden");
   }
 
-  return api_hardware_map_send(req);
+  return http_dapi(req, "hardware.map.get", NULL);
 }
 
 /* POST /api/hardware/map - protected, save pending hardware map for reboot */
@@ -2096,35 +1685,9 @@ static esp_err_t handle_api_hardware_map_post(httpd_req_t *req) {
                           "400 Bad Request");
   }
 
-  hardware_map_t submitted = hardware_map_defaults();
-  const char *error_code = NULL;
-  const char *error_message = NULL;
-  bool valid = api_hardware_parse_map_payload(root, &submitted, &error_code,
-                                              &error_message);
+  esp_err_t result = http_dapi(req, "hardware.map.set", root);
   cJSON_Delete(root);
-  if (!valid) {
-    return send_api_error(req, error_code, error_message, "400 Bad Request");
-  }
-
-  hardware_map_t active = hardware_map_defaults();
-  nvs_store_hardware_map_load_status_t active_status =
-      nvs_store_load_hardware_map(&active);
-  if (active_status == NVS_STORE_HARDWARE_MAP_DEFAULTS_ERROR) {
-    return send_api_error(req, "hardware_map_load_failed",
-                          "Could not load active hardware map",
-                          "500 Internal Server Error");
-  }
-
-  bool saved = hardware_map_equal(&active, &submitted)
-                   ? nvs_store_clear_pending_hardware_map()
-                   : nvs_store_save_pending_hardware_map(&submitted);
-  if (!saved) {
-    return send_api_error(req, "pending_save_failed",
-                          "Could not save pending hardware map",
-                          "500 Internal Server Error");
-  }
-
-  return api_hardware_map_send(req);
+  return result;
 }
 
 /* GET /api/pump/config - protected, return persisted pump config plus read-only
@@ -2199,24 +1762,6 @@ static esp_err_t handle_api_pump_status(httpd_req_t *req) {
 
 /* ---------------- Sensors (PZEM power + SEN0708 pH) ---------------- */
 
-static void sensors_add_age(cJSON *obj, uint32_t last_ok_ms) {
-  if (last_ok_ms == 0) {
-    cJSON_AddNullToObject(obj, "age_ms");
-  } else {
-    cJSON_AddNumberToObject(obj, "age_ms",
-                            (double)(uint32_t)(sensors_now_ms() - last_ok_ms));
-  }
-}
-
-static void sensors_add_notice(cJSON *parent, const char *key,
-                               const char *text, bool ok) {
-  cJSON *n = cJSON_AddObjectToObject(parent, key);
-  if (n) {
-    cJSON_AddStringToObject(n, "text", text ? text : "");
-    cJSON_AddBoolToObject(n, "ok", ok);
-  }
-}
-
 /* GET /api/sensors/status - protected, full sensor state for the Sensors page */
 static esp_err_t handle_api_sensors_status(httpd_req_t *req) {
   if (!require_auth(req)) {
@@ -2224,98 +1769,7 @@ static esp_err_t handle_api_sensors_status(httpd_req_t *req) {
                      "401 Unauthorized");
   }
 
-  power_monitor_status_t *pw = calloc(1, sizeof(*pw));
-  water_quality_status_t *wq = calloc(1, sizeof(*wq));
-  cJSON *root = cJSON_CreateObject();
-  if (!pw || !wq || !root) {
-    free(pw);
-    free(wq);
-    cJSON_Delete(root);
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-  bool pw_ok = power_monitor_get_status(pw);
-  bool wq_ok = water_quality_get_status(wq);
-
-  cJSON_AddBoolToObject(root, "ok", true);
-
-  cJSON *power = cJSON_AddArrayToObject(root, "power");
-  for (int ch = 0; power && ch < POWER_MONITOR_CHANNELS; ch++) {
-    const power_monitor_channel_t *c = &pw->ch[ch];
-    cJSON *o = cJSON_CreateObject();
-    if (!o) {
-      break;
-    }
-    cJSON_AddNumberToObject(o, "channel", ch);
-    cJSON_AddStringToObject(o, "name", ch == 0 ? "pump" : "chiller");
-    cJSON_AddBoolToObject(o, "valid", pw_ok && c->valid);
-    cJSON_AddBoolToObject(o, "fault", !pw_ok || c->fault);
-    cJSON_AddNumberToObject(o, "voltage", c->voltage_v);
-    cJSON_AddNumberToObject(o, "current", c->current_a);
-    cJSON_AddNumberToObject(o, "power", c->power_w);
-    cJSON_AddNumberToObject(o, "energy_wh", c->energy_wh);
-    cJSON_AddNumberToObject(o, "frequency", c->frequency_hz);
-    cJSON_AddNumberToObject(o, "pf", c->pf);
-    sensors_add_age(o, c->last_ok_ms);
-    cJSON_AddItemToArray(power, o);
-  }
-  sensors_add_notice(root, "power_notice", pw->notice, pw->notice_ok);
-
-  cJSON *water = cJSON_AddObjectToObject(root, "water");
-  if (water) {
-    cJSON_AddBoolToObject(water, "valid", wq_ok && wq->valid);
-    cJSON_AddBoolToObject(water, "fault", !wq_ok || wq->fault);
-    cJSON_AddBoolToObject(water, "stable", wq_ok && wq->stable);
-    cJSON_AddNumberToObject(water, "ph", wq->ph);
-    cJSON_AddNumberToObject(water, "temperature_c", wq->temperature_c);
-    cJSON *off = cJSON_AddObjectToObject(water, "offsets");
-    if (off) {
-      cJSON_AddBoolToObject(off, "known", wq->offsets_known);
-      cJSON_AddNumberToObject(off, "ph", wq->ph_offset);
-      cJSON_AddNumberToObject(off, "temp", wq->temp_offset);
-    }
-    cJSON *cal = cJSON_AddObjectToObject(water, "calibration");
-    if (cal) {
-      cJSON_AddStringToObject(cal, "state",
-                              wq->cal_state ? wq->cal_state : "idle");
-      if (wq->cal_error) {
-        cJSON_AddStringToObject(cal, "error", wq->cal_error);
-      } else {
-        cJSON_AddNullToObject(cal, "error");
-      }
-    }
-    sensors_add_notice(water, "notice", wq->notice, wq->notice_ok);
-    sensors_add_age(water, wq->last_ok_ms);
-  }
-  free(pw);
-  free(wq);
-
-  /* Flow switch: no fault state (a bare contact cannot report one). */
-  cJSON *flow = cJSON_AddObjectToObject(root, "flow");
-  if (flow) {
-    flow_switch_status_t fs;
-    telemetry_snapshot_t snap;
-    bool fs_ok = flow_switch_get_status(&fs);
-    bool snap_ok = telemetry_hub_get_latest(&snap) == ESP_OK && snap.has_flow;
-    cJSON_AddBoolToObject(flow, "on", fs_ok ? fs.flow_on : (snap_ok && snap.flow.flow_on));
-    if (snap_ok && snap.flow_updated_ms != 0) {
-      cJSON_AddNumberToObject(
-          flow, "age_ms",
-          (double)(uint32_t)(sensors_now_ms() - snap.flow_updated_ms));
-    } else {
-      cJSON_AddNullToObject(flow, "age_ms");
-    }
-  }
-
-  char *json_str = cJSON_PrintUnformatted(root);
-  cJSON_Delete(root);
-  if (!json_str) {
-    return send_api_error(req, "memory", "JSON allocation failed",
-                          "500 Internal Server Error");
-  }
-  esp_err_t result = send_json(req, json_str, "200 OK");
-  free(json_str);
-  return result;
+  return http_dapi(req, "sensors.get", NULL);
 }
 
 /* Shared guard for JSON write endpoints: auth, same origin, JSON object body
@@ -2581,151 +2035,7 @@ static esp_err_t handle_api_status(httpd_req_t *req) {
                      "403 Forbidden");
   }
 
-  bool sta_conn = wifi_manager_is_sta_connected();
-  bool ap_up = wifi_manager_is_ap_enabled();
-
-  char *json_buf = malloc(2048);
-  if (!json_buf) {
-    return send_json(req, "{\"ok\":false,\"error\":\"memory\"}",
-                     "500 Internal Server Error");
-  }
-  json_gen_t gen;
-  json_gen_init(&gen, json_buf, 2048);
-  json_gen_start_object(&gen);
-
-  json_gen_add_bool(&gen, "ok", true);
-
-  /* ---------- System ---------- */
-  esp_chip_info_t chip;
-  esp_chip_info(&chip);
-  json_gen_add_string_safe(&gen, "chip_model",
-                           chip_model_to_string(chip.model));
-  json_gen_add_string(&gen, "board_name", APP_TEMPLATE_BOARD_NAME);
-  json_gen_add_string(&gen, "board_target", APP_TEMPLATE_BOARD_TARGET);
-  json_gen_add_number(&gen, "chip_revision", (double)(chip.revision));
-  json_gen_add_number(&gen, "chip_cores", (double)(chip.cores));
-  json_gen_add_number(&gen, "cpu_freq_mhz",
-                      (double)(CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ));
-  json_gen_add_string(&gen, "idf_version", esp_get_idf_version());
-  json_gen_add_string(&gen, "project_name", APP_TEMPLATE_NAME);
-  json_gen_add_string(&gen, "project_version", APP_TEMPLATE_FIRMWARE_VERSION);
-  json_gen_add_string(&gen, "reset_reason",
-                      reset_reason_to_string(esp_reset_reason()));
-
-  const char *rst_detail = app_get_last_restart_detail();
-  if (rst_detail && rst_detail[0]) {
-    json_gen_add_string_safe(&gen, "reset_detail", rst_detail);
-  }
-
-  /* ---------- MAC addresses ---------- */
-  uint8_t mac[6];
-  char mac_str[18];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  format_mac(mac, mac_str);
-  json_gen_add_string(&gen, "mac_sta", mac_str);
-  esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
-  format_mac(mac, mac_str);
-  json_gen_add_string(&gen, "mac_ap", mac_str);
-
-  /* ---------- Memory (internal DRAM — same capability for all metrics)
-   * ---------- */
-  uint32_t free_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-  uint32_t min_free_heap = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
-  uint32_t total_heap = heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
-  uint32_t largest_free_block =
-      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-  json_gen_add_number(&gen, "free_heap", (double)(free_heap));
-  json_gen_add_number(&gen, "min_free_heap", (double)(min_free_heap));
-  json_gen_add_number(&gen, "total_heap", (double)(total_heap));
-  json_gen_add_number(&gen, "largest_free_block", (double)(largest_free_block));
-
-  uint32_t psram_total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
-  uint32_t psram_free =
-      psram_total > 0 ? heap_caps_get_free_size(MALLOC_CAP_SPIRAM) : 0;
-  json_gen_add_number(&gen, "psram_total", (double)(psram_total));
-  json_gen_add_number(&gen, "psram_free", (double)(psram_free));
-
-  /* ---------- Uptime ---------- */
-  json_gen_add_number(&gen, "uptime_ms",
-                      (double)(wifi_manager_get_uptime_ms()));
-
-  /* ---------- Wi-Fi ---------- */
-  wifi_mode_t wmode;
-  esp_wifi_get_mode(&wmode);
-  const char *wmode_str = "NULL";
-  if (wmode == WIFI_MODE_STA)
-    wmode_str = "STA";
-  else if (wmode == WIFI_MODE_AP)
-    wmode_str = "AP";
-  else if (wmode == WIFI_MODE_APSTA)
-    wmode_str = "APSTA";
-  json_gen_add_string(&gen, "wifi_mode", wmode_str);
-
-  /* AP info */
-  json_gen_add_bool(&gen, "ap_enabled", ap_up);
-  json_gen_add_string(&gen, "ap_ssid", ap_up ? AP_SSID : "");
-  json_gen_add_string(&gen, "ap_ip", ap_up ? wifi_manager_get_ap_ip() : "");
-
-  wifi_sta_list_t sta_list;
-  if (ap_up && esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK) {
-    json_gen_add_number(&gen, "ap_clients", (double)(sta_list.num));
-    if (sta_list.num > 0) {
-      int8_t weakest_rssi = sta_list.sta[0].rssi;
-      for (int i = 1; i < sta_list.num; i++) {
-        if (sta_list.sta[i].rssi < weakest_rssi) {
-          weakest_rssi = sta_list.sta[i].rssi;
-        }
-      }
-      json_gen_add_number(&gen, "ap_client_weakest_rssi",
-                          (double)(weakest_rssi));
-    }
-  } else {
-    json_gen_add_number(&gen, "ap_clients", (double)(0));
-  }
-
-  /* STA info */
-  json_gen_add_bool(&gen, "sta_connected", sta_conn);
-  json_gen_add_bool(&gen, "sta_connecting", wifi_manager_is_sta_connecting());
-  json_gen_add_bool(&gen, "sta_retry_blocked",
-                    wifi_manager_is_sta_retry_blocked());
-  json_gen_add_string(&gen, "sta_ip",
-                      sta_conn ? wifi_manager_get_sta_ip() : "");
-  json_gen_add_string_safe(&gen, "sta_ssid",
-                           sta_conn ? wifi_manager_get_sta_ssid() : "");
-
-  if (sta_conn) {
-    wifi_ap_record_t ap_rec;
-    if (esp_wifi_sta_get_ap_info(&ap_rec) == ESP_OK) {
-      json_gen_add_number(&gen, "sta_rssi", (double)(ap_rec.rssi));
-      json_gen_add_number(&gen, "sta_channel", (double)(ap_rec.primary));
-      json_gen_add_string(&gen, "sta_auth",
-                          wifi_auth_mode_to_string(ap_rec.authmode));
-    }
-  }
-
-  /* ---------- Services ---------- */
-  json_gen_add_bool(&gen, "dns_server", dns_server_is_running());
-  json_gen_add_number(&gen, "http_json_send_failures",
-                      (double)(s_json_send_failures));
-  json_gen_add_number(&gen, "http_static_send_failures",
-                      (double)(s_static_send_failures));
-  json_gen_add_number(&gen, "http_static_cache_hits",
-                      (double)(s_static_cache_hits));
-  json_gen_add_number(&gen, "http_static_deadline_aborts",
-                      (double)(s_static_deadline_aborts));
-
-  uint8_t stg_type = 0;
-  nvs_store_get_staging_type(&stg_type);
-  json_gen_add_number(&gen, "stg_type", (double)(stg_type));
-
-  /* ---------- Pump ---------- */
-  api_pump_add_status_fields_gen(&gen);
-
-  json_gen_end_object(&gen);
-
-  esp_err_t result = send_json(req, json_buf, "200 OK");
-  free(json_buf);
-  return result;
+  return http_dapi(req, "status.get", NULL);
 }
 
 /* POST /api/confirm - confirm and commit staged configuration changes */
@@ -3104,14 +2414,7 @@ static esp_err_t handle_api_uplink_preview(httpd_req_t *req) {
   if (!require_auth(req)) {
     return alarms_unauthorized(req);
   }
-  char *json = uplink_preview_json();
-  if (!json) {
-    return send_api_error(req, "memory", "Uplink preview unavailable",
-                          "503 Service Unavailable");
-  }
-  esp_err_t result = send_json(req, json, "200 OK");
-  free(json);
-  return result;
+  return http_dapi(req, "uplink.preview", NULL);
 }
 
 /* GET /api/tb - link config (never the token or provision secret) and live status */
@@ -3695,6 +2998,15 @@ static esp_err_t handle_instrumented_route(httpd_req_t *req) {
   return result;
 }
 
+void web_server_get_http_counters(web_server_http_counters_t *out) {
+  taskENTER_CRITICAL(&s_web_diag_lock);
+  out->json_send_failures = s_json_send_failures;
+  out->static_send_failures = s_static_send_failures;
+  out->static_cache_hits = s_static_cache_hits;
+  out->static_deadline_aborts = s_static_deadline_aborts;
+  taskEXIT_CRITICAL(&s_web_diag_lock);
+}
+
 void web_server_log_diagnostics(void) {
   web_server_diag_t diag;
   uint32_t json_send_failures;
@@ -3843,6 +3155,8 @@ bool web_server_start(void) {
   dapi_cooling_register();
   dapi_water_power_register();
   dapi_wifi_register();
+  dapi_status_register();
+  dapi_hardware_register();
   esp_err_t start_err = httpd_start(&s_server, &config);
   if (start_err != ESP_OK) {
     taskENTER_CRITICAL(&s_web_diag_lock);

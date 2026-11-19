@@ -68,15 +68,15 @@ def test_flow_and_rename():
     js = read(MAIN_DIR / "static" / "app.js")
     hw = read(COMP_DIR / "hardware_map" / "hardware_map.c")
 
-    status = function_body(ws, "handle_api_sensors_status")
-    assert_test('"flow"' in status, "handle_api_sensors_status reports flow")
+    status = function_body(read(MAIN_DIR / "dapi_status.c"), "dapi_sensors_get")
+    assert_test('"flow"' in status, "sensors.get reports flow")
     cb = function_body(ws, "web_server_telemetry_cb")
     assert_test("case TELEMETRY_EVT_FLOW:" in cb and 'evt_name = "flow"' in cb,
                 "SSE flow event emitted")
     assert_test('"pump1"' not in ws and '"pump2"' not in ws, "web_server.c has no pump1/pump2 names")
     assert_test("pzem_pump1" not in hw and "ปั๊ม 1" not in hw, "hardware_map.c has no pump1 names")
-    assert_test("fixed_inputs" in function_body(ws, "api_hardware_add_fixed_bus_pins") or
-                "fixed_inputs" in ws, "/api/hardware/map exposes fixed_inputs")
+    assert_test("fixed_inputs" in function_body(read(MAIN_DIR / "dapi_hardware.c"), "api_hardware_add_fixed_bus_pins"),
+                "/api/hardware/map exposes fixed_inputs")
     for el in ('id="flow-card"', 'id="flow-state"', 'id="hw-fixed-inputs"',
                "ไฟฟ้า ปั๊มน้ำ", "ไฟฟ้า Chiller"):
         assert_test(el in html, f"index.html has {el}")

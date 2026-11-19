@@ -2,7 +2,7 @@
   {"name": "status", "method": "GET", "path": "/api/status", "body": null, "mode": "shape", "ignore": ["age_ms", "error", "v", "value", "reason", "pending"]},
   {"name": "sensors_status", "method": "GET", "path": "/api/sensors/status", "body": null, "mode": "shape", "ignore": ["age_ms", "error", "v", "value", "reason", "pending"]},
   {"name": "hardware_map", "method": "GET", "path": "/api/hardware/map", "body": null, "mode": "exact", "ignore": []},
-  {"name": "uplink_preview", "method": "GET", "path": "/api/uplink/preview", "body": null, "mode": "shape", "ignore": ["age_ms", "error", "v", "value", "reason", "pending"]},
+  {"name": "uplink_preview", "method": "GET", "path": "/api/uplink/preview", "body": null, "mode": "shape", "ignore": ["age_ms", "error", "v", "value", "reason", "pending"], "nullable": ["$.last_event"]},
   {"name": "alarm_signals", "method": "GET", "path": "/api/alarms/signals", "body": null, "mode": "exact", "ignore": []},
   {"name": "alarm_values", "method": "GET", "path": "/api/alarms/values", "body": null, "mode": "shape", "ignore": ["age_ms", "error", "v", "value", "reason", "pending"]},
   {"name": "alarm_rules", "method": "GET", "path": "/api/alarms/rules", "body": null, "mode": "exact", "ignore": []},

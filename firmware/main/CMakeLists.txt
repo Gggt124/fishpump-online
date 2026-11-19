@@ -39,6 +39,8 @@ idf_component_register(
         "dapi_cooling.c"
         "dapi_water_power.c"
         "dapi_wifi.c"
+        "dapi_status.c"
+        "dapi_hardware.c"
     INCLUDE_DIRS
         "."
     EMBED_FILES

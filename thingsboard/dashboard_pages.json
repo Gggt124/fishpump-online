@@ -104,5 +104,31 @@
       {"label": "wifi.disconnect (ใช้ได้เฉพาะเว็บแอปในเครื่องเท่านั้น)", "method": "wifi.disconnect", "params": null, "edit": false, "load": null,
        "confirm": "คุณต้องการตัดการเชื่อมต่อ Wi-Fi ใช่หรือไม่?"}
     ]
+
+  },
+  {
+    "id": "status",
+    "title": "สถานะระบบ (Status)",
+    "telemetry": ["free_heap_bytes", "free_psram_bytes", "wifi_rssi_dbm", "uptime_sec", "oom_strikes"],
+    "actions": [
+      {"label": "status.get", "method": "status.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "uplink.preview (ข้อมูลที่จะส่งขึ้น ThingsBoard)", "method": "uplink.preview", "params": null, "edit": false, "load": null, "confirm": null}
+    ]
+  },
+  {
+    "id": "sensors",
+    "title": "เซนเซอร์ (Sensors)",
+    "telemetry": ["water_ph", "water_temp_c", "water_ph_stable", "water_sensor_fault", "pump_power_w", "chiller_power_w", "flow_on", "float_high"],
+    "actions": [
+      {"label": "sensors.get", "method": "sensors.get", "params": null, "edit": false, "load": null, "confirm": null}
+    ]
+  },
+  {
+    "id": "hardware",
+    "title": "ฮาร์ดแวร์ (Hardware) - อ่านอย่างเดียว",
+    "telemetry": [],
+    "actions": [
+      {"label": "hardware.map.get (อ่านอย่างเดียว การแก้ไขต้องใช้เว็บแอปในเครื่องเท่านั้น)", "method": "hardware.map.get", "params": null, "edit": false, "load": null, "confirm": null}
+    ]
   }
 ]

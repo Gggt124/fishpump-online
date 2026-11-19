@@ -153,5 +153,17 @@
        "path": "auto_index", "change": {"same": true}, "send_as": "index",
        "set": "wifi.profiles.setauto", "set_http": "/api/wifi/profiles/setauto"}
     ]
+  },
+  "status": {
+    "reads": [
+      {"method": "status.get", "http": "/api/status", "ignore": [], "shape": true},
+      {"method": "sensors.get", "http": "/api/sensors/status", "ignore": [], "shape": true},
+      {"method": "uplink.preview", "http": "/api/uplink/preview", "ignore": [], "shape": true},
+      {"method": "hardware.map.get", "http": "/api/hardware/map", "ignore": []}
+    ],
+    "errors": [
+      {"method": "hardware.map.set", "params": {}, "http": null, "error": "local_only"}
+    ],
+    "writes": []
   }
 }

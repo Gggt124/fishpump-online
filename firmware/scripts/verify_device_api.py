@@ -386,6 +386,90 @@ def test_wifi_group():
     assert_test("cJSON_CreateRaw" in function_body(src, "scan_cache_get"), "wifi.scan keeps the cached bytes via cJSON_CreateRaw")
 
 
+def test_status_group():
+    methods = [
+        ("status.get", r"DAPI_F_READ", "0"),
+        ("sensors.get", r"DAPI_F_READ", "0"),
+        ("uplink.preview", r"DAPI_F_READ", "0"),
+    ]
+    handlers = [
+        ("handle_api_status", "status.get"),
+        ("handle_api_sensors_status", "sensors.get"),
+        ("handle_api_uplink_preview", "uplink.preview"),
+    ]
+    forbidden = ["esp_get_free_heap_size", "heap_caps_get_", "water_quality_get", "power_monitor_get",
+                 "flow_switch_get", "nvs_store_save_hardware", "uplink_", "telemetry_hub_get_latest",
+                 "esp_wifi_", "wifi_manager_", "json_gen_"]
+    check_group("status and sensors", "dapi_status.c", "dapi_status_register", methods, handlers, forbidden)
+    ws = read(MAIN_DIR / "web_server.c")
+    src = read(MAIN_DIR / "dapi_status.c")
+    body = function_body(ws, "handle_api_status")
+    assert_test("require_auth(req)" in body and "is_password_default()" in body,
+                "handle_api_status keeps auth and force_password_change pre-checks")
+    assert_test("require_auth(req)" in function_body(ws, "handle_api_sensors_status")
+                and "is_password_default()" not in function_body(ws, "handle_api_sensors_status"),
+                "handle_api_sensors_status keeps its auth-only pre-check")
+    up = function_body(ws, "handle_api_uplink_preview")
+    assert_test("require_auth(req)" in up and "alarms_unauthorized(req)" in up,
+                "handle_api_uplink_preview keeps its unauthorized pre-check")
+    status = function_body(src, "dapi_status_get")
+    assert_test("cJSON_CreateRaw" in status and "heap_caps_malloc" in status and "MALLOC_CAP_SPIRAM" in status
+                and "malloc(" in status and "api_pump_add_status_fields_gen" in status,
+                "status.get builds on the heap (PSRAM first) and wraps the json_gen bytes raw")
+    assert_test(not re.search(r"char\s+\w+\[\s*\d{3,}", status), "status.get has no big stack buffer")
+    assert_test("cJSON_CreateRaw" in function_body(src, "dapi_uplink_preview") and "free(" in function_body(src, "dapi_uplink_preview"),
+                "uplink.preview wraps the preview text raw and frees it")
+    sens = function_body(src, "dapi_sensors_get")
+    assert_test('"flow"' in sens and '"offsets"' in sens, "sensors.get reports flow and water offsets")
+    assert_test("calloc(" in sens and not re.search(r"telemetry_snapshot_t\s+\w+\s*;", sens)
+                and not re.search(r"(power_monitor_status_t|water_quality_status_t)\s+\w+\s*;", sens),
+                "sensors.get keeps its big structs on the heap")
+    for sym in ("sensors_add_age", "sensors_add_notice", "chip_model_to_string", "reset_reason_to_string",
+                "format_mac", "json_gen_add_string_safe"):
+        assert_test(sym not in ws, f"web_server.c no longer holds {sym}")
+    wh = read(MAIN_DIR / "web_server.h")
+    assert_test("web_server_get_http_counters" in wh and "web_server_get_http_counters" in ws
+                and "web_server_get_http_counters" in src,
+                "the HTTP failure counters reach dapi_status.c through web_server_get_http_counters")
+
+
+def test_hardware_group():
+    local = r"DAPI_F_WRITE\s*\|\s*DAPI_F_LOCAL_ONLY"
+    methods = [
+        ("hardware.map.get", r"DAPI_F_READ", "0"),
+        ("hardware.map.set", local, "HARDWARE_MAP_BODY_BYTES"),
+    ]
+    handlers = [
+        ("handle_api_hardware_map_get", "hardware.map.get"),
+        ("handle_api_hardware_map_post", "hardware.map.set"),
+    ]
+    forbidden = ["nvs_store_save_pending_hardware", "nvs_store_load_hardware", "nvs_store_load_pending_hardware",
+                 "nvs_store_clear_pending_hardware", "nvs_store_save_hardware", "hardware_map_", "api_hardware_"]
+    check_group("hardware map", "dapi_hardware.c", "dapi_hardware_register", methods, handlers, forbidden)
+    ws = read(MAIN_DIR / "web_server.c")
+    hdr = read(MAIN_DIR / "dapi_hardware.h")
+    src = read(MAIN_DIR / "dapi_hardware.c")
+    assert_test(re.search(r"#define\s+HARDWARE_MAP_BODY_BYTES\s+512$", hdr, re.M) is not None,
+                "HARDWARE_MAP_BODY_BYTES is 512")
+    assert_test("require_auth(req)" in function_body(ws, "handle_api_hardware_map_get")
+                and "is_password_default()" in function_body(ws, "handle_api_hardware_map_get"),
+                "handle_api_hardware_map_get keeps auth and force_password_change pre-checks")
+    post = function_body(ws, "handle_api_hardware_map_post")
+    assert_test("require_auth(req)" in post and "is_password_default()" in post and "is_same_origin(req, false)" in post
+                and "read_request_body(" in post and '"empty_body"' in post and "cJSON_Delete(root)" in post,
+                "handle_api_hardware_map_post keeps auth, force_password_change, same-origin and body pre-checks")
+    setm = function_body(src, "dapi_hardware_map_set")
+    assert_test("api_hardware_parse_map_payload" in setm
+                and setm.find("api_hardware_parse_map_payload") < setm.find("nvs_store_save_pending_hardware_map"),
+                "hardware.map.set validates the payload before saving")
+    assert_test("hardware_map_load_failed" in setm and "pending_save_failed" in setm
+                and "nvs_store_clear_pending_hardware_map" in setm,
+                "hardware.map.set keeps its load-failed and save-failed replies and the clear-when-equal path")
+    for sym in ("api_hardware_parse_map_payload", "api_hardware_map_send", "api_hardware_map_add_json",
+                "api_hardware_add_fixed_bus_pins", "api_hardware_add_board_info"):
+        assert_test(sym not in ws, f"web_server.c no longer holds {sym}")
+
+
 if __name__ == "__main__":
     test_component()
     test_logging_and_lock()
@@ -397,5 +481,7 @@ if __name__ == "__main__":
     test_cooling_group()
     test_water_power_group()
     test_wifi_group()
+    test_status_group()
+    test_hardware_group()
     print(f"\nPassed: {passed_tests}  Failed: {failed_tests}")
     sys.exit(1 if failed_tests else 0)

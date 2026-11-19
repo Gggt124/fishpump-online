@@ -9,6 +9,8 @@ Captures live in thingsboard/.local/golden/<label>.json (git-ignored).
 Case format (golden_cases.json is a list of these):
   name, method (GET|POST), path, body (object/list or null), mode (exact|shape),
   ignore (keys skipped by shape mode, at any depth)
+  optional "nullable": list of paths ("$.last_event") where shape mode accepts null for an object
+      and an object for null (a value that is null after a fresh boot and an object later)
   optional "needs": "get:<case>"  -- an idempotent write, run only with --with-writes.
       The POST body is the JSON body that GET case returned in the same run, with the
       top-level "ok" removed, then edited by these optional steps, in this order:
@@ -64,13 +66,15 @@ def _kind(v):
     return "object"
 
 
-def shape_diff(a, b, ignore, path="$"):
+def shape_diff(a, b, ignore, path="$", nullable=()):
     """None when a and b have the same keys and JSON types, else a reason string.
 
     Values are ignored. Keys in `ignore` are skipped at any depth. Arrays match
     when either is empty, otherwise their first elements must match.
     """
     ka, kb = _kind(a), _kind(b)
+    if ka != kb and path in nullable and {ka, kb} == {"null", "object"}:
+        return None
     if ka != kb:
         return "%s: type %s vs %s" % (path, ka, kb)
     if ka == "object":
@@ -81,11 +85,11 @@ def shape_diff(a, b, ignore, path="$"):
             extra = sorted(keys_b - keys_a)
             return "%s: keys differ (missing %s, extra %s)" % (path, miss, extra)
         for k in sorted(keys_a):
-            d = shape_diff(a[k], b[k], ignore, "%s.%s" % (path, k))
+            d = shape_diff(a[k], b[k], ignore, "%s.%s" % (path, k), nullable)
             if d:
                 return d
     elif ka == "array" and a and b:
-        return shape_diff(a[0], b[0], ignore, path + "[0]")
+        return shape_diff(a[0], b[0], ignore, path + "[0]", nullable)
     return None
 
 
@@ -107,7 +111,7 @@ def compare_case(case, base, new):
         if base["text"] == new["text"]:
             return True, ""
         return False, "body is not JSON and differs"
-    d = shape_diff(ja, jb, set(case.get("ignore") or []))
+    d = shape_diff(ja, jb, set(case.get("ignore") or []), nullable=set(case.get("nullable") or []))
     return (d is None), (d or "")
 
 
@@ -144,6 +148,8 @@ def validate_cases(cases):
         for p in FORBIDDEN_PREFIXES:
             if c["path"] == p or c["path"].startswith(p + "/"):
                 raise ValueError("%s: %s is not allowed in golden cases" % (name, c["path"]))
+        if not isinstance(c.get("nullable", []), list) or (c.get("nullable") and c.get("mode") != "shape"):
+            raise ValueError("%s: nullable is a list of paths and needs shape mode" % name)
         if not isinstance(c.get("expect_status", []), list):
             raise ValueError("%s: expect_status must be a list" % name)
         needs = c.get("needs")
@@ -300,6 +306,18 @@ def _selftest_compare():
             sh, {"status": 200, "text": '{"l":[{"a":1}]}'}, {"status": 200, "text": '{"l":[{"a":2},{"a":3}]}'})), True),
         ("shape array element key missing", ok_(compare_case(
             sh, {"status": 200, "text": '{"l":[{"a":1}]}'}, {"status": 200, "text": '{"l":[{"b":1}]}'})), False),
+        ("nullable object vs null", ok_(compare_case(
+            dict(sh, nullable=["$.ev"]), {"status": 200, "text": '{"ev":{"a":1}}'}, {"status": 200, "text": '{"ev":null}'})), True),
+        ("nullable null vs object", ok_(compare_case(
+            dict(sh, nullable=["$.ev"]), {"status": 200, "text": '{"ev":null}'}, {"status": 200, "text": '{"ev":{"a":1}}'})), True),
+        ("nullable object vs object checks keys", ok_(compare_case(
+            dict(sh, nullable=["$.ev"]), {"status": 200, "text": '{"ev":{"a":1}}'}, {"status": 200, "text": '{"ev":{"b":1}}'})), False),
+        ("nullable path does not excuse a number", ok_(compare_case(
+            dict(sh, nullable=["$.ev"]), {"status": 200, "text": '{"ev":{"a":1}}'}, {"status": 200, "text": '{"ev":5}'})), False),
+        ("null without nullable fails", ok_(compare_case(
+            sh, {"status": 200, "text": '{"ev":{"a":1}}'}, {"status": 200, "text": '{"ev":null}'})), False),
+        ("nullable only on its own path", ok_(compare_case(
+            dict(sh, nullable=["$.ev"]), {"status": 200, "text": '{"x":{"a":1}}'}, {"status": 200, "text": '{"x":null}'})), False),
         ("skipped in both", ok_(compare_case(ex, {"skipped": "x"}, {"skipped": "y"})), True),
         ("skipped in one", ok_(compare_case(ex, {"skipped": "x"}, a)), False),
     ]

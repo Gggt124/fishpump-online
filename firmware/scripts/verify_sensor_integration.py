@@ -97,8 +97,12 @@ def test_routes_and_guards(ws):
         assert_test(guarded, f"{handler} is guarded by auth + same-origin")
     body = function_body(ws, "handle_api_sensors_status")
     assert_test("require_auth(req)" in body, "handle_api_sensors_status requires auth")
-    hw = function_body(ws, "api_hardware_map_send")
-    assert_test("fixed_bus_pins" in hw, "/api/hardware/map exposes fixed_bus_pins")
+    hw = (MAIN_DIR / "dapi_hardware.c").read_text(encoding="utf-8")
+    assert_test("api_hardware_add_fixed_bus_pins(root)" in hw and "fixed_bus_pins" in hw,
+                "/api/hardware/map exposes fixed_bus_pins")
+    sens = (MAIN_DIR / "dapi_status.c").read_text(encoding="utf-8")
+    assert_test('http_dapi(req, "sensors.get"' in body and '"flow"' in sens and '"water"' in sens and '"power"' in sens,
+                "sensors.get serves power, water and flow behind device_api")
 
 
 def test_sse(ws):
