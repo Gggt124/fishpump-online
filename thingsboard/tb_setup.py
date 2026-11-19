@@ -16,6 +16,7 @@ HERE = Path(__file__).resolve().parent
 RULE_CHAIN_FILE = HERE / "rule_chains" / "fishpump.json"
 PROVISION_FILE = HERE / ".local" / "provision.json"
 PROFILE_NAME = "fishpump"
+QUEUE_NAME = "SequentialByOriginator"  # system queue, strategy SEQUENTIAL_BY_ORIGINATOR
 RULE_CHAIN_NAME = "fishpump"
 CUSTOMER_TITLE = "ลูกค้าทดสอบ"
 
@@ -116,6 +117,9 @@ def profile_body(name, key, secret, rc_id):
         "provisionType": "ALLOW_CREATE_NEW_DEVICES",
         "provisionDeviceKey": key,
         "defaultRuleChainId": rc_id,
+        # one message of a device finishes the whole chain before the next starts: the alarm dedupe is a
+        # read-modify-write across async nodes and a backfilled raised/cleared pair must not run in parallel
+        "defaultQueueName": QUEUE_NAME,
         "description": "fishpump boards (MQTT default topics, device provisioning)",
         "profileData": {
             "configuration": {"type": "DEFAULT"},
@@ -144,7 +148,8 @@ def ensure_profile(api, rc_id):
     else:
         # keep everything an operator set in the UI (alarms, queue, dashboard...), override only ours
         merged = dict(existing)
-        for k in ("transportType", "provisionType", "provisionDeviceKey", "defaultRuleChainId"):
+        for k in ("transportType", "provisionType", "provisionDeviceKey", "defaultRuleChainId",
+                  "defaultQueueName"):
             merged[k] = body[k]
         pd = dict(existing.get("profileData") or {})
         pd["provisionConfiguration"] = body["profileData"]["provisionConfiguration"]

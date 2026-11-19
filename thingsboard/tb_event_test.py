@@ -35,6 +35,15 @@ class Ctx:
         time.sleep(0.2)  # let the broker read the PUBLISH before DISCONNECT
         c.disconnect()
 
+    def publish_burst(self, objs):
+        """Publish several messages over one connection with no pause between them (a backfill)."""
+        c = MqttClient(self.host, self.mqtt_port, client_id=DEVICE_NAME, username=self.token)
+        c.connect()
+        for obj in objs:
+            c.publish(TOPIC_TELEMETRY, json.dumps(obj))
+        time.sleep(0.2)
+        c.disconnect()
+
     def alarms(self, atype=None):
         params = {"pageSize": 100, "page": 0}
         res = None
@@ -151,6 +160,26 @@ def run_cases(ctx):
         return abs(v - 7.1) < 1e-6, "latest water_ph = %s" % v
     ok, d = wait_for(c7)
     record("7 telemetry water_ph=7.1 saved", ok, d)
+
+    # 8 back-to-back raised + cleared (seq+1), no pause, fresh rule id per loop: every alarm must end CLEARED.
+    # The device profile uses the SequentialByOriginator queue; with the parallel Main queue this is a race.
+    boot3 = boot1 + 2
+    loops = 5
+    rule_ids = [910 + i for i in range(loops)]
+    for rid in rule_ids:
+        ctx.publish_burst([{"alarm_event": ev(boot3, 1, "raised", rid, "warning")},
+                           {"alarm_event": ev(boot3, 2, "cleared", rid, "warning")}])
+
+    def c8():
+        parts, ok = [], True
+        for rid in rule_ids:
+            al = ctx.alarms("rule_%d" % rid)
+            good = len(al) == 1 and is_cleared(al[0])
+            ok = ok and good
+            parts.append("rule_%d:%s" % (rid, describe(al) if not good else "CLEARED"))
+        return ok, " ".join(parts)
+    ok, d = wait_for(c8, timeout=POLL_TIMEOUT + 10)
+    record("8 back-to-back raised+cleared x%d -> all CLEARED" % loops, ok, d)
     return rows
 
 
