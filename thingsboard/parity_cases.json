@@ -146,7 +146,8 @@
        "params_from": {"key": "ssid", "method": "wifi.profiles.get", "path": "profiles[connected=True].ssid"}},
       {"method": "wifi.profiles.forget", "params": {}, "http": "/api/wifi/profiles/forget", "error": "missing_ssid"},
       {"method": "wifi.profiles.forget", "params": {"ssid": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}, "http": "/api/wifi/profiles/forget", "error": "invalid_ssid"},
-      {"method": "wifi.profiles.setauto", "params": {"index": 99}, "http": "/api/wifi/profiles/setauto", "error": "setauto_failed"},
+      {"method": "wifi.profiles.setauto", "params": {"index": 99}, "http": null, "error": "in_use"},
+      {"method": "wifi.profiles.setauto", "params": {"index": -1}, "http": null, "error": "in_use"},
       {"method": "wifi.profiles.save", "params": {}, "http": "/api/wifi/profiles/save", "error": "missing_ssid"},
       {"method": "wifi.profiles.save", "params": {"ssid": "parity-no-such-network"}, "http": "/api/wifi/profiles/save", "error": "not_connected"}
     ],

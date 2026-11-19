@@ -374,6 +374,10 @@ def selftest():
     check("wifi case file: connect and disconnect have no HTTP side, setauto write is a no-op",
           all(e["http"] is None for e in wifi["errors"] if e["method"] in ("wifi.connect", "wifi.disconnect"))
           and wifi["writes"][0]["change"] == {"same": True} and wifi["writes"][0]["send_as"] == "index")
+    sa = [(e["params"], e["http"], e["error"]) for e in wifi["errors"] if e["method"] == "wifi.profiles.setauto"]
+    check("wifi setauto: TB-only in_use cases for index 99 and -1, no setauto_failed from ThingsBoard",
+          ({"index": 99}, None, "in_use") in sa and ({"index": -1}, None, "in_use") in sa
+          and not any(e.get("error") == "setauto_failed" for e in wifi["errors"]))
     check("burst ok", burst_verdict([{"ok": True}, {"ok": False, "error": "busy"}], [200, 200]) == [])
     check("burst bad reply", len(burst_verdict([{"ok": False, "error": "x"}, None], [200])) == 2)
     check("burst bad poll", len(burst_verdict([{"ok": True}], [200, 503])) == 1)
