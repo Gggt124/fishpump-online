@@ -51,6 +51,11 @@ size_t device_api_count(void);
  * The caller checks for NULL and deletes it otherwise. */
 dapi_status_t device_api_call(const char *method, const cJSON *params, dapi_source_t src, cJSON **out);
 const char *device_api_http_status(dapi_status_t st);
+/* Called after every DAPI_F_WRITE method whose function ran (any status), once the call lock is released. Not called
+ * for calls refused before the function: unknown_method, local_only, TB invalid_json / invalid_body, busy.
+ * It must not block. NULL means none; set once at boot (atomic pointer store). */
+typedef void (*dapi_write_hook_t)(const char *method, dapi_status_t st);
+void device_api_set_write_hook(dapi_write_hook_t hook);
 /* {"ok":false,"error":code[,"message":message]}; message NULL -> no key. */
 cJSON *dapi_error(const char *code, const char *message);
 

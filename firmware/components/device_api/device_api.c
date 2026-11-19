@@ -15,6 +15,12 @@ static dapi_method_t s_methods[DAPI_MAX_METHODS];
  * handlers (acquire): a method found in the table is always completely written. */
 static atomic_size_t s_count;
 static SemaphoreHandle_t s_lock;
+static _Atomic dapi_write_hook_t s_write_hook;
+
+void device_api_set_write_hook(dapi_write_hook_t hook)
+{
+    atomic_store_explicit(&s_write_hook, hook, memory_order_release);
+}
 
 cJSON *dapi_error(const char *code, const char *message)
 {
@@ -167,6 +173,12 @@ dapi_status_t device_api_call(const char *method, const cJSON *params, dapi_sour
     }
     cJSON_Delete(empty);
 
+    if (m->flags & DAPI_F_WRITE) {
+        dapi_write_hook_t hook = atomic_load_explicit(&s_write_hook, memory_order_acquire);
+        if (hook) {
+            hook(m->name, st);
+        }
+    }
     if (!*out) {
         return fail(out, DAPI_INTERNAL, "memory", "JSON allocation failed");
     }

@@ -76,6 +76,46 @@ static void call_expect(const char *method, const cJSON *params, dapi_source_t s
     cJSON_Delete(out);
 }
 
+static int s_hook_count;
+static char s_hook_method[32];
+static dapi_status_t s_hook_status;
+
+static void test_hook(const char *method, dapi_status_t st)
+{
+    s_hook_count++;
+    strncpy(s_hook_method, method, sizeof(s_hook_method) - 1);
+    s_hook_status = st;
+}
+
+static dapi_status_t hook_ok(const cJSON *params, dapi_source_t src, cJSON **out)
+{
+    (void)params;
+    (void)src;
+    *out = cJSON_CreateObject();
+    return DAPI_OK;
+}
+
+static dapi_status_t hook_fail(const cJSON *params, dapi_source_t src, cJSON **out)
+{
+    (void)params;
+    (void)src;
+    *out = dapi_error("nope", NULL);
+    return DAPI_BAD_REQUEST;
+}
+
+static const dapi_method_t M_HOOK[] = {
+    {"hook.read", DAPI_F_READ, 0, hook_ok},
+    {"hook.write", DAPI_F_WRITE, 512, hook_fail},
+    {"hook.local", DAPI_F_WRITE | DAPI_F_LOCAL_ONLY, 0, hook_ok},
+};
+
+static void hook_call(const char *method, const cJSON *params, dapi_source_t src)
+{
+    cJSON *out = NULL;
+    device_api_call(method, params, src, &out);
+    cJSON_Delete(out);
+}
+
 void test_device_api(void)
 {
     /* status lines */
@@ -170,4 +210,30 @@ void test_device_api(void)
     /* method returns no object */
     call_expect("fake_null", NULL, DAPI_SRC_HTTP, DAPI_INTERNAL,
                 "{\"ok\":false,\"error\":\"memory\",\"message\":\"JSON allocation failed\"}");
+
+    /* write hook: runs for every WRITE method whose function ran, never for refused calls */
+    CHECK(device_api_register(M_HOOK, 3) == ESP_OK);
+    device_api_set_write_hook(test_hook);
+    hook_call("hook.read", NULL, DAPI_SRC_HTTP);
+    CHECK(s_hook_count == 0);
+    hook_call("hook.write", NULL, DAPI_SRC_HTTP);
+    CHECK(s_hook_count == 1);
+    CHECK(strcmp(s_hook_method, "hook.write") == 0);
+    CHECK(s_hook_status == DAPI_BAD_REQUEST);
+    hook_call("hook.local", NULL, DAPI_SRC_TB);
+    CHECK(s_hook_count == 1);
+    hook_call("hook.local", NULL, DAPI_SRC_HTTP);
+    CHECK(s_hook_count == 2);
+    cJSON *hbig = cJSON_CreateObject();
+    char *longstr = malloc(601);
+    memset(longstr, 'a', 600);
+    longstr[600] = 0;
+    cJSON_AddStringToObject(hbig, "s", longstr);
+    free(longstr);
+    hook_call("hook.write", hbig, DAPI_SRC_TB);
+    CHECK(s_hook_count == 2);
+    cJSON_Delete(hbig);
+    device_api_set_write_hook(NULL);
+    hook_call("hook.write", NULL, DAPI_SRC_HTTP);
+    CHECK(s_hook_count == 2);
 }
