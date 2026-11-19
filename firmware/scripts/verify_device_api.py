@@ -315,7 +315,7 @@ def test_water_power_group():
 def test_wifi_group():
     local = r"DAPI_F_WRITE\s*\|\s*DAPI_F_LOCAL_ONLY"
     methods = [
-        ("wifi.scan", r"DAPI_F_READ", "0"),
+        ("wifi.scan", r"DAPI_F_READ\s*\|\s*DAPI_F_NO_LOCK", "0"),
         ("wifi.profiles.get", r"DAPI_F_READ", "0"),
         ("wifi.profiles.save", r"DAPI_F_WRITE", "WIFI_SAVE_BODY_BYTES"),
         ("wifi.profiles.setauto", r"DAPI_F_WRITE", "WIFI_PROFILE_BODY_BYTES"),
@@ -370,7 +370,20 @@ def test_wifi_group():
                 and "DAPI_SRC_TB" in guards_c,
                 "dapi_guards declares dapi_wifi_forget_blocked and it checks the ThingsBoard source")
     assert_test("dapi_guards" in read(MAIN_DIR / "CMakeLists.txt"), "main requires dapi_guards")
-    assert_test("cJSON_CreateRaw" in function_body(src, "dapi_wifi_scan"), "wifi.scan keeps the cached bytes via cJSON_CreateRaw")
+    assert_test(method_table_entry(src, "wifi.scan", r"DAPI_F_READ\s*\|\s*DAPI_F_NO_LOCK", "0"),
+                "wifi.scan carries DAPI_F_NO_LOCK")
+    all_src = "".join(read(f) for f in MAIN_DIR.glob("dapi_*.c"))
+    assert_test(len(re.findall(r"DAPI_F_NO_LOCK", all_src)) == 1,
+                "no method other than wifi.scan carries DAPI_F_NO_LOCK")
+    call = function_body(read(COMP_DIR / "device_api.c"), "device_api_call")
+    assert_test("DAPI_F_NO_LOCK" in call and call.find("DAPI_F_NO_LOCK") < call.find("xSemaphoreTake")
+                and "if (locked)" in call,
+                "device_api_call skips the lock take and give only for DAPI_F_NO_LOCK")
+    scan = function_body(src, "dapi_wifi_scan")
+    assert_test("scan_try_begin()" in scan and "scan_cache_get()" in scan and "scan_cache_put(" in scan
+                and "taskENTER_CRITICAL" in function_body(src, "scan_try_begin"),
+                "wifi.scan test-and-sets the in-progress flag atomically and guards the cache with its own mutex")
+    assert_test("cJSON_CreateRaw" in function_body(src, "scan_cache_get"), "wifi.scan keeps the cached bytes via cJSON_CreateRaw")
 
 
 if __name__ == "__main__":

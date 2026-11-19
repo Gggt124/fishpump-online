@@ -34,7 +34,11 @@ static const char *TAG = "dapi_wifi";
 static bool s_wifi_disconnect_task_pending = false;
 static portMUX_TYPE s_wifi_disconnect_task_lock = portMUX_INITIALIZER_UNLOCKED;
 
-static volatile bool s_scan_in_progress = false;
+/* wifi.scan runs outside the device_api lock (it waits on the radio for seconds):
+ * the in-progress flag is a test-and-set under a spinlock, and the cache has its own mutex. */
+static bool s_scan_in_progress = false;
+static portMUX_TYPE s_scan_flag_lock = portMUX_INITIALIZER_UNLOCKED;
+static SemaphoreHandle_t s_scan_cache_mutex = NULL;
 static uint32_t s_scan_cache_ts_ms = 0; /* 0 = cache empty       */
 static char s_scan_cache_json[SCAN_CACHE_JSON_MAX] = {0};
 
@@ -62,30 +66,91 @@ static wifi_profile_t *profiles_alloc(void) {
 /* A fixed reply text, printed as is. */
 static cJSON *raw(const char *text) { return cJSON_CreateRaw(text); }
 
+/* True when this caller now owns the scan; false when one is already running. */
+static bool scan_try_begin(void) {
+  taskENTER_CRITICAL(&s_scan_flag_lock);
+  bool busy = s_scan_in_progress;
+  if (!busy) {
+    s_scan_in_progress = true;
+  }
+  taskEXIT_CRITICAL(&s_scan_flag_lock);
+  return !busy;
+}
+
+static void scan_end(void) {
+  taskENTER_CRITICAL(&s_scan_flag_lock);
+  s_scan_in_progress = false;
+  taskEXIT_CRITICAL(&s_scan_flag_lock);
+}
+
+/* Creates the cache mutex once; false if it cannot be created. */
+static bool scan_cache_ready(void) {
+  if (!s_scan_cache_mutex) {
+    SemaphoreHandle_t m = xSemaphoreCreateMutex();
+    taskENTER_CRITICAL(&s_scan_flag_lock);
+    if (!s_scan_cache_mutex) {
+      s_scan_cache_mutex = m;
+      m = NULL;
+    }
+    taskEXIT_CRITICAL(&s_scan_flag_lock);
+    if (m) {
+      vSemaphoreDelete(m);
+    }
+  }
+  return s_scan_cache_mutex != NULL;
+}
+
+/* Cached reply as a raw item, or NULL when the cache is empty or stale. */
+static cJSON *scan_cache_get(void) {
+  cJSON *hit = NULL;
+  xSemaphoreTake(s_scan_cache_mutex, portMAX_DELAY);
+  uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+  if (s_scan_cache_ts_ms != 0 && (now_ms - s_scan_cache_ts_ms) < SCAN_CACHE_TTL_MS && s_scan_cache_json[0] != '\0') {
+    ESP_LOGI(TAG, "[SCAN] Serving cached results (age=%lums)", (unsigned long)(now_ms - s_scan_cache_ts_ms));
+    hit = cJSON_CreateRaw(s_scan_cache_json);
+  }
+  xSemaphoreGive(s_scan_cache_mutex);
+  return hit;
+}
+
+static void scan_cache_put(const char *json_str) {
+  xSemaphoreTake(s_scan_cache_mutex, portMAX_DELAY);
+  if (strlen(json_str) < SCAN_CACHE_JSON_MAX) {
+    strlcpy(s_scan_cache_json, json_str, SCAN_CACHE_JSON_MAX);
+    s_scan_cache_ts_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    ESP_LOGI(TAG, "[SCAN] Results cached (%zu bytes, TTL=%dms)", strlen(json_str), SCAN_CACHE_TTL_MS);
+  } else {
+    ESP_LOGW(TAG, "[SCAN] Result too large to cache (%zu bytes)", strlen(json_str));
+  }
+  xSemaphoreGive(s_scan_cache_mutex);
+}
+
 /* wifi.scan: returns the visible networks (cached for 10 s). */
 static dapi_status_t dapi_wifi_scan(const cJSON *params, dapi_source_t src, cJSON **out) {
   (void)params;
   (void)src;
+  if (!scan_cache_ready()) {
+    *out = raw("{\"ok\":false,\"error\":\"memory\"}");
+    return DAPI_INTERNAL;
+  }
+
   /* Cache check: serve previous results if still fresh */
-  uint32_t now_cache_ms = (uint32_t)(esp_timer_get_time() / 1000);
-  if (s_scan_cache_ts_ms != 0 && (now_cache_ms - s_scan_cache_ts_ms) < SCAN_CACHE_TTL_MS &&
-      s_scan_cache_json[0] != '\0') {
-    ESP_LOGI(TAG, "[SCAN] Serving cached results (age=%lums)", (unsigned long)(now_cache_ms - s_scan_cache_ts_ms));
-    *out = cJSON_CreateRaw(s_scan_cache_json);
+  cJSON *cached = scan_cache_get();
+  if (cached) {
+    *out = cached;
     return DAPI_OK;
   }
 
-  /* In-progress guard: reject concurrent scan immediately */
-  if (s_scan_in_progress) {
+  /* In-progress guard: reject a concurrent scan immediately */
+  if (!scan_try_begin()) {
     ESP_LOGW(TAG, "[SCAN] Scan already in progress - returning busy");
     *out = raw("{\"ok\":false,\"error\":\"scan_busy\"}");
     return DAPI_UNAVAILABLE;
   }
-  s_scan_in_progress = true;
 
   wifi_scan_ctx_t *ctx = heap_caps_calloc(1, sizeof(*ctx), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!ctx) {
-    s_scan_in_progress = false;
+    scan_end();
     *out = raw("{\"ok\":false,\"error\":\"memory\"}");
     return DAPI_INTERNAL;
   }
@@ -93,7 +158,7 @@ static dapi_status_t dapi_wifi_scan(const cJSON *params, dapi_source_t src, cJSO
   ctx->count = 0;
   if (!ctx->sem) {
     free(ctx);
-    s_scan_in_progress = false;
+    scan_end();
     *out = raw("{\"ok\":false,\"error\":\"memory\"}");
     return DAPI_INTERNAL;
   }
@@ -101,7 +166,7 @@ static dapi_status_t dapi_wifi_scan(const cJSON *params, dapi_source_t src, cJSO
   if (!wifi_manager_scan(ctx, scan_complete_cb)) {
     vSemaphoreDelete(ctx->sem);
     free(ctx);
-    s_scan_in_progress = false;
+    scan_end();
     *out = raw("{\"ok\":false,\"error\":\"scan_failed\"}");
     return DAPI_OK;
   }
@@ -110,7 +175,7 @@ static dapi_status_t dapi_wifi_scan(const cJSON *params, dapi_source_t src, cJSO
     wifi_manager_cancel_scan();
     vSemaphoreDelete(ctx->sem);
     free(ctx);
-    s_scan_in_progress = false;
+    scan_end();
     *out = raw("{\"ok\":false,\"error\":\"scan_timeout\"}");
     return DAPI_OK;
   }
@@ -139,20 +204,13 @@ static dapi_status_t dapi_wifi_scan(const cJSON *params, dapi_source_t src, cJSO
   char *json_str = cJSON_PrintUnformatted(root);
   if (!json_str) {
     cJSON_Delete(root);
-    s_scan_in_progress = false;
+    scan_end();
     *out = raw("{\"ok\":false,\"error\":\"memory\"}");
     return DAPI_INTERNAL;
   }
 
-  /* Store to cache */
-  if (strlen(json_str) < SCAN_CACHE_JSON_MAX) {
-    strlcpy(s_scan_cache_json, json_str, SCAN_CACHE_JSON_MAX);
-    s_scan_cache_ts_ms = (uint32_t)(esp_timer_get_time() / 1000);
-    ESP_LOGI(TAG, "[SCAN] Results cached (%zu bytes, TTL=%dms)", strlen(json_str), SCAN_CACHE_TTL_MS);
-  } else {
-    ESP_LOGW(TAG, "[SCAN] Result too large to cache (%zu bytes)", strlen(json_str));
-  }
-  s_scan_in_progress = false;
+  scan_cache_put(json_str);
+  scan_end();
   free(json_str);
 
   *out = root;
@@ -173,6 +231,7 @@ static dapi_status_t dapi_wifi_profiles_get(const cJSON *params, dapi_source_t s
   cJSON *root = cJSON_CreateObject();
   if (!root) {
     free(profiles);
+    *out = raw("{\"ok\":false,\"error\":\"memory\"}");
     return DAPI_INTERNAL;
   }
   cJSON_AddBoolToObject(root, "ok", true);
@@ -429,6 +488,7 @@ static dapi_status_t dapi_wifi_connect(const cJSON *params, dapi_source_t src, c
   if (wifi_manager_is_sta_connected() && strcmp(wifi_manager_get_sta_ssid(), ssid) == 0) {
     cJSON *resp = cJSON_CreateObject();
     if (!resp) {
+    *out = raw("{\"ok\":false,\"error\":\"memory\"}");
       return DAPI_INTERNAL;
     }
     cJSON_AddBoolToObject(resp, "ok", true);
@@ -446,6 +506,7 @@ static dapi_status_t dapi_wifi_connect(const cJSON *params, dapi_source_t src, c
 
   cJSON *resp = cJSON_CreateObject();
   if (!resp) {
+    *out = raw("{\"ok\":false,\"error\":\"memory\"}");
     return DAPI_INTERNAL;
   }
   cJSON_AddBoolToObject(resp, "ok", true);
@@ -499,7 +560,7 @@ static dapi_status_t dapi_wifi_disconnect(const cJSON *params, dapi_source_t src
 
 /* wifi.connect stays local-only until milestone 4 adds the staged commit. */
 static const dapi_method_t s_wifi_methods[] = {
-    {"wifi.scan", DAPI_F_READ, 0, dapi_wifi_scan},
+    {"wifi.scan", DAPI_F_READ | DAPI_F_NO_LOCK, 0, dapi_wifi_scan},
     {"wifi.profiles.get", DAPI_F_READ, 0, dapi_wifi_profiles_get},
     {"wifi.profiles.save", DAPI_F_WRITE, WIFI_SAVE_BODY_BYTES, dapi_wifi_profiles_save},
     {"wifi.profiles.setauto", DAPI_F_WRITE, WIFI_PROFILE_BODY_BYTES, dapi_wifi_profiles_setauto},

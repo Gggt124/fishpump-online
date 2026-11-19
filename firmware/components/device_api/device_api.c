@@ -147,7 +147,8 @@ dapi_status_t device_api_call(const char *method, const cJSON *params, dapi_sour
         params = empty;
     }
 
-    if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(DAPI_LOCK_TIMEOUT_MS)) != pdTRUE) {
+    bool locked = !(m->flags & DAPI_F_NO_LOCK);
+    if (locked && (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(DAPI_LOCK_TIMEOUT_MS)) != pdTRUE)) {
         cJSON_Delete(empty);
         return fail(out, DAPI_UNAVAILABLE, "busy", "Device busy, try again");
     }
@@ -155,7 +156,9 @@ dapi_status_t device_api_call(const char *method, const cJSON *params, dapi_sour
         ESP_LOGI(TAG, "write %s src=%s", m->name, SRC_NAME[src == DAPI_SRC_TB]);
     }
     st = m->fn(params, src, out);
-    xSemaphoreGive(s_lock);
+    if (locked) {
+        xSemaphoreGive(s_lock);
+    }
     cJSON_Delete(empty);
 
     if (!*out) {

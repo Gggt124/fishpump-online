@@ -36,6 +36,24 @@ static const dapi_method_t M_LOCAL = {"fake_local", DAPI_F_WRITE | DAPI_F_LOCAL_
 static const dapi_method_t M_NULL = {"fake_null", DAPI_F_WRITE, 0, fake_null_out};
 static const dapi_method_t M_CAP = {"fake_cap", DAPI_F_WRITE, 32, fake_echo};
 
+/* Calls the normal method and a NO_LOCK method while the caller holds (or does not hold) the lock. */
+static dapi_status_t fake_nested(const cJSON *params, dapi_source_t src, cJSON **out)
+{
+    (void)params;
+    (void)src;
+    cJSON *inner = NULL;
+    dapi_status_t st = device_api_call("fake_read", NULL, DAPI_SRC_HTTP, &inner);
+    cJSON_Delete(inner);
+    *out = cJSON_CreateObject();
+    cJSON_AddBoolToObject(*out, "inner_ok", st == DAPI_OK);
+    cJSON_AddBoolToObject(*out, "inner_busy", st == DAPI_UNAVAILABLE);
+    return DAPI_OK;
+}
+
+static const dapi_method_t M_NESTED_LOCKED = {"fake_nested_locked", DAPI_F_READ, 0, fake_nested};
+static const dapi_method_t M_NESTED_FREE = {"fake_nested_free", DAPI_F_READ | DAPI_F_NO_LOCK, 0, fake_nested};
+static const dapi_method_t M_FREE_LOCAL = {"fake_free_local", DAPI_F_WRITE | DAPI_F_LOCAL_ONLY | DAPI_F_NO_LOCK, 32, fake_echo};
+
 static bool body_is(const cJSON *out, const char *expect)
 {
     if (!out) {
@@ -133,6 +151,20 @@ void test_device_api(void)
     cJSON_Delete(big);
     p = cJSON_Parse("{\"k\":1}");
     call_expect("fake_cap", p, DAPI_SRC_TB, DAPI_OK, "{\"k\":1}");
+    cJSON_Delete(p);
+
+    /* a NO_LOCK method runs without the lock: a normal method called inside it is not blocked */
+    CHECK(device_api_register(&M_NESTED_FREE, 1) == ESP_OK);
+    CHECK(device_api_register(&M_NESTED_LOCKED, 1) == ESP_OK);
+    CHECK(device_api_register(&M_FREE_LOCAL, 1) == ESP_OK);
+    call_expect("fake_nested_free", NULL, DAPI_SRC_HTTP, DAPI_OK, "{\"inner_ok\":true,\"inner_busy\":false}");
+    /* a normal method holds the lock: the same inner call is refused with busy */
+    call_expect("fake_nested_locked", NULL, DAPI_SRC_HTTP, DAPI_OK, "{\"inner_ok\":false,\"inner_busy\":true}");
+    /* NO_LOCK skips only the lock: local-only and the params cap still apply */
+    p = cJSON_Parse("{\"k\":1}");
+    call_expect("fake_free_local", p, DAPI_SRC_TB, DAPI_LOCAL_ONLY,
+                "{\"ok\":false,\"error\":\"local_only\",\"message\":\"Use the local web app\"}");
+    call_expect("fake_free_local", p, DAPI_SRC_HTTP, DAPI_OK, "{\"k\":1}");
     cJSON_Delete(p);
 
     /* method returns no object */
