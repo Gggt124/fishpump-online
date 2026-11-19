@@ -9,6 +9,7 @@ a one-line change.
 """
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,9 @@ HERE = Path(__file__).resolve().parent
 PAGES_FILE = HERE / "dashboard_pages.json"
 CASES_FILE = HERE / "parity_cases.json"
 WIDGET_FILE = HERE / "widgets" / "fishpump_rpc_panel.json"
+STATE_FILE = HERE / "state_cases.json"
+REGISTRY_FILE = HERE.parent / "firmware" / "components" / "signal_registry" / "signal_registry.c"
+ALARM_SUMMARY_KEYS = ("alarm_active", "alarm_critical", "alarm_unacked", "alarm_max_severity")  # uplink alarm summary
 
 BUNDLE_TITLE = "fishpump"
 WIDGET_FQN = "fishpump_rpc_panel"
@@ -63,8 +67,26 @@ def parity_methods(cases):
     return out
 
 
-def check_pages(pages, cases):
-    """Return a list of problems (empty = OK)."""
+def registry_keys(path=REGISTRY_FILE):
+    """Signal keys from the firmware registry rows: {65, "oom_strikes", ...}."""
+    text = Path(path).read_text(encoding="utf-8")
+    keys = set(re.findall(r'\{\s*\d+\s*,\s*"([^"]+)"', text))
+    # the PWR(base, src, "prefix", ...) macro rows build their key as pfx "_suffix"
+    suffixes = re.findall(r'\(base\)\s*\+\s*\d+\s*,\s*pfx\s*"([^"]+)"', text)
+    for prefix in re.findall(r'^\s*PWR\(\s*\d+\s*,\s*\w+\s*,\s*"([^"]+)"', text, re.M):
+        keys.update(prefix + sfx for sfx in suffixes)
+    return keys
+
+
+def check_pages(pages, cases, state=None, reg_keys=None):
+    """Return a list of problems (empty = OK). state = state_cases.json, reg_keys = firmware registry signal keys;
+    both default to the real files."""
+    if state is None:
+        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    if reg_keys is None:
+        reg_keys = registry_keys()
+    attr_ok = {a["key"] for a in state.get("attributes", [])} | set(state.get("attr_present", []))
+    tel_ok = set(reg_keys) | set(ALARM_SUMMARY_KEYS) | set(state.get("status_keys", []))
     problems = []
     if not isinstance(pages, list) or not pages:
         return ["pages: must be a non-empty list"]
@@ -82,6 +104,18 @@ def check_pages(pages, cases):
             problems.append("page %s: empty title" % pid)
         if not isinstance(p.get("telemetry"), list):
             problems.append("page %s: telemetry must be a list" % pid)
+        else:
+            for k in p["telemetry"]:
+                if k not in tel_ok:
+                    problems.append("page %s: telemetry key %r is not a registry signal, an alarm summary key or a status key" % (pid, k))
+        if "attributes" in p:
+            at = p["attributes"]
+            if not isinstance(at, list) or not all(isinstance(k, str) for k in at):
+                problems.append("page %s: attributes must be a list of strings" % pid)
+            else:
+                for k in at:
+                    if k not in attr_ok:
+                        problems.append("page %s: attribute %r is not in state_cases.json" % (pid, k))
         if not isinstance(p.get("actions"), list):
             problems.append("page %s: actions must be a list" % pid)
             continue
@@ -99,6 +133,12 @@ def check_pages(pages, cases):
                 problems.append("%s: load without edit" % where)
             if a.get("load") and a["load"] not in known:
                 problems.append("%s: load method %r unknown" % (where, a["load"]))
+            if "load_keys" in a:
+                lk = a["load_keys"]
+                if not a.get("load"):
+                    problems.append("%s: load_keys without load" % where)
+                if not isinstance(lk, list) or not lk or not all(isinstance(k, str) and k for k in lk):
+                    problems.append("%s: load_keys must be a non-empty list of strings" % where)
             c = a.get("confirm")
             if c is not None and (not isinstance(c, str) or not c.strip() or not has_thai(c)):
                 problems.append("%s: confirm must be non-empty Thai text" % where)
@@ -144,7 +184,14 @@ BROKEN_FIXTURE = [
     {"id": "dup", "title": "A", "telemetry": [], "actions": [
         {"label": "x", "method": "no.such.method", "params": None, "edit": False, "load": None, "confirm": "english only"}]},
     {"id": "dup", "title": "B", "telemetry": [], "actions": []},
+    {"id": "attr_bad", "title": "C", "telemetry": ["no_such_telemetry_key"], "attributes": ["no_such_attribute"], "actions": []},
+    {"id": "attr_type", "title": "D", "telemetry": [], "attributes": "cfg_pump", "actions": []},
+    {"id": "lk_bad", "title": "E", "telemetry": [], "actions": [
+        {"label": "a", "method": "pump.status", "params": None, "edit": True, "load": None, "load_keys": ["a"], "confirm": None},
+        {"label": "b", "method": "pump.status", "params": None, "edit": True, "load": "pump.status", "load_keys": [], "confirm": None}]},
 ]
+BROKEN_EXPECT = ["telemetry key 'no_such_telemetry_key'", "attribute 'no_such_attribute'", "attributes must be a list of strings",
+                 "load_keys without load", "load_keys must be a non-empty list"]
 
 
 class _RecordingApi:
@@ -173,14 +220,22 @@ def widget_lookup_problem():
     return None
 
 
+def p_has_attrs(pages, pid):
+    return any(p["id"] == pid and p.get("attributes") for p in pages)
+
+
 def run_check(pages_file=PAGES_FILE, cases_file=CASES_FILE):
     """Returns the problem list for the real files (plus the self-test of the checker itself)."""
     problems = []
     lookup = widget_lookup_problem()
     if lookup:
         problems.append(lookup)
-    if not check_pages(BROKEN_FIXTURE, {}):
+    broken = check_pages(BROKEN_FIXTURE, {})
+    if not broken:
         problems.append("internal: the checker accepted a deliberately broken fixture")
+    for want in BROKEN_EXPECT:
+        if not any(want in b for b in broken):
+            problems.append("internal: the checker did not flag the broken fixture entry %r" % want)
     try:
         pages = json.loads(Path(pages_file).read_text(encoding="utf-8"))
         cases = json.loads(Path(cases_file).read_text(encoding="utf-8"))
@@ -203,6 +258,8 @@ def run_check(pages_file=PAGES_FILE, cases_file=CASES_FILE):
         for pid in [p["id"] for p in pages]:
             if pid not in dash["configuration"]["states"]:
                 problems.append("dashboard: no state for page %s" % pid)
+            elif p_has_attrs(pages, pid) and _uid(pid, "attributes") not in dash["configuration"]["states"][pid]["layouts"]["main"]["widgets"]:
+                problems.append("dashboard: page %s has attributes but no attributes widget" % pid)
         problems += check_unsafe(dash, {})
     except Exception as e:  # noqa: BLE001 - report, do not crash the checker
         problems.append("dashboard build failed: %r" % e)
@@ -222,6 +279,37 @@ def _timewindow():
                         "fixedTimewindow": {"startTimeMs": 1694085363133, "endTimeMs": 1694171763133},
                         "quickInterval": "CURRENT_DAY"},
             "aggregation": {"type": "NONE", "limit": 200}}
+
+
+GRID_SETTINGS = {"backgroundColor": "#eeeeee", "color": "rgba(0,0,0,0.870588)", "columns": 24,
+                 "margin": 10, "backgroundSizeMode": "100%", "autoFillHeight": False,
+                 "mobileAutoFillHeight": False, "mobileRowHeight": 70, "outerMargin": True}
+
+
+def _latest_widget(wid, alias_id, title, names, key_type, row):
+    """Latest-values entity table (10 x 8, column 14) for telemetry keys or client attribute keys."""
+    keys = [{"name": k, "type": key_type, "label": k, "color": "#2196f3",
+             "settings": {"columnWidth": "0px", "useCellStyleFunction": False, "cellStyleFunction": "",
+                          "useCellContentFunction": False, "defaultColumnVisibility": "visible",
+                          "columnSelectionToDisplay": "enabled"},
+             "units": None, "decimals": None, "funcBody": None, "usePostProcessing": None, "postFuncBody": None}
+            for k in names]
+    return {
+        "typeFullFqn": LATEST_FQN, "type": "latest", "sizeX": 10, "sizeY": 8, "row": row, "col": 14, "id": wid,
+        "config": {
+            "timewindow": _timewindow(), "showTitle": True, "title": title,
+            "backgroundColor": "rgb(255, 255, 255)", "color": "rgba(0, 0, 0, 0.87)", "padding": "4px",
+            "dropShadow": True, "enableFullscreen": False, "useDashboardTimewindow": False, "showLegend": False,
+            "settings": {"enableSearch": False, "displayPagination": False, "defaultPageSize": 10,
+                         "defaultSortOrder": "entityName", "displayEntityName": True, "displayEntityType": False,
+                         "enableSelectColumnDisplay": False, "enableStickyHeader": True, "enableStickyAction": False,
+                         "entitiesTitle": title, "displayEntityLabel": False, "entityNameColumnTitle": "อุปกรณ์"},
+            "titleStyle": {"fontSize": "16px", "fontWeight": 400, "padding": "5px 10px 5px 10px"},
+            "actions": {},
+            "datasources": [{"type": "entity", "name": None, "entityAliasId": alias_id, "filterId": None,
+                             "dataKeys": keys}],
+        },
+    }
 
 
 def build_dashboard(pages, device_name, existing=None):
@@ -246,37 +334,21 @@ def build_dashboard(pages, device_name, existing=None):
                 "datasources": [], "useDashboardTimewindow": True,
             },
         }
-        keys = [{"name": k, "type": "timeseries", "label": k, "color": "#2196f3",
-                 "settings": {"columnWidth": "0px", "useCellStyleFunction": False, "cellStyleFunction": "",
-                              "useCellContentFunction": False, "defaultColumnVisibility": "visible",
-                              "columnSelectionToDisplay": "enabled"},
-                 "units": None, "decimals": None, "funcBody": None, "usePostProcessing": None, "postFuncBody": None}
-                for k in page["telemetry"]]
-        widgets[tel_id] = {
-            "typeFullFqn": LATEST_FQN, "type": "latest", "sizeX": 10, "sizeY": 8, "row": 0, "col": 14, "id": tel_id,
-            "config": {
-                "timewindow": _timewindow(), "showTitle": True, "title": "ค่าล่าสุด",
-                "backgroundColor": "rgb(255, 255, 255)", "color": "rgba(0, 0, 0, 0.87)", "padding": "4px",
-                "dropShadow": True, "enableFullscreen": False, "useDashboardTimewindow": False, "showLegend": False,
-                "settings": {"enableSearch": False, "displayPagination": False, "defaultPageSize": 10,
-                             "defaultSortOrder": "entityName", "displayEntityName": True, "displayEntityType": False,
-                             "enableSelectColumnDisplay": False, "enableStickyHeader": True, "enableStickyAction": False,
-                             "entitiesTitle": "ค่าล่าสุด", "displayEntityLabel": False, "entityNameColumnTitle": "อุปกรณ์"},
-                "titleStyle": {"fontSize": "16px", "fontWeight": 400, "padding": "5px 10px 5px 10px"},
-                "actions": {},
-                "datasources": [{"type": "entity", "name": None, "entityAliasId": alias_id, "filterId": None,
-                                 "dataKeys": keys}],
-            },
-        }
+        widgets[tel_id] = _latest_widget(tel_id, alias_id, "ค่าล่าสุด", page["telemetry"], "timeseries", 0)
+        layout = {rpc_id: {"sizeX": 14, "sizeY": 16, "row": 0, "col": 0},
+                  tel_id: {"sizeX": 10, "sizeY": 8, "row": 0, "col": 14}}
+        if page.get("attributes"):
+            attr_id = _uid(page["id"], "attributes")
+            widgets[attr_id] = _latest_widget(attr_id, alias_id, "ค่าตั้งปัจจุบัน (client attributes)",
+                                              page["attributes"], "attribute", 8)
+            layout[attr_id] = {"sizeX": 10, "sizeY": 8, "row": 8, "col": 14}
         states[page["id"]] = {
             "name": page["title"], "root": idx == 0,
             "layouts": {"main": {
-                "widgets": {rpc_id: {"sizeX": 14, "sizeY": 16, "row": 0, "col": 0},
-                            tel_id: {"sizeX": 10, "sizeY": 8, "row": 0, "col": 14}},
-                "gridSettings": {"backgroundColor": "#eeeeee", "color": "rgba(0,0,0,0.870588)", "columns": 24,
-                                 "margin": 10, "backgroundSizeMode": "100%", "autoFillHeight": False,
-                                 "mobileAutoFillHeight": False, "mobileRowHeight": 70, "outerMargin": True}}},
+                "widgets": layout,
+                "gridSettings": GRID_SETTINGS}},
         }
+
     configuration = {
         "widgets": widgets, "states": states, "entityAliases": aliases, "filters": {},
         "timewindow": {"displayValue": "", "selectedTab": 0, "hideAggregation": False, "hideAggInterval": False,

@@ -22,7 +22,8 @@
   {
     "id": "protection",
     "title": "ป้องกันเดินแห้ง (Protection)",
-    "telemetry": ["pump_dry_run_state"],
+    "telemetry": ["pump_dry_run_state", "dry_run_enabled", "dry_run_state", "dry_run_trips", "dry_run_max_retries", "dry_run_wait_sec", "dry_run_accum_sec"],
+    "attributes": ["cfg_protection"],
     "actions": [
       {"label": "protection.get", "method": "protection.get", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "protection.set", "method": "protection.set",
@@ -39,13 +40,15 @@
   {
     "id": "pump",
     "title": "ปั๊มน้ำ (Pump)",
-    "telemetry": ["pump_is_running", "pump_active_set", "pump_dry_run_state"],
+    "telemetry": ["pump_is_running", "pump_active_set", "pump_dry_run_state", "pump_phase", "pump_countdown_sec", "pump_cycle_sec", "pump_cooldown_sec", "pump_fault", "pump_stabilizing", "wash_running", "wash_phase", "wash_countdown_sec"],
+    "attributes": ["cfg_pump"],
     "actions": [
       {"label": "pump.status", "method": "pump.status", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "pump.config.get", "method": "pump.config.get", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "pump.config.set (แม่แบบ: ต้องกรอกทุกค่าก่อนส่ง)", "method": "pump.config.set",
        "params": {"water_set1_on": "แก้ก่อนส่ง", "water_set1_off": "แก้ก่อนส่ง", "water_set2_on": "แก้ก่อนส่ง", "water_set2_off": "แก้ก่อนส่ง", "water_auto_start": "แก้ก่อนส่ง", "relay1_polarity": "แก้ก่อนส่ง", "timer1_start_phase": "แก้ก่อนส่ง", "timer2_start_phase": "แก้ก่อนส่ง"},
-       "edit": true, "load": "pump.config.get", "confirm": null},
+       "edit": true, "load": "pump.config.get",
+       "load_keys": ["water_set1_on", "water_set1_off", "water_set1_start_phase", "water_set2_on", "water_set2_off", "water_set2_start_phase", "wash_on", "wash_off", "wash_start_phase", "water_auto_start", "wash_auto_start", "min_dwell_sec", "relay1_polarity", "relay2_polarity"], "confirm": null},
       {"label": "pump.control (หยุดน้ำ)", "method": "pump.control", "params": {"system": "water", "action": "stop"}, "edit": true, "load": null, "confirm": null},
       {"label": "pump.start", "method": "pump.start", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "pump.stop", "method": "pump.stop", "params": null, "edit": false, "load": null, "confirm": null}
@@ -54,13 +57,15 @@
   {
     "id": "cooling",
     "title": "ทำความเย็น (Cooling)",
-    "telemetry": ["pt100_temp_c", "cooling_mode", "cooling_on", "cooling_duty_pct", "cooling_output_mv", "cooling_lockout_sec", "pt100_fault"],
+    "telemetry": ["pt100_temp_c", "cooling_mode", "cooling_on", "cooling_duty_pct", "cooling_output_mv", "cooling_lockout_sec", "pt100_fault", "cooling_mode_name", "cooling_auto_enable", "cooling_sensor_state", "cooling_fault_code", "cooling_demand", "cooling_blocked_reason", "cooling_temp_valid", "cooling_test_sec"],
+    "attributes": ["cfg_cooling"],
     "actions": [
       {"label": "cooling.status", "method": "cooling.status", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "cooling.config.get", "method": "cooling.config.get", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "cooling.config.set (แม่แบบ: ต้องกรอกทุกค่าก่อนส่ง)", "method": "cooling.config.set",
        "params": {"threshold_c_x10": "แก้ก่อนส่ง", "hysteresis_c_x10": "แก้ก่อนส่ง", "auto_enable": "แก้ก่อนส่ง", "test_timeout_sec": "แก้ก่อนส่ง", "compressor_min_off_sec": "แก้ก่อนส่ง", "mode": "แก้ก่อนส่ง", "cooling_relay_polarity": "แก้ก่อนส่ง"},
-       "edit": true, "load": "cooling.config.get", "confirm": null},
+       "edit": true, "load": "cooling.config.get",
+       "load_keys": ["auto_enable", "curve_type", "points", "min_off_sec", "test_timeout_sec", "mode", "compressor_min_off_sec", "cooling_relay_polarity"], "confirm": null},
       {"label": "cooling.mode.set (โหมดอัตโนมัติ)", "method": "cooling.mode.set", "params": {"mode": "auto"}, "edit": true, "load": null, "confirm": null}
     ]
   },
@@ -91,7 +96,8 @@
   {
     "id": "wifi",
     "title": "ไวไฟ (Wi-Fi)",
-    "telemetry": [],
+    "telemetry": ["wifi_connected", "wifi_channel"],
+    "attributes": ["wifi"],
     "actions": [
       {"label": "wifi.scan", "method": "wifi.scan", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "wifi.profiles.get", "method": "wifi.profiles.get", "params": null, "edit": false, "load": null, "confirm": null},
@@ -109,7 +115,8 @@
   {
     "id": "status",
     "title": "สถานะระบบ (Status)",
-    "telemetry": ["free_heap_bytes", "free_psram_bytes", "wifi_rssi_dbm", "uptime_sec", "oom_strikes"],
+    "telemetry": ["free_heap_bytes", "free_psram_bytes", "wifi_rssi_dbm", "uptime_sec", "oom_strikes", "heap_min_free_bytes", "heap_largest_block_bytes", "stack_hwm_alarm", "stack_hwm_uplink", "stack_hwm_dry_run", "stack_hwm_tb_link", "stack_hwm_tb_rpc", "tb_sent", "tb_failed"],
+    "attributes": ["tb_link"],
     "actions": [
       {"label": "status.get", "method": "status.get", "params": null, "edit": false, "load": null, "confirm": null},
       {"label": "uplink.preview (ข้อมูลที่จะส่งขึ้น ThingsBoard)", "method": "uplink.preview", "params": null, "edit": false, "load": null, "confirm": null}
@@ -127,6 +134,7 @@
     "id": "hardware",
     "title": "ฮาร์ดแวร์ (Hardware) - อ่านอย่างเดียว",
     "telemetry": [],
+    "attributes": ["hardware_map"],
     "actions": [
       {"label": "hardware.map.get (อ่านอย่างเดียว การแก้ไขต้องใช้เว็บแอปในเครื่องเท่านั้น)", "method": "hardware.map.get", "params": null, "edit": false, "load": null, "confirm": null}
     ]
