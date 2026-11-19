@@ -399,6 +399,7 @@ class Runner:
             return self.report("SKIP", name, "needs --rule-id (a disabled rule)")
         subst = {"RULE_ID": rule_id}
         rs, rb = self.rpc(c["get"], {})
+        # valid only until the `get` method ships (sensors.get, Task 12)
         if not self.rpc_failed(rs) and error_code(rb) == "unknown_method":
             return self.report("SKIP", name, "needs %s" % c["get"])
         if self.rpc_failed(rs) or not isinstance(rb, dict) or rb.get("ok") is not True:
