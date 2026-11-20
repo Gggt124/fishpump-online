@@ -65,6 +65,30 @@ static void report_state(const char *state, const char *error, bool with_current
 
 /* ---- the update task ---- */
 
+/* Ends the wait for chunk idx after the attempts ran out. Under s_mux: if the wait is still armed the hook can no
+ * longer notify (it checks the same state under the same lock), so the timeout stands. Otherwise the hook already
+ * committed to a notify (it sends it inside the critical section), so that note is collected. */
+static const char *end_wait_timeout(uint32_t idx) {
+  bool armed = false;
+  portENTER_CRITICAL(&s_mux);
+  if (atomic_load(&s_wait_idx) == idx) {
+    atomic_store(&s_wait_idx, IDX_NONE);
+    armed = true;
+  }
+  portEXIT_CRITICAL(&s_mux);
+  if (armed) {
+    return "chunk_timeout";
+  }
+  uint32_t note = 0;
+  if (xTaskNotifyWait(0, ULONG_MAX, &note, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    if (note == NOTE_OK) {
+      return NULL;
+    }
+    return note == NOTE_SERVER_ERROR ? "server_error" : "bad_chunk";
+  }
+  return "chunk_timeout";
+}
+
 /* Waits for chunk idx of request req. Returns NULL when s_buf holds the complete chunk, else the fw_error code. */
 static const char *fetch_chunk(uint32_t req, uint32_t idx) {
   char req_topic[64];
@@ -85,7 +109,7 @@ static const char *fetch_chunk(uint32_t req, uint32_t idx) {
     if (!sent) {
       /* Disconnected: wait without spending an attempt, up to the total budget. */
       if (offline_ms >= offline_max) {
-        return "chunk_timeout";
+        return end_wait_timeout(idx);
       }
       if (xTaskNotifyWait(0, ULONG_MAX, &note, pdMS_TO_TICKS(500)) != pdTRUE) {
         offline_ms += 500;
@@ -107,13 +131,13 @@ static const char *fetch_chunk(uint32_t req, uint32_t idx) {
         break;
     }
   }
-  return "chunk_timeout";
+  return end_wait_timeout(idx);
 }
 
 static void tb_ota_task(void *arg) {
   (void)arg;
   const char *code = NULL;
-  bool begun = false, hash_open = false;
+  bool begun = false;
   esp_ota_handle_t handle = 0;
   uint8_t digest[32];
   size_t digest_len = 0;
@@ -126,7 +150,9 @@ static void tb_ota_task(void *arg) {
   uint32_t req = ++s_req_counter;
   int logged_pct = 0;
 
-  s_task = xTaskGetCurrentTaskHandle();
+  portENTER_CRITICAL(&s_mux);
+  s_task = xTaskGetCurrentTaskHandle(); /* valid before the first request is armed */
+  portEXIT_CRITICAL(&s_mux);
   report_state("DOWNLOADING", NULL, true);
 
   if (next == NULL || esp_ota_begin(next, OTA_WITH_SEQUENTIAL_WRITES, &handle) != ESP_OK) {
@@ -138,7 +164,6 @@ static void tb_ota_task(void *arg) {
     code = "no_memory";
     goto fail;
   }
-  hash_open = true;
 
   for (uint32_t idx = 0; idx < count; idx++) {
     code = fetch_chunk(req, idx);
@@ -161,7 +186,6 @@ static void tb_ota_task(void *arg) {
     code = "checksum_mismatch";
     goto fail;
   }
-  hash_open = false;
   if (digest_len != sizeof digest || !tb_fw_digest_matches(digest, s_job.checksum)) {
     code = "checksum_mismatch";
     goto fail;
@@ -208,9 +232,7 @@ static void tb_ota_task(void *arg) {
   esp_restart();
 
 fail:
-  if (hash_open) {
-    psa_hash_abort(&op);
-  }
+  psa_hash_abort(&op); /* valid on an INIT, finished or already aborted operation */
   if (begun) {
     esp_ota_abort(handle);
   }
@@ -218,12 +240,13 @@ fail:
   if (tb_fw_error_is_final(code)) {
     remember_failed(s_job.version);
   }
+  /* Disarm the wait and drop the task handle in one critical section: the hook notifies only inside it. */
   portENTER_CRITICAL(&s_mux);
   atomic_store(&s_wait_idx, IDX_NONE);
   s_buf = NULL; /* the hook no longer writes into the buffer */
+  s_task = NULL;
   portEXIT_CRITICAL(&s_mux);
   heap_caps_free(buf);
-  s_task = NULL;
   atomic_store(&s_busy, false);
   ota_lock_release();
   vTaskDelete(NULL);
@@ -295,16 +318,13 @@ static void on_chunk(const tb_link_data_t *d, uint32_t req, uint32_t idx) {
   const uint32_t want = tb_fw_chunk_len(s_job.size, idx);
   if (d->offset == 0) {
     if ((uint32_t)d->total != want) {
-      bool wake = false;
       portENTER_CRITICAL(&s_mux);
-      if (atomic_load(&s_wait_req) == req && atomic_load(&s_wait_idx) == idx) {
+      TaskHandle_t task = s_task;
+      if (task != NULL && atomic_load(&s_wait_req) == req && atomic_load(&s_wait_idx) == idx) {
         atomic_store(&s_wait_idx, IDX_NONE);
-        wake = true;
+        xTaskNotify(task, NOTE_BAD_CHUNK, eSetValueWithOverwrite);
       }
       portEXIT_CRITICAL(&s_mux);
-      if (wake) {
-        xTaskNotify(s_task, NOTE_BAD_CHUNK, eSetValueWithOverwrite);
-      }
       return;
     }
     s_rx_active = true;
@@ -313,23 +333,19 @@ static void on_chunk(const tb_link_data_t *d, uint32_t req, uint32_t idx) {
       (uint32_t)d->offset + (uint32_t)d->data_len > want) {
     return;
   }
-  bool done = false, copied = false;
   portENTER_CRITICAL(&s_mux);
-  if (s_buf != NULL && atomic_load(&s_wait_req) == req && atomic_load(&s_wait_idx) == idx) {
+  TaskHandle_t task = s_task;
+  if (task != NULL && s_buf != NULL && atomic_load(&s_wait_req) == req && atomic_load(&s_wait_idx) == idx) {
     memcpy(s_buf + d->offset, d->data, (size_t)d->data_len);
-    copied = true;
     if ((uint32_t)d->offset + (uint32_t)d->data_len == want) {
       /* Invalidate the awaited index first: a duplicate reply (from a retry) must not overwrite the buffer
        * while the task reads it. */
       atomic_store(&s_wait_idx, IDX_NONE);
-      done = true;
+      s_rx_active = false;
+      xTaskNotify(task, NOTE_OK, eSetValueWithOverwrite); /* inside the lock: the task cannot be gone */
     }
   }
   portEXIT_CRITICAL(&s_mux);
-  if (copied && done) {
-    s_rx_active = false;
-    xTaskNotify(s_task, NOTE_OK, eSetValueWithOverwrite);
-  }
 }
 
 void tb_ota_on_data(const tb_link_data_t *d) {
@@ -350,20 +366,17 @@ void tb_ota_on_data(const tb_link_data_t *d) {
     return;
   }
   if (tl == strlen(TB_FW_ERROR_TOPIC) && memcmp(d->topic, TB_FW_ERROR_TOPIC, tl) == 0) {
-    bool wake = false;
     portENTER_CRITICAL(&s_mux);
-    if (atomic_load(&s_wait_idx) != IDX_NONE) {
+    TaskHandle_t task = s_task;
+    if (task != NULL && atomic_load(&s_wait_idx) != IDX_NONE) {
       atomic_store(&s_wait_idx, IDX_NONE);
-      wake = true;
+      xTaskNotify(task, NOTE_SERVER_ERROR, eSetValueWithOverwrite);
     }
     portEXIT_CRITICAL(&s_mux);
-    if (wake && s_task) {
-      xTaskNotify(s_task, NOTE_SERVER_ERROR, eSetValueWithOverwrite);
-    }
     return;
   }
   uint32_t req = 0, idx = 0;
-  if (tb_fw_parse_chunk_topic(d->topic, tl, &req, &idx) && s_task != NULL) {
+  if (tb_fw_parse_chunk_topic(d->topic, tl, &req, &idx)) {
     on_chunk(d, req, idx);
   }
 }

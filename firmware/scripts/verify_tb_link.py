@@ -597,6 +597,31 @@ def test_tb_ota():
     assert_test("TB_FW_ERROR_TOPIC" in top, "the data hook handles TB_FW_ERROR_TOPIC")
     assert_test("tb_fw_chunk_len(" in chunk, "the data hook checks the chunk total against tb_fw_chunk_len")
     assert_test("vTaskDelete(NULL)" in task, "the task deletes itself")
+    notifies = re.findall(r"xTaskNotify\(\s*(\w+)", chunk + top)
+    assert_test(len(notifies) >= 3 and "s_task" not in notifies, "the hook notifies a handle captured under s_mux, never xTaskNotify(s_task",
+                str(notifies))
+    for name, fbody in (("on_chunk", chunk), ("tb_ota_on_data", top)):
+        for m in re.finditer(r"xTaskNotify\(", fbody):
+            before = fbody[:m.start()]
+            assert_test(before.rfind("portENTER_CRITICAL") > before.rfind("portEXIT_CRITICAL"),
+                        f"{name}: xTaskNotify runs inside the s_mux critical section")
+    wait = function_body(c, "end_wait_timeout")
+    assert_test("portENTER_CRITICAL(&s_mux)" in wait and "atomic_store(&s_wait_idx, IDX_NONE)" in wait and
+                wait.find("portENTER_CRITICAL") < wait.find('return "chunk_timeout"'),
+                "end_wait_timeout disarms s_wait_idx under s_mux before returning a timeout")
+    assert_test('return "chunk_timeout"' not in fetch and fetch.count("end_wait_timeout(idx)") >= 2,
+                "fetch_chunk only leaves through end_wait_timeout on a timeout")
+    i_task = task.find("s_task = xTaskGetCurrentTaskHandle()")
+    assert_test(i_task != -1 and i_task < task.find("report_state(") and i_task < task.find("fetch_chunk("),
+                "s_task is set before any request is armed")
+    fail_i = task.find("fail:")
+    fail = task[fail_i:] if fail_i != -1 else ""
+    assert_test(fail.find("atomic_store(&s_wait_idx, IDX_NONE)") != -1 and
+                fail.find("atomic_store(&s_wait_idx, IDX_NONE)") < fail.find("s_task = NULL") and
+                fail.find("portENTER_CRITICAL") < fail.find("s_task = NULL") < fail.find("portEXIT_CRITICAL"),
+                "the fail path clears s_task only after disarming the wait, under s_mux")
+    assert_test(re.search(r"psa_hash_abort\(&op\)", fail) is not None and "if (hash_open" not in c,
+                "psa_hash_abort runs unconditionally on the fail path")
 
 
 def main():
