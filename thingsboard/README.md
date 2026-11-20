@@ -115,3 +115,23 @@ python thingsboard/parity_test.py --user <อีเมล> --device fishpump-1de
 - เคส `writes` ที่มี `"attr": {"key","path"}` (path อยู่ในค่า attribute) มีแถว `.../write <ชื่อ> follow` เพิ่ม:
   หลังเขียนทาง TB และหลังคืนค่าทาง HTTP จะ poll attribute ทุก 250 ms นานสุด `follow_timeout_s` จนค่าตาม PASS เมื่อเห็นทั้งสองครั้งภายใน
   `follow_pass_s` (แสดงเวลาที่วัดได้ เช่น `follow 1.1 s / 0.9 s`) **แถว follow รันเฉพาะเมื่อใส่ `--writes`**
+
+## ทดสอบอัปเดตเฟิร์มแวร์ (OTA) จาก ThingsBoard
+
+`tb_ota.py` ใช้ session ของ tenant admin เท่านั้น ไม่ใช้ access token ของอุปกรณ์ (ThingsBoard เก็บ session เดียวต่ออุปกรณ์ ถ้าต่อซ้ำบอร์ดจริงจะหลุด)
+
+```
+python thingsboard/tb_ota.py --selftest                                         # ออฟไลน์
+python thingsboard/tb_ota.py upload firmware/build/fishpump_firmware.bin --version 0.3.3 --user <อีเมล>
+python thingsboard/tb_ota.py assign fishpump-1de564 0.3.3 --user <อีเมล>
+python thingsboard/tb_ota.py status fishpump-1de564 --user <อีเมล>              # ดูซ้ำจนเห็น UPDATED
+python thingsboard/tb_ota.py unassign fishpump-1de564 --user <อีเมล>
+python thingsboard/tb_ota.py delete 0.3.3 --user <อีเมล>
+```
+
+- ไฟล์ที่อัปโหลดคือ `.bin` จากการ build ตรงๆ (ไม่ใช่ไฟล์เข้ารหัสของเว็บอัปโหลด) ชื่อ package ต้องเป็น `fishpump` (ค่าเริ่มต้น) และ `--version` ต้องสูงกว่าเวอร์ชันที่บอร์ดรันอยู่ (ตั้งใน `firmware/version.txt` ก่อน build) ไม่งั้นบอร์ดข้าม
+- `upload` พิมพ์ id, ขนาด และ checksum SHA-256 ที่ ThingsBoard เก็บ ให้เทียบกับไฟล์ในเครื่อง
+- `status` พิมพ์ `fw_state`, `fw_error`, `current_fw_*`, `target_fw_*` ล่าสุด และ shared attribute `fw_*`
+- การ assign ทำที่หน้าอุปกรณ์ใน ThingsBoard ได้เหมือนกัน (ช่อง Firmware ในหน้ารายละเอียดอุปกรณ์)
+- dashboard มีหน้า "เฟิร์มแวร์ (Firmware)" แสดง `fw_state`, `fw_error`, `current_fw_title`, `current_fw_version`, `target_fw_version`
+- รายละเอียดโปรโตคอล รหัส `fw_error` และกฎ 5 นาที: `docs/firmware/device-api.md` หัวข้อ 12

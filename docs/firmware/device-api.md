@@ -457,3 +457,58 @@ All values are in `uplink_format.h`.
 
 - Any `DAPI_F_WRITE` method whose function ran (any status). The write hook calls `uplink_note_settings_changed()`.
 - Five web handlers that do not go through `device_api`: `POST /api/confirm`, `DELETE /api/confirm` (before the reboot), `/api/auth/credentials`, `/api/change-password` and the OTA upload (after the boot partition is set). The reply bodies are unchanged.
+
+## 12. ThingsBoard OTA (milestone 5)
+
+Sources: `firmware/main/tb_ota.c`, `firmware/components/tb_link_logic` (protocol values and the pure logic).
+
+### 12.1 How it works
+
+- ThingsBoard pushes the shared attributes `fw_title`, `fw_version`, `fw_size`, `fw_checksum` and `fw_checksum_algorithm` when a package is assigned to the device. The board also asks for them at every connect.
+- Only a package with the title `fishpump` is taken. The checksum algorithm must be `SHA256`. A version equal to the running one (a leading `v` or `V` is ignored, so `v0.3.3` equals `0.3.3`) is skipped.
+- The board downloads the image in 16384-byte chunks over MQTT (`v2/fw/request/<id>/chunk/<n>`, payload always `16384`), writes it to the next OTA slot, checks the SHA-256 of all bytes, sets the boot partition and reboots. The web app is not involved.
+- The package is the plain build `.bin` (`firmware/build/fishpump_firmware.bin`). It is not the encrypted web-upload file.
+- The version comes from `firmware/version.txt` (numeric `x.y.z`). It sets both `PROJECT_VER` and the CMake project version. The running version is `esp_app_get_description()->version`. Raise it before building a package, or the board skips the update.
+- While a ThingsBoard download holds the OTA lock, `POST /api/ota` answers `409 {"ok":false,"error":"ota_busy"}`. A ThingsBoard update that finds the lock held (a web upload) reports `busy`.
+
+### 12.2 `fw_state` sequence
+
+Telemetry from the device: `DOWNLOADING` -> `DOWNLOADED` -> `VERIFIED` -> `UPDATING` -> (reboot) -> `UPDATED`. Any failure gives `FAILED` plus `fw_error`. `DOWNLOADING` and `UPDATED` also carry `current_fw_title` and `current_fw_version`.
+
+### 12.3 `fw_error` codes
+
+"Final" means the version is remembered in RAM and ignored until the next reboot. The others are retried at the next connect or the next push.
+
+| Code | When | Final |
+|---|---|---|
+| `bad_attributes` | title is `fishpump` but the other `fw_*` fields are missing or wrong, or the algorithm is not `SHA256` | yes |
+| `too_large` | `fw_size` is larger than the next update partition | yes |
+| `busy` | the OTA lock is held (web upload) | no |
+| `no_memory` | the chunk buffer or the task could not be allocated | no |
+| `ota_begin_failed` | `esp_ota_begin` failed (for example the running image is still pending verification) | no |
+| `chunk_timeout` | 3 attempts (10 s each) without a complete chunk | no |
+| `server_error` | a message on `v2/fw/error` (for example `PAYLOAD_TOO_LARGE`) | no |
+| `bad_chunk` | a chunk whose total length is not the expected length | yes |
+| `write_failed` | `esp_ota_write` failed | no |
+| `checksum_mismatch` | the SHA-256 of all bytes differs from `fw_checksum` | yes |
+| `invalid_image` | `esp_ota_end` rejected the image | yes |
+| `set_boot_failed` | `esp_ota_set_boot_partition` failed | no |
+| `rolled_back` | after the reboot the running version is not the pending one | reported once at boot |
+
+### 12.4 The 5-minute rule
+
+The new image is not marked valid at boot. It is marked valid only after it has connected to ThingsBoard and the boot result has been reported. If that does not happen within 5 minutes (`TB_FW_VERIFY_TIMEOUT_MS`), the board rolls back to the previous image and reports `FAILED` with `rolled_back`. The pending version is kept in NVS under `tb_ota_ver` and is cleared only after the boot result was sent. The restart detail is `TB_OTA_REBOOT`.
+
+### 12.5 Test-block build
+
+To test the rollback, build an image that never connects to ThingsBoard:
+
+```
+idf.py -C firmware -DTB_TEST_BLOCK_CONNECT=ON build
+```
+
+Upload it as a package with a higher version, assign it, and the board should roll back about 5 minutes after the reboot. Build again without the option for a normal image.
+
+### 12.6 Tooling
+
+`thingsboard/tb_ota.py` uploads, assigns, unassigns, shows the status of and deletes packages (see `thingsboard/README.md`). The dashboard page "Firmware" shows `fw_state`, `fw_error`, `current_fw_title`, `current_fw_version` and `target_fw_version`.

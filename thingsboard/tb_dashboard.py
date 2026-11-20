@@ -36,6 +36,7 @@ DEFAULT_DEVICE = "fishpump-1de564"
 DEVICE_TYPE = "fishpump"  # device profile name = device type
 
 # actions with no parity case: they move the pump or touch the pH sensor (calibration cancel), so their success is a guided bench step (Task 13), never automatic
+FW_TELEMETRY_KEYS = {"fw_state", "fw_error", "current_fw_title", "current_fw_version", "target_fw_version"}  # OTA state the device reports
 NON_PARITY_METHODS = {"pump.start", "pump.stop", "water.calibrate.cancel"}
 
 UNSAFE_CHARS = "<>&\"'"  # ThingsBoard NoXss validator rejects these in human-text fields
@@ -86,7 +87,7 @@ def check_pages(pages, cases, state=None, reg_keys=None):
     if reg_keys is None:
         reg_keys = registry_keys()
     attr_ok = {a["key"] for a in state.get("attributes", [])} | set(state.get("attr_present", []))
-    tel_ok = set(reg_keys) | set(ALARM_SUMMARY_KEYS) | set(state.get("status_keys", []))
+    tel_ok = set(reg_keys) | set(ALARM_SUMMARY_KEYS) | set(state.get("status_keys", [])) | FW_TELEMETRY_KEYS
     problems = []
     if not isinstance(pages, list) or not pages:
         return ["pages: must be a non-empty list"]
@@ -144,6 +145,10 @@ def check_pages(pages, cases, state=None, reg_keys=None):
                 problems.append("%s: confirm must be non-empty Thai text" % where)
             if m == "wifi.connect" and not (isinstance(c, str) and c.strip() and has_thai(c)):
                 problems.append("wifi.connect action needs a non-empty Thai confirm (the board reboots)")
+            if m == "wifi.connect":
+                prm = a.get("params")
+                if not (isinstance(prm, dict) and prm.get("ssid") == ""):
+                    problems.append("%s: wifi.connect default ssid must be empty (an unedited send must be refused)" % where)
     return problems
 
 
@@ -194,7 +199,7 @@ BROKEN_FIXTURE = [
     {"id": "wc_bad", "title": "F", "telemetry": [], "actions": [
         {"label": "w", "method": "wifi.connect", "params": {"ssid": "x"}, "edit": True, "load": None, "confirm": None}]},
 ]
-BROKEN_EXPECT = ["telemetry key 'no_such_telemetry_key'", "attribute 'no_such_attribute'", "attributes must be a list of strings",
+BROKEN_EXPECT = ["wifi.connect default ssid must be empty", "telemetry key 'no_such_telemetry_key'", "attribute 'no_such_attribute'", "attributes must be a list of strings",
                  "load_keys without load", "load_keys must be a non-empty list",
                  "wifi.connect action needs a non-empty Thai confirm"]
 
