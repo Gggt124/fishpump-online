@@ -54,6 +54,16 @@ tb_prov_result_t tb_provision_parse(const char *json, size_t len, char *token, s
 /* 0 -> 5000, else min(2*current, 60000) */
 uint32_t tb_backoff_next_ms(uint32_t current_ms);
 
+/* Longest wait for the RPC reply to be acked before an action that drops the link (staged Wi-Fi restart). */
+#define TB_AFTER_REPLY_MAX_MS 2000u
+
+/* Reconnect delay after a failed MQTT connect. While a Wi-Fi switch is staged the delay stays at the minimum so
+ * the confirmation reaches ThingsBoard quickly; otherwise at_cap pins it to the maximum, else it doubles. */
+uint32_t tb_backoff_after_fail_ms(uint32_t current_ms, bool at_cap, bool staging);
+
+/* True once the reply was acked or TB_AFTER_REPLY_MAX_MS passed since it was published. */
+bool tb_after_reply_ready(bool acked, uint32_t elapsed_ms);
+
 /* ---- ThingsBoard server-side RPC ---- */
 #define TB_RPC_REQ_PREFIX  "v1/devices/me/rpc/request/"
 #define TB_RPC_RESP_PREFIX "v1/devices/me/rpc/response/"

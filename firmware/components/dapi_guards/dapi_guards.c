@@ -37,3 +37,25 @@ bool dapi_polarity_write_blocked(dapi_source_t src, const char *requested, const
     }
     return stored == NULL || strcmp(requested, stored) != 0;
 }
+
+const char *dapi_wifi_connect_refusal(dapi_source_t src, bool static_ip, bool staging_active, bool measuring)
+{
+    if (src != DAPI_SRC_TB) {
+        return NULL;
+    }
+    if (static_ip) {
+        return "local_only";
+    }
+    if (staging_active) {
+        return "staging_active";
+    }
+    if (measuring) {
+        return "measure_running";
+    }
+    return NULL;
+}
+
+bool dapi_wifi_save_empty_blocked(dapi_source_t src, const char *password, bool profile_exists)
+{
+    return src == DAPI_SRC_TB && (password == NULL || password[0] == '\0') && !profile_exists;
+}

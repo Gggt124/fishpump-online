@@ -259,6 +259,22 @@ uint32_t tb_backoff_next_ms(uint32_t current_ms)
     return current_ms * 2;
 }
 
+uint32_t tb_backoff_after_fail_ms(uint32_t current_ms, bool at_cap, bool staging)
+{
+    if (staging) {
+        return TB_BACKOFF_MIN_MS;
+    }
+    if (at_cap) {
+        return TB_BACKOFF_MAX_MS;
+    }
+    return tb_backoff_next_ms(current_ms);
+}
+
+bool tb_after_reply_ready(bool acked, uint32_t elapsed_ms)
+{
+    return acked || elapsed_ms >= TB_AFTER_REPLY_MAX_MS;
+}
+
 /* ---- ThingsBoard server-side RPC ---- */
 
 bool tb_rpc_parse_topic(const char *topic, size_t topic_len, uint32_t *req_id)

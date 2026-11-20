@@ -211,6 +211,18 @@ void test_tb_link(void)
     CHECK(tb_backoff_next_ms(20000) == 40000u);
     CHECK(tb_backoff_next_ms(40000) == 60000u);
     CHECK(tb_backoff_next_ms(60000) == 60000u);
+    /* backoff while a Wi-Fi switch is staged, and the reply wait */
+    CHECK(tb_backoff_after_fail_ms(0, false, true) == 5000u);
+    CHECK(tb_backoff_after_fail_ms(60000, true, true) == 5000u);
+    CHECK(tb_backoff_after_fail_ms(20000, false, true) == 5000u);
+    CHECK(tb_backoff_after_fail_ms(0, false, false) == 5000u);
+    CHECK(tb_backoff_after_fail_ms(5000, false, false) == 10000u);
+    CHECK(tb_backoff_after_fail_ms(40000, false, false) == 60000u);
+    CHECK(tb_backoff_after_fail_ms(0, true, false) == 60000u);
+    CHECK(tb_after_reply_ready(true, 0) == true);
+    CHECK(tb_after_reply_ready(false, 1999) == false);
+    CHECK(tb_after_reply_ready(false, 2000) == true);
+    CHECK(tb_after_reply_ready(false, 60000) == true);
     /* RPC topic and envelope parsing */
     {
         uint32_t id = 0;
