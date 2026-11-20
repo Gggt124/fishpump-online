@@ -376,6 +376,7 @@ Six keys. Each value is built from one or more reads.
 
 Notes:
 
+- ThingsBoard does not keep a member whose value is `null` inside a stored JSON attribute. For example, `hardware_map.pending` is `null` on the board and simply missing in ThingsBoard. A reader of the attribute (dashboard, frontend) treats a missing member as `null`.
 - A read that does not return status `DAPI_OK` leaves its key out this round. The reply is dropped. No error object is sent. For `wifi`, a failed read leaves out only its own fields; the key is left out when both reads fail.
 - The builder returns nothing only when every key failed.
 - The uplink sends only the keys whose hash changed (a cache of the last sent hash per key). A key that was left out keeps its last sent value on ThingsBoard.

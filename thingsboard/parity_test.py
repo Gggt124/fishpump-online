@@ -48,6 +48,15 @@ def strip_keys(obj, ignore, path=""):
     return obj
 
 
+def drop_nulls(obj):
+    """Deep copy without dict members whose value is None (list items are kept)."""
+    if isinstance(obj, dict):
+        return {k: drop_nulls(v) for k, v in obj.items() if v is not None}
+    if isinstance(obj, list):
+        return [drop_nulls(v) for v in obj]
+    return obj
+
+
 def compare_bodies(rpc, http, ignore=()):
     """None when equal after dropping the ignored keys, else a short reason."""
     a, b = strip_keys(rpc, set(ignore)), strip_keys(http, set(ignore))
@@ -396,6 +405,14 @@ def selftest_state(check):
         r = Runner(_FakeTbState({"cfg_pump": {"a": {"b": 1}, "c": 3}}), "dev", board)
         _quiet(r.run_attr, case, ["c"])
         check("attr honours the read ignore list", r.counts["PASS"] == 1)
+        nboard = _FakeBoardMap({"/api/pump/config": {"ok": True, "a": {"b": 1, "n": None}, "p": None}})
+        r = Runner(_FakeTbState({"cfg_pump": {"a": {"b": 1}}}), "dev", nboard)
+        _quiet(r.run_attr, case, [])
+        check("a null HTTP value missing in ThingsBoard is PASS (TB drops JSON nulls)", r.counts["PASS"] == 1)
+        r = Runner(_FakeTbState({"cfg_pump": {"a": {"b": 1}}}), "dev", board)
+        _quiet(r.run_attr, case, [])
+        check("a non-null HTTP value missing in ThingsBoard is still FAIL",
+              r.counts["FAIL"] == 1 and r.rows[0][2].startswith("differs at c"))
         r = Runner(_FakeTbState({"wifi": {"x": 1}}), "dev", None)
         _quiet(r.run_attr_present, "wifi")
         _quiet(r.run_attr_present, "tb_link")
@@ -796,7 +813,10 @@ class Runner:
             return self.report("SKIP", name, FORCE_PW_MSG)
         if hs != 200 or not isinstance(hb, dict):
             return self.report("FAIL", name, "board HTTP %s" % hs)
-        want = {k: v for k, v in hb.items() if k not in c.get("drop", [])}
+        # ThingsBoard does not keep members whose value is null inside a stored JSON attribute
+        # (bench I2, 2026-11-20: hardware_map "pending":null), so nulls are dropped on both sides.
+        want = drop_nulls({k: v for k, v in hb.items() if k not in c.get("drop", [])})
+        got = {c["key"]: drop_nulls(got[c["key"]])}
         if compare_bodies(got[c["key"]], want, ignore) is None:
             return self.report("PASS", name)
         a, b = strip_keys(got[c["key"]], set(ignore)), strip_keys(want, set(ignore))
