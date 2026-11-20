@@ -150,7 +150,7 @@ def test_tb_link_component():
                 str(bad))
     assert_test(re.search(r"disable_auto_reconnect\s*=\s*true", src) is not None,
                 "client config disables esp-mqtt auto reconnect")
-    assert_test("tb_backoff_next_ms(" in src and "tb_provision_parse(" in src and "tb_provision_build_request(" in src
+    assert_test("tb_backoff_after_fail_ms(" in src and "tb_provision_parse(" in src and "tb_provision_build_request(" in src
                 and "nvs_store_load_tb_link(" in src and "nvs_store_save_tb_link(" in src,
                 "tb_link.c uses the logic and NVS APIs")
     assert_test("/provision/response" in src and "/provision/request" in src and "UPLINK_TOPIC_TELEMETRY" in src
@@ -373,6 +373,24 @@ def test_state_cases_drift():
                 f"expected {table + extra}, got {keys}")
 
 
+def test_remote_wifi_link():
+    print("\n--- Milestone 4 Task 2: tb_link defers an action until the reply is acked ---")
+    hdr = read(COMP_DIR / "tb_link" / "include" / "tb_link.h")
+    src = read(COMP_DIR / "tb_link" / "tb_link.c")
+    assert_test("tb_link_defer_after_reply(void (*action)(void))" in hdr, "tb_link.h declares tb_link_defer_after_reply")
+    assert_test("tb_link_set_connected_hook(void (*hook)(void))" in hdr, "tb_link.h declares tb_link_set_connected_hook")
+    assert_test("case MQTT_EVENT_PUBLISHED" in src, "event handler has a case MQTT_EVENT_PUBLISHED")
+    i_case = src.find("case CMD_CONNECTED:")
+    i_hook = src.find("connected_hook", i_case)
+    i_sub = src.find("TB_RPC_SUB_TOPIC", i_case)
+    assert_test(i_case != -1 and i_hook != -1 and i_sub != -1 and i_hook < i_sub,
+                "CMD_CONNECTED calls the connected hook before subscribing to TB_RPC_SUB_TOPIC")
+    tf = function_body(src, "task_fail")
+    assert_test("tb_backoff_after_fail_ms" in tf and "nvs_store_get_staging_type" in tf and "tb_backoff_next_ms" not in tf,
+                "task_fail uses tb_backoff_after_fail_ms and nvs_store_get_staging_type, not tb_backoff_next_ms")
+    assert_test("tb_after_reply_ready" in src, "the tb_rpc code calls tb_after_reply_ready")
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
@@ -382,6 +400,7 @@ def main():
     test_uplink_state()
     test_tb_state()
     test_state_cases_drift()
+    test_remote_wifi_link()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

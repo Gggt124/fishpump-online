@@ -49,6 +49,13 @@ int32_t tb_link_stack_hwm(void);
 /* Same for the tb_rpc task (runs the device_api methods), or -1 before it exists. */
 int32_t tb_link_rpc_stack_hwm(void);
 
+/* Only valid on the tb_rpc task while it runs a method (returns false anywhere else). After the reply of the
+ * request being processed is acknowledged by the broker (or after TB_AFTER_REPLY_MAX_MS), the tb_rpc task calls
+ * action(). A cached (duplicate) reply never runs an action. */
+bool tb_link_defer_after_reply(void (*action)(void));
+/* Set once at boot. Called on the tb_link task for every accepted token-session connect, before the RPC subscribe. */
+void tb_link_set_connected_hook(void (*hook)(void));
+
 #ifdef __cplusplus
 }
 #endif

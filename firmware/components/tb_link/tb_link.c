@@ -247,6 +247,30 @@ static void rpc_queue_drain(void)
     }
 }
 
+/* Message ids the broker has acknowledged (MQTT_EVENT_PUBLISHED), newest overwrites the oldest. The tb_rpc task
+ * looks for its reply's id here; a ring covers an ack that lands before the id is known to the waiter. */
+#define TB_ACKED_RING 8
+static atomic_int s_acked_ids[TB_ACKED_RING];
+static atomic_uint s_acked_next;
+static void (*_Atomic s_connected_hook)(void);
+
+static void acked_ring_clear(void)
+{
+    for (int i = 0; i < TB_ACKED_RING; i++) {
+        atomic_store(&s_acked_ids[i], -1);
+    }
+}
+
+static bool acked_ring_has(int id)
+{
+    for (int i = 0; i < TB_ACKED_RING; i++) {
+        if (atomic_load(&s_acked_ids[i]) == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* ---- esp-mqtt event handler (esp-mqtt task): post a command, flip the flag, nothing else ---- */
 
 static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -272,6 +296,9 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     case MQTT_EVENT_SUBSCRIBED:
         c.type = CMD_SUBSCRIBED;
         break;
+    case MQTT_EVENT_PUBLISHED:
+        atomic_store(&s_acked_ids[atomic_fetch_add(&s_acked_next, 1u) % TB_ACKED_RING], ev->msg_id);
+        return;
     case MQTT_EVENT_DATA:
         if (ev->topic != NULL && ev->topic_len > (int)strlen(TB_RPC_REQ_PREFIX) &&
             memcmp(ev->topic, TB_RPC_REQ_PREFIX, strlen(TB_RPC_REQ_PREFIX)) == 0) {
@@ -363,7 +390,11 @@ static void task_fail(task_ctx_t *tc, const char *msg, bool at_cap)
     if (msg != NULL) {
         task_set_error(msg);
     }
-    tc->backoff_ms = at_cap ? TB_BACKOFF_MAX_MS : tb_backoff_next_ms(tc->backoff_ms);
+    uint8_t stg_type = 0;
+    if (!nvs_store_get_staging_type(&stg_type)) {
+        stg_type = 0;
+    }
+    tc->backoff_ms = tb_backoff_after_fail_ms(tc->backoff_ms, at_cap, stg_type == 1);
     tc->deadline_ms = now_ms() + tc->backoff_ms;
     ESP_LOGI(TAG, "retry in %lu s", (unsigned long)(tc->backoff_ms / 1000));
     task_publish_state(tc, TB_STATE_BACKOFF);
@@ -550,6 +581,10 @@ static void task_handle_cmd(task_ctx_t *tc, const tb_cmd_t *c)
             tc->backoff_ms = 0; /* accepted connect: next failure starts at 5 s again */
             task_set_error("");
             task_publish_state(tc, TB_STATE_CONNECTED);
+            void (*hook)(void) = atomic_load(&s_connected_hook);
+            if (hook != NULL) {
+                hook(); /* before the subscribe: a staged Wi-Fi switch is confirmed or judged first */
+            }
             /* Clean session: the subscription is gone after every reconnect, so subscribe on every accepted connect. */
             if (esp_mqtt_client_subscribe_single(tc->client, TB_RPC_SUB_TOPIC, 1) < 0) {
                 ESP_LOGW(TAG, "rpc: subscribe failed");
@@ -686,7 +721,7 @@ static void tb_link_task(void *arg)
 
 /* Publish a reply through the same guard as sink_send: client_lock, with the client pointer valid only while the
  * request's generation is still the current one. */
-static bool rpc_publish(uint32_t gen, uint32_t req_id, const char *body)
+static bool rpc_publish(uint32_t gen, uint32_t req_id, const char *body, int *msg_id_out)
 {
     char topic[48];
     int id = -1;
@@ -699,7 +734,27 @@ static bool rpc_publish(uint32_t gen, uint32_t req_id, const char *body)
         }
         xSemaphoreGive(s.client_lock);
     }
+    if (msg_id_out != NULL) {
+        *msg_id_out = id;
+    }
     return id >= 0;
+}
+
+/* Action registered by the method being run on the tb_rpc task (only that task touches it). */
+static void (*s_defer_action)(void);
+
+bool tb_link_defer_after_reply(void (*action)(void))
+{
+    if (action == NULL || s.rpc_task == NULL || xTaskGetCurrentTaskHandle() != s.rpc_task) {
+        return false;
+    }
+    s_defer_action = action;
+    return true;
+}
+
+void tb_link_set_connected_hook(void (*hook)(void))
+{
+    atomic_store(&s_connected_hook, hook);
 }
 
 /* Last handled requests, keyed by id + payload length + payload hash (tb_link_logic). ThingsBoard re-sends a
@@ -731,12 +786,13 @@ static void rpc_process(rpc_item_t *it)
     const char *body = NULL;
     const char *status = "?";
 
+    s_defer_action = NULL;
     uint32_t t_ms = (uint32_t)now_ms();
     int dup = tb_rpc_dedup_find(&s_rpc_dedup, it->req_id, it->payload, it->len, t_ms);
     tb_rpc_parse_t pr = tb_rpc_parse_request(it->payload, it->len, method, sizeof(method), &params);
     if (dup >= 0 && s_rpc_dedup_reply[dup] != NULL) {
         cJSON_Delete(params);
-        (void)rpc_publish(it->gen, it->req_id, s_rpc_dedup_reply[dup]);
+        (void)rpc_publish(it->gen, it->req_id, s_rpc_dedup_reply[dup], NULL); /* a cached reply never runs an action */
         ESP_LOGI(TAG, "rpc %s id=%lu -> duplicate, cached reply", method[0] != '\0' ? method : "-",
                  (unsigned long)it->req_id);
         rpc_item_free(it);
@@ -773,10 +829,27 @@ static void rpc_process(rpc_item_t *it)
     }
     rpc_item_free(it);
 
-    bool sent = rpc_publish(it->gen, it->req_id, body);
+    acked_ring_clear();
+    int msg_id = -1;
+    bool sent = rpc_publish(it->gen, it->req_id, body, &msg_id);
     ESP_LOGI(TAG, "rpc %s id=%lu -> %s%s", method[0] != '\0' ? method : "-", (unsigned long)it->req_id, status,
              sent ? "" : " (reply dropped)");
     free(printed);
+
+    void (*action)(void) = s_defer_action;
+    s_defer_action = NULL;
+    if (action != NULL) {
+        /* Wait for the broker to ack the reply (or the cap), so the action (a restart) does not eat it. */
+        int64_t t0 = now_ms();
+        for (;;) {
+            bool acked = sent && acked_ring_has(msg_id);
+            if (tb_after_reply_ready(acked, (uint32_t)(now_ms() - t0))) {
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        action();
+    }
 }
 
 static void tb_rpc_task(void *arg)
