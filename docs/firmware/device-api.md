@@ -504,10 +504,10 @@ The new image is not marked valid at boot. It is marked valid only after it has 
 To test the rollback, build an image that never connects to ThingsBoard:
 
 ```
-idf.py -C firmware -DTB_TEST_BLOCK_CONNECT=ON build
+idf.py -C firmware -B firmware/build_block -DTB_TEST_BLOCK_CONNECT=ON build
 ```
 
-Upload it as a package with a higher version, assign it, and the board should roll back about 5 minutes after the reboot. Build again without the option for a normal image.
+Always use the separate build directory: `TB_TEST_BLOCK_CONNECT` is a CMake cache variable, so building it in `firmware/build` would leave every later normal build sticky-ON and overwrite the normal `.bin`. Upload `firmware/build_block/fishpump_firmware.bin` as a package with a higher version and assign it. The board should roll back about 5 minutes after the reboot. The normal image stays in `firmware/build`.
 
 ### 12.6 Tooling
 
