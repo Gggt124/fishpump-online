@@ -30,5 +30,6 @@ void test_uplink_state(void);
 void test_dry_run_config(void);
 void test_dry_run_machine(void);
 void test_tb_link(void);
+void test_tb_fw(void);
 void test_device_api(void);
 void test_dapi_guards(void);

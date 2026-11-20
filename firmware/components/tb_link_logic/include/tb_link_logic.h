@@ -114,6 +114,67 @@ int tb_rpc_dedup_find(const tb_rpc_dedup_t *d, uint32_t req_id, const char *payl
  * slot, else the oldest entry (evicted). The caller replaces that slot's cached reply. */
 int tb_rpc_dedup_insert(tb_rpc_dedup_t *d, uint32_t req_id, const char *payload, size_t len, uint32_t now_ms);
 
+/* ---- ThingsBoard firmware OTA (pure helpers) ---- */
+#define TB_FW_TITLE                "fishpump"
+#define TB_FW_CHUNK_SIZE           16384u
+#define TB_FW_CHUNK_SIZE_STR       "16384"
+#define TB_FW_CHUNK_TIMEOUT_MS     10000u  /* per attempt */
+#define TB_FW_CHUNK_TRIES          3       /* attempts per chunk */
+#define TB_FW_VERIFY_TIMEOUT_MS    300000u /* 5 min */
+#define TB_FW_ATTR_TOPIC           "v1/devices/me/attributes"
+#define TB_FW_ATTR_REQ_PREFIX      "v1/devices/me/attributes/request/"
+#define TB_FW_ATTR_RESP_PREFIX     "v1/devices/me/attributes/response/"
+#define TB_FW_REQ_PREFIX           "v2/fw/request/"
+#define TB_FW_RESP_PREFIX          "v2/fw/response/"
+#define TB_FW_ERROR_TOPIC          "v2/fw/error"
+#define TB_TELEMETRY_TOPIC         "v1/devices/me/telemetry"
+#define TB_FW_ATTR_REQUEST_BODY    "{\"sharedKeys\":\"fw_title,fw_version,fw_size,fw_checksum,fw_checksum_algorithm\"}"
+#define TB_FW_VERSION_MAX          33 /* incl. NUL */
+
+typedef struct {
+    char title[33];
+    char version[TB_FW_VERSION_MAX];
+    uint32_t size;
+    char checksum[65]; /* lowercase hex */
+} tb_fw_info_t;
+
+typedef enum { TB_FW_ATTR_NONE = 0, TB_FW_ATTR_CLEARED, TB_FW_ATTR_INFO, TB_FW_ATTR_INVALID } tb_fw_attr_t;
+/* Attribute push ({"fw_title":...} or {"deleted":[...]}) or request reply ({"shared":{...}}).
+ * NONE: no fw_title and not deleted. CLEARED: fw_title deleted, or absent from the shared reply. INFO: all fw_*
+ * fields valid, *out filled. INVALID: not an object, or fw_title present with bad other fields (out->title is the
+ * title when it fits in 32 bytes, else ""). Fields of *out other than title are valid only on INFO. */
+tb_fw_attr_t tb_fw_parse_attrs(const char *json, size_t len, tb_fw_info_t *out);
+
+typedef enum { TB_FW_IGNORE = 0, TB_FW_START, TB_FW_FAIL } tb_fw_decision_t;
+/* In order: other title, busy, running version, last failed version -> IGNORE; size > max_size -> FAIL with
+ * *reason "too_large" (reason may be NULL; set only on FAIL); else START. last_failed_version may be NULL. */
+tb_fw_decision_t tb_fw_decide(const tb_fw_info_t *fw, const char *running_version, const char *last_failed_version,
+                              uint32_t max_size, bool busy, const char **reason);
+
+/* Equal after stripping one leading 'v'/'V' from each side. NULL on either side gives false. */
+bool tb_fw_version_equal(const char *a, const char *b);
+/* True for the fw_error codes that are remembered until reboot (bad_attributes, too_large, bad_chunk,
+ * checksum_mismatch, invalid_image). */
+bool tb_fw_error_is_final(const char *code);
+/* ceil(size / TB_FW_CHUNK_SIZE); expected length of chunk idx, 0 when idx >= count. */
+uint32_t tb_fw_chunk_count(uint32_t size);
+uint32_t tb_fw_chunk_len(uint32_t size, uint32_t idx);
+/* "v2/fw/request/<req>/chunk/<idx>" into out; returns its length, or -1 when it does not fit with the NUL. */
+int tb_fw_request_topic(uint32_t req_id, uint32_t idx, char *out, size_t size);
+/* "v2/fw/response/<req>/chunk/<idx>" (topic_len bytes, not NUL terminated); same decimal rules as
+ * tb_rpc_parse_topic. */
+bool tb_fw_parse_chunk_topic(const char *topic, size_t topic_len, uint32_t *req_id, uint32_t *idx);
+/* 32 digest bytes against 64 hex characters, case-insensitive. */
+bool tb_fw_digest_matches(const uint8_t digest[32], const char *hex64);
+/* Keys fw_state, fw_error, current_fw_title, current_fw_version in that order; a NULL argument leaves its key out
+ * (all NULL gives "{}"). Returns the length, or -1 when it does not fit with the NUL. */
+int tb_fw_state_json(char *buf, size_t size, const char *state, const char *error,
+                     const char *cur_title, const char *cur_version);
+
+typedef enum { TB_FW_BOOT_NONE = 0, TB_FW_BOOT_VERIFY, TB_FW_BOOT_UPDATED, TB_FW_BOOT_ROLLED_BACK } tb_fw_boot_t;
+/* NULL pending: NONE. Pending equals running: VERIFY while pending_verify, else UPDATED. Else ROLLED_BACK. */
+tb_fw_boot_t tb_fw_boot_state(const char *pending_version, const char *running_version, bool pending_verify);
+
 #ifdef __cplusplus
 }
 #endif

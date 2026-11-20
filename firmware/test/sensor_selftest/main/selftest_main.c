@@ -20,6 +20,7 @@ void app_main(void)
     test_dry_run_config();
     test_dry_run_machine();
     test_tb_link();
+    test_tb_fw();
     test_device_api();
     test_dapi_guards();
 

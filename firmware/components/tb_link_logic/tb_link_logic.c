@@ -411,3 +411,274 @@ int tb_rpc_dedup_insert(tb_rpc_dedup_t *d, uint32_t req_id, const char *payload,
                                         .seq = ++d->seq};
     return slot;
 }
+
+/* ---- ThingsBoard firmware OTA ---- */
+static bool hex64_ok(const char *s)
+{
+    if (strlen(s) != 64) {
+        return false;
+    }
+    for (int i = 0; i < 64; i++) {
+        char c = s[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+tb_fw_attr_t tb_fw_parse_attrs(const char *json, size_t len, tb_fw_info_t *out)
+{
+    if (out == NULL) {
+        return TB_FW_ATTR_INVALID;
+    }
+    memset(out, 0, sizeof(*out));
+    if (json == NULL || len == 0) {
+        return TB_FW_ATTR_INVALID;
+    }
+    cJSON *root = cJSON_ParseWithLength(json, len);
+    if (root == NULL || !cJSON_IsObject(root)) {
+        cJSON_Delete(root);
+        return TB_FW_ATTR_INVALID;
+    }
+    const cJSON *src = cJSON_GetObjectItemCaseSensitive(root, "shared");
+    bool reply = cJSON_IsObject(src);
+    if (!reply) {
+        src = root;
+        const cJSON *del = cJSON_GetObjectItemCaseSensitive(root, "deleted");
+        if (cJSON_IsArray(del)) {
+            const cJSON *d;
+            cJSON_ArrayForEach(d, del)
+            {
+                if (cJSON_IsString(d) && d->valuestring != NULL && strcmp(d->valuestring, "fw_title") == 0) {
+                    cJSON_Delete(root);
+                    return TB_FW_ATTR_CLEARED;
+                }
+            }
+        }
+    }
+    const cJSON *title = cJSON_GetObjectItemCaseSensitive(src, "fw_title");
+    if (title == NULL) {
+        cJSON_Delete(root);
+        /* reply without fw_title, or an empty object: cleared; any other push (e.g. other keys deleted): none */
+        return (reply || root->child == NULL) ? TB_FW_ATTR_CLEARED : TB_FW_ATTR_NONE;
+    }
+    if (!cJSON_IsString(title) || title->valuestring == NULL || strlen(title->valuestring) > 32) {
+        cJSON_Delete(root);
+        return TB_FW_ATTR_INVALID;
+    }
+    strcpy(out->title, title->valuestring);
+
+    tb_fw_attr_t res = TB_FW_ATTR_INVALID;
+    const cJSON *ver = cJSON_GetObjectItemCaseSensitive(src, "fw_version");
+    const cJSON *size = cJSON_GetObjectItemCaseSensitive(src, "fw_size");
+    const cJSON *alg = cJSON_GetObjectItemCaseSensitive(src, "fw_checksum_algorithm");
+    const cJSON *sum = cJSON_GetObjectItemCaseSensitive(src, "fw_checksum");
+    if (cJSON_IsString(ver) && ver->valuestring != NULL && ver->valuestring[0] != '\0' &&
+        strlen(ver->valuestring) < TB_FW_VERSION_MAX && cJSON_IsNumber(size) && size->valuedouble >= 1.0 &&
+        size->valuedouble <= 4294967295.0 && size->valuedouble == floor(size->valuedouble) && cJSON_IsString(alg) &&
+        alg->valuestring != NULL && strcmp(alg->valuestring, "SHA256") == 0 && cJSON_IsString(sum) &&
+        sum->valuestring != NULL && hex64_ok(sum->valuestring)) {
+        strcpy(out->version, ver->valuestring);
+        out->size = (uint32_t)size->valuedouble;
+        for (int i = 0; i < 64; i++) {
+            char c = sum->valuestring[i];
+            out->checksum[i] = (c >= 'A' && c <= 'F') ? (char)(c - 'A' + 'a') : c;
+        }
+        out->checksum[64] = '\0';
+        res = TB_FW_ATTR_INFO;
+    }
+    cJSON_Delete(root);
+    return res;
+}
+
+bool tb_fw_version_equal(const char *a, const char *b)
+{
+    if (a == NULL || b == NULL) {
+        return false;
+    }
+    if (a[0] == 'v' || a[0] == 'V') {
+        a++;
+    }
+    if (b[0] == 'v' || b[0] == 'V') {
+        b++;
+    }
+    return strcmp(a, b) == 0;
+}
+
+tb_fw_decision_t tb_fw_decide(const tb_fw_info_t *fw, const char *running_version, const char *last_failed_version,
+                              uint32_t max_size, bool busy, const char **reason)
+{
+    if (fw == NULL || strcmp(fw->title, TB_FW_TITLE) != 0 || busy ||
+        tb_fw_version_equal(fw->version, running_version) || tb_fw_version_equal(fw->version, last_failed_version)) {
+        return TB_FW_IGNORE;
+    }
+    if (fw->size > max_size) {
+        if (reason != NULL) {
+            *reason = "too_large";
+        }
+        return TB_FW_FAIL;
+    }
+    return TB_FW_START;
+}
+
+bool tb_fw_error_is_final(const char *code)
+{
+    static const char *const finals[] = {"bad_attributes", "too_large", "bad_chunk", "checksum_mismatch",
+                                         "invalid_image"};
+    if (code == NULL) {
+        return false;
+    }
+    for (size_t i = 0; i < sizeof(finals) / sizeof(finals[0]); i++) {
+        if (strcmp(code, finals[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+uint32_t tb_fw_chunk_count(uint32_t size)
+{
+    return size / TB_FW_CHUNK_SIZE + (size % TB_FW_CHUNK_SIZE != 0 ? 1u : 0u);
+}
+
+uint32_t tb_fw_chunk_len(uint32_t size, uint32_t idx)
+{
+    uint32_t n = tb_fw_chunk_count(size);
+    if (idx >= n) {
+        return 0;
+    }
+    return (idx == n - 1 && size % TB_FW_CHUNK_SIZE != 0) ? size % TB_FW_CHUNK_SIZE : TB_FW_CHUNK_SIZE;
+}
+
+int tb_fw_request_topic(uint32_t req_id, uint32_t idx, char *out, size_t size)
+{
+    if (out == NULL || size == 0) {
+        return -1;
+    }
+    int n = snprintf(out, size, TB_FW_REQ_PREFIX "%lu/chunk/%lu", (unsigned long)req_id, (unsigned long)idx);
+    if (n < 0 || (size_t)n >= size) {
+        out[0] = '\0';
+        return -1;
+    }
+    return n;
+}
+
+/* Decimal digits [s, end): 1..10 of them, value <= 4294967295. */
+static bool dec_u32(const char *s, const char *end, uint32_t *v)
+{
+    if (s >= end || end - s > 10) {
+        return false;
+    }
+    uint64_t x = 0;
+    for (; s < end; s++) {
+        if (*s < '0' || *s > '9') {
+            return false;
+        }
+        x = x * 10 + (uint64_t)(*s - '0');
+    }
+    if (x > 0xffffffffull) {
+        return false;
+    }
+    *v = (uint32_t)x;
+    return true;
+}
+
+bool tb_fw_parse_chunk_topic(const char *topic, size_t topic_len, uint32_t *req_id, uint32_t *idx)
+{
+    const size_t pl = sizeof(TB_FW_RESP_PREFIX) - 1;
+    static const char mid[] = "/chunk/";
+    const size_t ml = sizeof(mid) - 1;
+    if (topic == NULL || req_id == NULL || idx == NULL || topic_len <= pl ||
+        memcmp(topic, TB_FW_RESP_PREFIX, pl) != 0) {
+        return false;
+    }
+    const char *end = topic + topic_len;
+    const char *p = topic + pl;
+    const char *slash = p;
+    while (slash < end && *slash != '/') {
+        slash++;
+    }
+    if ((size_t)(end - slash) < ml || memcmp(slash, mid, ml) != 0) {
+        return false;
+    }
+    uint32_t r, i;
+    if (!dec_u32(p, slash, &r) || !dec_u32(slash + ml, end, &i)) {
+        return false;
+    }
+    *req_id = r;
+    *idx = i;
+    return true;
+}
+
+static int hex_val(char c)
+{
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+    return -1;
+}
+
+bool tb_fw_digest_matches(const uint8_t digest[32], const char *hex64)
+{
+    if (digest == NULL || hex64 == NULL || strlen(hex64) != 64) {
+        return false;
+    }
+    for (int i = 0; i < 32; i++) {
+        int hi = hex_val(hex64[2 * i]);
+        int lo = hex_val(hex64[2 * i + 1]);
+        if (hi < 0 || lo < 0 || digest[i] != (uint8_t)((hi << 4) | lo)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int tb_fw_state_json(char *buf, size_t size, const char *state, const char *error,
+                     const char *cur_title, const char *cur_version)
+{
+    if (buf == NULL || size == 0) {
+        return -1;
+    }
+    cJSON *o = cJSON_CreateObject();
+    if (o == NULL) {
+        return -1;
+    }
+    if ((state != NULL && cJSON_AddStringToObject(o, "fw_state", state) == NULL) ||
+        (error != NULL && cJSON_AddStringToObject(o, "fw_error", error) == NULL) ||
+        (cur_title != NULL && cJSON_AddStringToObject(o, "current_fw_title", cur_title) == NULL) ||
+        (cur_version != NULL && cJSON_AddStringToObject(o, "current_fw_version", cur_version) == NULL)) {
+        cJSON_Delete(o);
+        return -1;
+    }
+    char *s = cJSON_PrintUnformatted(o);
+    cJSON_Delete(o);
+    if (s == NULL) {
+        return -1;
+    }
+    size_t n = strlen(s);
+    int ret = -1;
+    if (n < size) {
+        memcpy(buf, s, n + 1);
+        ret = (int)n;
+    }
+    cJSON_free(s);
+    return ret;
+}
+
+tb_fw_boot_t tb_fw_boot_state(const char *pending_version, const char *running_version, bool pending_verify)
+{
+    if (pending_version == NULL) {
+        return TB_FW_BOOT_NONE;
+    }
+    if (tb_fw_version_equal(pending_version, running_version)) {
+        return pending_verify ? TB_FW_BOOT_VERIFY : TB_FW_BOOT_UPDATED;
+    }
+    return TB_FW_BOOT_ROLLED_BACK;
+}
