@@ -136,6 +136,20 @@ final review พบ 3 ข้อที่ต้องแก้ก่อน merge:
 - [/] **H4 parity ทุกกลุ่มพร้อมการเขียน** — 92 PASS 0 FAIL 1 SKIP (SKIP คือ `water.offset` ไม่มีเซนเซอร์ pH) `setauto` จาก ThingsBoard ด้วย index 99 และ -1 ได้ `in_use` ส่วน index ของเครือข่ายที่ต่ออยู่ยังทำได้ การเขียน pump และ cooling ที่ส่ง polarity เดิมผ่าน log `dapi_wifi` ขึ้นใน serial แล้ว ไม่มีรีบูต `heap_min` 112.6 KB `tb_rpc_hwm` 3600
 - ยังไม่ได้ทดสอบบนบอร์ด: แคช RPC ซ้ำ (ไม่เกิดการส่งซ้ำในรอบนี้) และการปฏิเสธ polarity ที่ต่างจากค่าเดิม (ไม่ส่งจริงเพราะถ้า guard พลาดรีเลย์จะกลับขั้ว) ทั้งสองข้อมี selftest ใน QEMU
 
+## รอบ 4: ค่าตั้งเป็น attribute และ telemetry สถานะ (milestone 3)
+
+firmware 0258279 (โค้ดถึง 1bb904a) สคริปต์ ThingsBoard 1305104 วันที่ 2026-11-20 ตาม Task 7 ของ `docs/superpowers/plans/2026-11-20-thingsboard-state-m3.md`
+
+- [/] **I0 เก็บคำตอบก่อน flash** — `api_golden.py capture --label m3pre --with-writes` บนเฟิร์มแวร์ 4a698f6 ได้ 149 case
+- [/] **I1 flash และเทียบคำตอบ** — บูตปกติ ต่อ Wi-Fi 3.3 วินาที ต่อ ThingsBoard 4.1 วินาที ส่ง attribute ครบ 6 ตัวที่ 4.9 วินาที ไม่มี "send failed" (`cfg_pump` 817 B, `cfg_cooling` 929 B, `cfg_protection` 134 B, `hardware_map` 855 B, `wifi` 190 B, `tb_link` 67 B) `compare --base m3pre --label m3post --with-writes` ตรงกัน 148/149 ข้อที่ต่างคือ `uplink_preview` มี key ใหม่ `last_status` ตามที่ตั้งใจ (เว็บแอปไม่เปลี่ยน)
+- [/] **I2 parity อ่านค่า (attribute + สถานะ)** — รอบแรก 126 PASS 1 FAIL 7 SKIP ข้อที่พลาดคือ `attr hardware_map` ที่ `pending` สาเหตุ: บอร์ดส่ง `"pending":null` (ขนาด 855 B ตรงกับคำตอบ HTTP ที่มี null พอดี) แต่ ThingsBoard ไม่เก็บสมาชิกที่เป็น null ใน attribute แบบ JSON แก้ที่สคริปต์ parity ให้ตัด null ทั้งสองฝั่งก่อนเทียบ (1305104 มีเทสต์ที่เห็นพลาดก่อน) และบันทึกใน `device-api.md` ข้อ 11.1 รันซ้ำ `--group state` ได้ 41 PASS 0 FAIL ค่าสถานะครบ 35 ค่า
+- [/] **I3 attribute เปลี่ยนตามการเขียน** — `--writes --group pump --group protection --group cooling` ได้ 55 PASS 0 FAIL ทุกค่าคืนเดิม เวลาที่ attribute เปลี่ยนตาม (เขียนผ่าน ThingsBoard / คืนค่าผ่านเว็บ): `water_set1_off` 0.3 / 0.0 วินาที, `prime_sec` 0.0 / 0.0, `min_off_sec` 0.4 / 0.3 (spec ต้องการภายใน 2 วินาที)
+- [ ] **I4 แก้ค่าบนหน้าเว็บแอปแล้ว ThingsBoard เห็น** — ไม่ได้ผล: เฝ้าดู `cfg_pump` สองรอบ (3 และ 4 นาที) ค่าไม่เปลี่ยน และ log ของบอร์ดไม่มี `write pump.config.set src=http` ในช่วงนั้น แปลว่าการบันทึกบนหน้าเว็บไม่ถึงบอร์ด (ยังไม่รู้สาเหตุฝั่งเว็บ) ทางเดียวกันผ่าน endpoint `/api/pump/config` ที่หน้าเว็บใช้ถูกพิสูจน์แล้วในขาคืนค่าของ I3 (เปลี่ยนตามภายใน 0.3 วินาที) ควรกดจากหน้าเว็บจริงอีกครั้งตอนทำ milestone 4
+- [/] **I5 สถานะส่งทันทีเมื่อ phase เปลี่ยน** — เฝ้า 3 นาทีเห็น phase เปลี่ยน 4 ครั้ง ข้อความถึง ThingsBoard ตอนนับถอยหลังเหลือ 49/50, 59/60, 49/50, 60/60 (ภายในประมาณ 1 วินาที) ช่วงที่ไม่มีอะไรเปลี่ยนข้อความสถานะมาทุก 29.2–30.2 วินาที
+- [/] **I6 dashboard ทุกหน้า** — `tb_setup.py` อัปโหลด dashboard 9 หน้า หน้า Pump, Cooling, Protection, Wi-Fi, Status และ Hardware มีตาราง "ค่าตั้งปัจจุบัน (client attributes)" พร้อมข้อมูล และตารางค่าล่าสุดมีคีย์สถานะใหม่ ปุ่ม "โหลดค่าปัจจุบัน" ของ `pump.config.set` ได้ 14 key ที่เขียนได้ (377 B) และกดส่งต่อได้ `ok:true` (แก้ข้อค้างจาก M2) หน้า Hardware ตารางค่าล่าสุดว่างเพราะหน้านี้ไม่มีคีย์ telemetry
+- [ ] **I7 ปิดลิงก์แล้วต่อใหม่** — ไม่ได้ทำ ต้องแก้ host บนการ์ด ThingsBoard ในเว็บแอป ซึ่งรอบนี้หน้าเว็บบันทึกไม่ถึงบอร์ด (ดู I4) เลื่อนไปทดสอบรวมกับ ThingsBoard ล่มใน milestone 6 การส่ง attribute ครบหลังต่อติดเห็นแล้วใน I1 (6 ตัวภายใน 0.9 วินาทีหลัง connected)
+- [/] **I8 งบหน่วยความจำ** — uptime 92 นาที เปิด dashboard ค้างตั้งแต่ 09:28 ไม่มีรีบูต `heap_free` 146 KB `heap_min` 107.5 KB (M2 110.6 KB ลดลงประมาณ 3 KB ยังเกิน 100 KB) HWM ต่ำสุด `main_stack_hwm` 1284 `hwm_alarm` 2664 `hwm_uplink` 2928 (stack ใหม่ 6144) `hwm_dry_run` 3364 `tb_hwm` 3700 `tb_rpc_hwm` 3568 HTTP 300 request `failed=0`
+
 ## หลังทดสอบ
 
 - [/] ปิดกฎที่เปิดไว้ทดสอบ ให้ลิงก์ยังตั้งค่าอยู่ และ host เป็น `192.168.1.51` — กฎ id 19 คืนเป็น `pump_is_running` และปิดแล้ว (ตรวจจาก attribute `alarm_rules` ใน ThingsBoard) host = `192.168.1.51` ลิงก์ connected
