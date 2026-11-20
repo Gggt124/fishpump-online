@@ -204,6 +204,41 @@ dapi_status_t device_api_call(const char *method, const cJSON *params, dapi_sour
   5. After the valid boot, report `UPDATED`; after a rollback, report `FAILED` with `fw_error:"rolled_back"`.
 - The reboot waits while a dry-run measurement is running, then goes ahead. Relays come up safe, as on any reboot.
 
+#### Spike results (2026-11-20, ThingsBoard CE 4.3.1 on copter)
+
+A Python stand-in device (`fishpump-otaspike`, fishpump profile) got the real 2,061,648-byte image as a package (SHA256). The real board was not involved.
+
+- **Assignment push:**
+  - About 0.3 s after the device's firmware is set, `v1/devices/me/attributes` delivers two messages: first `{"deleted":["fw_tag","fw_url"]}`, then a flat `{"fw_title":"fishpump","fw_version":"…","fw_size":2061648,"fw_checksum_algorithm":"SHA256","fw_checksum":"<hex>"}`.
+  - `fw_size` is a JSON number. There is no `fw_ts`.
+  - The parser must ignore `deleted` messages that do not name `fw_title`.
+- **Request after connect:**
+  - `v1/devices/me/attributes/request/<id>` with `{"sharedKeys":"fw_title,fw_version,fw_size,fw_checksum,fw_checksum_algorithm"}` gets `{"shared":{…same keys…}}`. Before any assignment the reply is `{}`.
+  - The server does **not** push again on reconnect, so the request after every connect is required.
+- **Chunks:**
+  - Request `v2/fw/request/<req>/chunk/<n>` with the payload set to the chunk size in decimal. The reply comes on `v2/fw/response/<req>/chunk/<n>` as raw bytes.
+  - `n` is a chunk index, so the offset is `n × size`. The server is stateless per request, so any `req` id and any size per request work.
+  - The last chunk is short. A request past the end gets a 0-byte payload.
+- **Hazards the firmware must avoid:**
+  - **An empty payload** returns the **whole image in one message** (2 MB). Never send one.
+  - **A non-numeric payload** makes the broker close the connection.
+  - **A size above 64 KB** (tested: 131072) gets topic `v2/fw/error` with payload `PAYLOAD_TOO_LARGE`. This is delivered without subscribing, so it must be handled as `FAILED`.
+- **Speed from the PC on the LAN** (sequential, one request in flight; it is round-trip bound at about 46 ms per chunk):
+
+  | Chunk size | Time for the full image | Rate |
+  |---|---|---|
+  | 4 KB | 23.5 s | 86 KB/s |
+  | 16 KB | 6.0 s | 337 KB/s |
+  | 64 KB | single chunk answered | not timed |
+
+  **Decision: use 16 KB chunks.** The flash write adds time on the board. The esp-mqtt receive buffer and the chunk buffer go in PSRAM.
+- **States:**
+  - After assignment the server sets `fw_state` = `INITIATED`. `QUEUED` was never seen as the latest value.
+  - The server also writes `target_fw_title`, `target_fw_version` and `target_fw_ts`.
+  - Device telemetry for `fw_state` (`DOWNLOADED`, `VERIFIED`, `UPDATING`, `UPDATED`) and for `current_fw_title` / `current_fw_version` is taken as the latest value.
+- **Two connections with one token:** when a second MQTT connection opened with the same token (different client id), the first one was closed soon after. Treat this as likely: ThingsBoard keeps one session per device. Bench tools must never connect with the board's own token while the board is online.
+- **Not observed:** the push on unassign was not recorded, because of the closed session above. Firmware must treat `{"deleted":[…"fw_title"…]}` or a missing `fw_title` as "no update pending".
+
 ### 6.6 SNTP and TLS readiness
 
 - **SNTP:**
