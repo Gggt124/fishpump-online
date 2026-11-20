@@ -407,6 +407,12 @@ def test_wifi_remote():
     pos = [body.find(n) for n in order]
     assert_test(body != "" and all(x != -1 for x in pos) and pos == sorted(pos),
                 "wifi_remote_on_tb_connected calls the five steps in order", f"positions={pos}")
+    i_cur = body.find("esp_wifi_sta_get_ap_info")
+    i_cmp = body.find("strcmp", i_cur) if i_cur != -1 else -1
+    i_com = body.find("nvs_store_commit_staging")
+    assert_test(i_cur != -1 and i_cmp != -1 and i_com != -1 and i_cur < i_cmp < i_com,
+                "wifi_remote_on_tb_connected compares the current STA SSID with the staged one before nvs_store_commit_staging",
+                f"cur={i_cur} cmp={i_cmp} commit={i_com}")
     rb = function_body(src, "wifi_remote_restart_for_stage", r"void\s+")
     assert_test('"WIFI_REMOTE_STAGE"' in rb and "esp_restart" in rb and "session_invalidate_all" in rb,
                 "wifi_remote_restart_for_stage sets the detail, invalidates sessions and restarts")

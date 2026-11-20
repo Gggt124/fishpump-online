@@ -9,6 +9,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_wifi.h"
 #include "nvs.h"
 #include "nvs_store.h"
 #include "session.h"
@@ -35,6 +36,14 @@ void wifi_remote_on_tb_connected(void) {
   }
   if (!have_ssid) {
     ESP_LOGW(TAG, "staged SSID unreadable; leaving the rollback timers running");
+    return;
+  }
+
+  /* Commit only when actually connected over the staged network; otherwise the new network was never tried. */
+  wifi_ap_record_t ap = {0};
+  if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK || strcmp((const char *)ap.ssid, ssid) != 0) {
+    ESP_LOGI(TAG, "connected on %s, staged Wi-Fi %s not tried yet; leaving it staged",
+             ap.ssid[0] ? (const char *)ap.ssid : "(none)", ssid);
     return;
   }
 
