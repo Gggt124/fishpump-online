@@ -209,6 +209,35 @@
 
 ### จาก milestone 5 ThingsBoard (อัปเดตเฟิร์มแวร์จาก ThingsBoard)
 - ขนาดไฟล์ที่เว็บอัปโหลดได้ (web OTA): `POST /api/ota` ปฏิเสธไฟล์ที่ใหญ่กว่า 0x1E0000 (1,966,080 ไบต์) แต่อิมเมจปัจจุบันขนาด 2,061,648 ไบต์ + IV 16 ไบต์ ดังนั้นการอัปโหลดบิลด์ปัจจุบันผ่านเว็บจะได้ 413 `file_too_large` ส่วน slot จริงมีขนาด 0x380000 ทางแก้ภายหลัง: ปรับเพดานให้ตรงกับขนาด slot (milestone 5 ไม่แตะเว็บแอป จึงยังไม่แก้) — การอัปเดตผ่าน ThingsBoard ไม่ติดเพดานนี้
+- ข้อย่อยที่ reviewer พบและเลื่อนไว้ (ledger ของ milestone 5; final review ดูแล้วว่าไม่มีข้อไหนต้องแก้ก่อน bench)
+  - Task 1 (parser ของ `fw_*`)
+    - ยังไม่มีเทสต์ที่ปักว่า push ที่มีข้อมูลแต่ไม่มี `fw_title` ได้ NONE ไม่ใช่ CLEARED เช่น `{"foo":1}` หรือ `{"deleted":[]}`
+    - ยังไม่ได้กำหนดว่า `{"shared":5}` ควรได้ผลอะไร (ตอนนี้ได้ NONE ซึ่งไม่เป็นอันตราย)
+    - push ที่มีทั้ง `deleted:["fw_title"]` และ `fw_title` ใหม่ในข้อความเดียวกันจะได้ CLEARED แต่ ThingsBoard ส่งสองอย่างนี้แยกข้อความกันอยู่แล้ว
+  - Task 2
+    - topic ที่ copy ไว้ให้ data hook ไม่มี NUL ปิดท้าย (ทุกจุดที่ใช้ยึด `topic_len` อยู่แล้ว)
+    - verify ยังไม่ครอบคลุมรายละเอียดการ route: ขีดจำกัด 63 ไบต์, ประตู token session, filter string และ QoS
+  - Task 3
+    - ลำดับ include ของ `ota_lock.h` ไม่ตามตัวอักษร
+    - check ที่นับจำนวน release ดูตำแหน่งไม่ได้
+    - ไม่มี log ตอน commit NVS ล้ม
+  - Task 4
+    - hook รายงานผ่าน `tb_link_publish` ทำให้ลำดับ lock สลับกัน (`client_lock` ภายใต้ `MQTT_API_LOCK`) แต่ถูกจำกัดไว้ที่ 200 ms และเป็นทางที่เกิดน้อย ทางแก้: enqueue บน `ev->client` จาก handler เหมือน `rpc_reply_from_handler`
+    - `bad_attributes` ถูกรายงานแม้ตอนกำลังดาวน์โหลด
+    - `psa_hash_finish` ล้มแล้วกลายเป็น `checksum_mismatch` ซึ่งเป็นรหัส final (`write_failed` เหมาะกว่า)
+    - memcpy ทีละไม่เกิน 2 KB ทำอยู่ใน critical section
+    - verify บางข้อผูกกับชื่อตัวแปร
+  - Task 5
+    - ไม่ได้ดูผลของ `esp_timer_stop` ถ้า timer ยิงไปแล้วพอดีที่ 5 นาที จะ mark valid ชนกับการย้อนกลับ ทางแก้: ข้ามการ mark ถ้าได้ `INVALID_STATE` แก้ได้ในราว 3 บรรทัด
+    - ข้อความ log "5 min" เขียนตายตัว ไม่ได้อ่านจากค่าคงที่
+  - Task 6
+    - selftest ของ `tb_ota.py` ไม่ครอบคลุมการแบ่งหน้า (paging) ตอนค้น package และกรณี error
+    - ไม่ได้ตรวจว่า `--checksum` เป็น hex 64 ตัว
+    - README ไม่มีคำสั่ง build test-block (มีใน `device-api.md` 12.5)
+  - final review
+    - callback ของ rollback รันบน stack ของ esp_timer ขนาด 3584 ไบต์ (ให้ดูใน K4 ว่าไม่ panic)
+    - ระหว่างรอยืนยัน 5 นาที ช่วงรอก่อนต่อใหม่ยังเพิ่มขึ้นได้ถึง 60 วินาที ถ้าใช้ 5 วินาทีคงที่เหมือนตอน staging ภาพที่ดีจะได้ลองต่อมากขึ้น
+    - ถ้าไฟดับระหว่าง `nvs_store_set_tb_ota_pending` กับ `esp_ota_set_boot_partition` บอร์ดจะรายงาน `rolled_back` ผิด (ไม่เป็นอันตราย)
 
 ### จากระบบป้องกันปั๊มเดินแห้ง (`2026-11-16-pump-dry-run-protection-results.md` ส่วน 4 และ 7) ที่ Task 6–7 ไม่ได้แก้
 

@@ -604,6 +604,17 @@ How the work is split:
 - Test images go in `thingsboard/.local/ota/fishpump-<ver>.bin`, which git ignores.
 - Each test image is built by temporarily setting `firmware/version.txt`. The bench ends with `version.txt` back at `0.3.2`, and the bench file records which version the board runs.
 
+**Changes after the final review (2026-11-20, commit 82e035d):**
+- `rolled_back` and the new `version_mismatch` are final codes, so a version that rolled back is not downloaded again until the next reboot.
+  - K4 must show **no second `DOWNLOADING`** after `FAILED rolled_back`.
+  - The rollback line must appear in the log without a panic. The timer callback runs on the esp_timer task.
+- The board checks the written image's built-in version against the package version, and `tb_ota.py upload` refuses a mismatch.
+  - Build each test image with `version.txt` set to the exact `--version` used at upload.
+  - K3's random-file variant needs `--no-version-check`, and the board then fails with `version_mismatch` or `invalid_image`. Record which one.
+- A web upload clears `tb_ota_ver`. This is not exercised on the bench, because the web upload is blocked by the 413 size limit (call 8).
+- K2: after the USB flash, the first OTA must be able to roll back. The reviewer expects this from the bootloader's otadata handling.
+- K7: record the `tb_ota` stack HWM. It is a 6144-byte stack that runs `esp_ota_end` and the PSA hash.
+
 The rounds:
 - [ ] **K0 (before flashing):** run `api_golden.py capture --label m5pre --with-writes` with the board still on the M4 firmware (7c3cacc, 0.3.2).
 - [ ] **K1:**
