@@ -150,6 +150,21 @@ firmware 0258279 (โค้ดถึง 1bb904a) สคริปต์ ThingsBoa
 - [ ] **I7 ปิดลิงก์แล้วต่อใหม่** — ไม่ได้ทำ ต้องแก้ host บนการ์ด ThingsBoard ในเว็บแอป ซึ่งรอบนี้หน้าเว็บบันทึกไม่ถึงบอร์ด (ดู I4) เลื่อนไปทดสอบรวมกับ ThingsBoard ล่มใน milestone 6 การส่ง attribute ครบหลังต่อติดเห็นแล้วใน I1 (6 ตัวภายใน 0.9 วินาทีหลัง connected)
 - [/] **I8 งบหน่วยความจำ** — uptime 92 นาที เปิด dashboard ค้างตั้งแต่ 09:28 ไม่มีรีบูต `heap_free` 146 KB `heap_min` 107.5 KB (M2 110.6 KB ลดลงประมาณ 3 KB ยังเกิน 100 KB) HWM ต่ำสุด `main_stack_hwm` 1284 `hwm_alarm` 2664 `hwm_uplink` 2928 (stack ใหม่ 6144) `hwm_dry_run` 3364 `tb_hwm` 3700 `tb_rpc_hwm` 3568 HTTP 300 request `failed=0`
 
+## รอบ 5: เปลี่ยน Wi-Fi จากระยะไกล (milestone 4)
+
+firmware 7c3cacc (โค้ดถึง f07e58b) วันที่ 2026-11-20 ตาม Task 6 ของ `docs/superpowers/plans/2026-11-20-thingsboard-remote-wifi-m4.md` เครือข่ายที่สองคือ hotspot มือถือ `Ggggg` (2.4 GHz) ซึ่งมองไม่เห็น ThingsBoard ที่ 192.168.1.51 จึงทำ J4 แบบเต็มไม่ได้
+
+- [/] **J0 เก็บคำตอบก่อน flash** — `api_golden.py capture --label m4pre --with-writes` บนเฟิร์มแวร์ 0258279 ได้ 149 case
+- [/] **J1 flash เทียบคำตอบ และ parity** — บูตปกติ ต่อ `KRAPAO JADJAN_2.4G` และ ThingsBoard ภายใน 5.3 วินาที `compare --base m4pre` ALL PASS (เว็บแอปเหมือนเดิม) `tb_setup.py` อัปโหลด dashboard 9 หน้า `parity_test.py` 129 PASS 0 FAIL 7 SKIP แถว Wi-Fi ใหม่ผ่านทั้งสาม (static IP → `local_only`, `{}` → `missing_ssid`, SSID 33 ตัว → `ssid_too_long`) ไม่มี case ไหนทำให้ stage บอร์ดไม่รีบูต
+- [/] **J2 รหัสผิด** — ส่ง `wifi.connect {"ssid":"Ggggg","password":<ผิด>}` ได้ 200 OK รีบูตหลังตอบ 0.2 วินาที (ได้ PUBACK) บูตแล้วต่อ `Ggggg` ไม่ได้ (`connection_fail` 2 ครั้ง) wifi_manager ถอยไปใช้ credential เดิมเอง ต่อบ้านและ ThingsBoard ที่ 19 วินาที hook บอก `not on staged Ggggg; leaving it staged` ไม่ยืนยัน ครบ 180 วินาทีย้อนกลับ (`STAGING_ROLLBACK`) ต่อ ThingsBoard ใหม่ใน 4 วินาที รายการโปรไฟล์และ `auto_index` (0) เหมือนก่อนเริ่ม ทางย้อนกลับเป็น 180 วินาที ไม่ใช่ 30 วินาที เพราะถอยไปเครือข่ายเดิมได้ก่อน (ตามที่แก้ในแผนหลัง final review)
+  - รอบแรกผู้ใช้ส่ง params ตัวอย่างไป บอร์ด stage SSID `แก้ก่อนส่ง` รีบูตหลังตอบ 1.1 วินาที หาเครือข่ายไม่เจอ (`no_ap_found`) ถอยไปบ้าน แล้วย้อนกลับที่ 180 วินาทีเหมือนกัน ระหว่างนั้น `wifi.connect` อีกครั้งที่ 80 วินาทีได้ 409 `staging_active` ไม่ stage ซ้ำ
+- [/] **J3 hotspot ที่มองไม่เห็น ThingsBoard** — `wifi.connect {"ssid":"Ggggg"}` (ใช้รหัสที่บันทึกไว้) บอร์ดได้ IP 10.137.255.222 MQTT ลองใหม่ทุก 5 วินาที (`retry in 5 s` ตลอด รอบละประมาณ 16 วินาทีรวม timeout 10 วินาที) ครบ 180 วินาทีย้อนกลับเอง ThingsBoard เห็นบอร์ดหาย 192 วินาที ต่อกลับใน 4 วินาทีหลังรีบูต รายการโปรไฟล์เหมือนเดิม
+- [/] **J4 สลับสำเร็จ — ทำแบบแทน** — ไม่มีเครือข่ายที่สองที่เห็น ThingsBoard จึงทดสอบส่วนบันทึกโปรไฟล์ (บั๊ก F1 ของ final review) แทน: ลบโปรไฟล์ `Ggggg` (รายการเหลือ `["KRAPAO JADJAN_2.4G"]`) แล้ว stage `Ggggg` ใหม่จาก dashboard รอบนี้บอร์ดต่อ hotspot ไม่ได้ (`connection_fail`) จึงถอยไปบ้าน ผู้ใช้กดยืนยันบนเว็บแอป log `Committed staged changes type=1` แล้ว timer หยุด รายการกลายเป็น `["KRAPAO JADJAN_2.4G", "Ggggg"]` (โค้ดก่อนแก้จะไม่บันทึก) ถอดไฟแล้วเสียบใหม่ (`reset=power_on`) กลับมาบ้าน รายการยังอยู่ auto_index 0
+  - **ยังไม่ได้ยืนยันบนบอร์ด:** การ commit ผ่าน hook ตอนต่อ ThingsBoard ติดบนเครือข่ายใหม่ และการตั้ง auto-connect ให้เครือข่ายใหม่ ต้องมี access point ตัวที่สองใน LAN เดียวกับ ThingsBoard
+  - รหัสของโปรไฟล์ `Ggggg` ที่บันทึกไว้ตอนนี้เป็นรหัสที่พิมพ์รอบนี้ (อาจผิด)
+- [/] **J5 ปุ่ม Wi-Fi บน dashboard** — `wifi.profiles.save` เครือข่ายที่ต่ออยู่ด้วยรหัสเดิม → `{"ok":true,"reboot_pending":false}` · `wifi.profiles.setauto {"index":0}` → `{"ok":true}` · `wifi.profiles.save` SSID ที่ไม่ได้บันทึกและไม่ได้ต่อ รหัสว่าง → `not_connected` (guard `in_use` ใช้กับเครือข่ายที่ต่ออยู่แต่ไม่มีโปรไฟล์เท่านั้น)
+- [/] **J6 งบหน่วยความจำ** — ตลอดรอบ `heap_min` ต่ำสุด 104.96 KB (boot ที่ staged) หลังถอดไฟ 107.96 KB HWM ต่ำสุด `main_stack_hwm` 1060 `hwm_alarm` 2712 `hwm_uplink` 2928 `hwm_dry_run` 3204 `tb_hwm` 2964 `tb_rpc_hwm` 3544 ทุกค่าเกิน 512 และ heap เกิน 100 KB (HWM ของ tb_link หลัง commit ผ่าน hook ยังไม่ได้วัด เพราะ J4 แบบเต็มไม่ได้ทำ)
+
 ## หลังทดสอบ
 
 - [/] ปิดกฎที่เปิดไว้ทดสอบ ให้ลิงก์ยังตั้งค่าอยู่ และ host เป็น `192.168.1.51` — กฎ id 19 คืนเป็น `pump_is_running` และปิดแล้ว (ตรวจจาก attribute `alarm_rules` ใน ThingsBoard) host = `192.168.1.51` ลิงก์ connected
