@@ -569,9 +569,17 @@ def selftest():
     _quiet(r.run_error, "wifi", _forget_in_use_case())
     check("in_use case SKIPs when no network is connected", r.counts["SKIP"] == 1 and r.counts["FAIL"] == 0)
     wifi = cases_for_selftest()["wifi"]
-    check("wifi case file: connect and disconnect have no HTTP side, setauto write is a no-op",
-          all(e["http"] is None for e in wifi["errors"] if e["method"] in ("wifi.connect", "wifi.disconnect"))
+    check("wifi case file: disconnect has no HTTP side, setauto write is a no-op",
+          all(e["http"] is None for e in wifi["errors"] if e["method"] == "wifi.disconnect")
           and wifi["writes"][0]["change"] == {"same": True} and wifi["writes"][0]["send_as"] == "index")
+    wc = [(e["http"], e["error"], e["params"]) for e in wifi["errors"] if e["method"] == "wifi.connect"]
+    check("wifi.connect cases never stage: static IP with gateway is local_only, the rest fail validation and match HTTP",
+          len(wc) == 3
+          and all(err == "local_only" and http is None and p.get("ip") and p.get("gateway")
+                  for http, err, p in wc if err == "local_only")
+          and all(http == "/api/wifi/connect" for http, err, p in wc if err != "local_only")
+          and {err for _, err, _ in wc} == {"local_only", "missing_ssid", "ssid_too_long"}
+          and any(len(p.get("ssid", "")) == 33 for _, err, p in wc if err == "ssid_too_long"))
     sa = [(e["params"], e["http"], e["error"]) for e in wifi["errors"] if e["method"] == "wifi.profiles.setauto"]
     check("wifi setauto: TB-only in_use cases for index 99 and -1, no setauto_failed from ThingsBoard",
           ({"index": 99}, None, "in_use") in sa and ({"index": -1}, None, "in_use") in sa
