@@ -686,6 +686,27 @@ def test_ota_boot():
                 "tb_ota_boot_init remembers the pending version on the ROLLED_BACK path")
 
 
+def test_bench6_fixes():
+    print("\n--- Bench round 6 fixes: invalid image code, real firmware version ---")
+    c = read(MAIN_DIR / "tb_ota.c")
+    task = function_body(c, "tb_ota_task", r"static\s+void\s+")
+    i_w = task.find("esp_ota_write(")
+    i_end = task.find("psa_hash_finish(")
+    loop = task[i_w:i_end] if i_w != -1 and i_end != -1 else ""
+    assert_test(re.search(r'ESP_ERR_OTA_VALIDATE_FAILED\s*\)?\s*\?\s*"invalid_image"\s*:\s*"write_failed"', loop) is not None,
+                "esp_ota_write ESP_ERR_OTA_VALIDATE_FAILED reports invalid_image; other write errors stay write_failed")
+    cmake = read(FIRMWARE_DIR / "CMakeLists.txt")
+    i_proj = cmake.find("project(fishpump_firmware")
+    m = re.search(r'idf_build_set_property\(COMPILE_DEFINITIONS\s+"APP_TEMPLATE_FIRMWARE_VERSION=[^\n]*?\$\{FISHPUMP_VERSION\}', cmake)
+    assert_test(m is not None and i_proj != -1 and m.start() < i_proj,
+                "APP_TEMPLATE_FIRMWARE_VERSION comes from version.txt via idf_build_set_property before project()")
+    assert_test("add_compile_definitions(APP_TEMPLATE_FIRMWARE_VERSION" not in cmake,
+                "no add_compile_definitions(APP_TEMPLATE_FIRMWARE_VERSION (it never reaches the components)")
+    cfg = read(COMP_DIR / "app_config" / "include" / "app_config.h")
+    assert_test(re.search(r'#define\s+APP_TEMPLATE_FIRMWARE_VERSION\s+"', cfg) is None and "#error" in cfg,
+                "app_config.h has no hard-coded version fallback and stops the build when the define is missing")
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
@@ -702,6 +723,7 @@ def main():
     test_ota_lock()
     test_tb_ota()
     test_ota_boot()
+    test_bench6_fixes()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

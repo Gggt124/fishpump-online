@@ -239,8 +239,7 @@
     - ระหว่างรอยืนยัน 5 นาที ช่วงรอก่อนต่อใหม่ยังเพิ่มขึ้นได้ถึง 60 วินาที ถ้าใช้ 5 วินาทีคงที่เหมือนตอน staging ภาพที่ดีจะได้ลองต่อมากขึ้น
     - ถ้าไฟดับระหว่าง `nvs_store_set_tb_ota_pending` กับ `esp_ota_set_boot_partition` บอร์ดจะรายงาน `rolled_back` ผิด (ไม่เป็นอันตราย)
 - จาก bench รอบ 6 (`docs/bench-test-thingsboard.md`)
-  - `tb_ota.c:177` แปลงทุก error ของ `esp_ota_write` เป็น `write_failed` (ไม่ final) ควรแปลง `ESP_ERR_OTA_VALIDATE_FAILED` เป็น `invalid_image` (final) ไม่อย่างนั้นไฟล์เสียเวอร์ชันเดิมจะดาวน์โหลดซ้ำทุกครั้งที่ reconnect (K3)
-  - `APP_TEMPLATE_FIRMWARE_VERSION` ได้ค่าว่างจาก CMake แล้วใช้ค่าสำรอง `"v0.3.2"` ใน `app_config.h` banner, `/api/status` `project_version`, `fw_version` ของสถานะ ThingsBoard และ uplink identity จึงไม่เปลี่ยนตามเวอร์ชันที่ OTA ลงไป (K2) ทางแก้: ใช้ `esp_app_get_description()->version` หรือส่ง `PROJECT_VER` เข้า define
+  - (แก้แล้วหลัง bench: `ESP_ERR_OTA_VALIDATE_FAILED` รายงาน `invalid_image`, และ `APP_TEMPLATE_FIRMWARE_VERSION` มาจาก `version.txt` ผ่าน `idf_build_set_property` ก่อน `project()` ไม่มีค่าสำรองใน `app_config.h` แล้ว)
   - ไม่มีที่รายงาน HWM ของ task `tb_ota` (K7 วัดไม่ได้) ทางแก้: log HWM ตอน task จบ หรือใส่ใน `BOARD_DIAG` ขณะ task ยังอยู่
   - log `OTA firmware validated (PENDING_VERIFY -> VALID)` ของ `app_main` ขึ้นแม้สถานะเป็น VALID อยู่แล้ว (หลัง flash USB และหลัง rollback) ทำให้อ่าน log สับสน
   - ThingsBoard ปฏิเสธ checksum ที่ไม่ตรงตอน upload และทิ้ง package ว่างไว้ ตัวเลือก `--checksum` ของ `tb_ota.py` จึงใช้สร้างเคส checksum ผิดไม่ได้ ควรลบ package ว่างให้เองเมื่อ upload ล้ม

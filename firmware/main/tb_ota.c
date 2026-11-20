@@ -174,8 +174,14 @@ static void tb_ota_task(void *arg) {
       goto fail;
     }
     uint32_t len = tb_fw_chunk_len(size, idx);
-    if (psa_hash_update(&op, buf, len) != PSA_SUCCESS || esp_ota_write(handle, buf, len) != ESP_OK) {
+    if (psa_hash_update(&op, buf, len) != PSA_SUCCESS) {
       code = "write_failed";
+      goto fail;
+    }
+    esp_err_t werr = esp_ota_write(handle, buf, len);
+    if (werr != ESP_OK) {
+      /* The first write checks the image magic byte: a file that is not a firmware image is final. */
+      code = (werr == ESP_ERR_OTA_VALIDATE_FAILED) ? "invalid_image" : "write_failed";
       goto fail;
     }
     int pct = (int)(((uint64_t)(idx + 1) * 100u) / count);

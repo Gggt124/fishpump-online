@@ -13,8 +13,9 @@ extern "C" {
 #endif
 
 #define APP_TEMPLATE_NAME "Fish Pump Relay Timer Control"
+/* Set from firmware/version.txt by firmware/CMakeLists.txt (idf_build_set_property before project()). */
 #ifndef APP_TEMPLATE_FIRMWARE_VERSION
-#define APP_TEMPLATE_FIRMWARE_VERSION "v0.3.2"
+#error "APP_TEMPLATE_FIRMWARE_VERSION must come from firmware/CMakeLists.txt (version.txt)"
 #endif
 #define APP_TEMPLATE_PHASE_LABEL "Wi-Fi Setup and Control Dashboard"
 
