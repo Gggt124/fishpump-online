@@ -146,6 +146,35 @@ void test_uplink_state(void)
     CHECK(arr != NULL && uplink_json_without(arr, NULL, 0) == NULL);
     cJSON_Delete(arr);
 
+    /* ---- materialize (device_api returns some replies as cJSON Raw nodes) ---- */
+    {
+        cJSON *m = uplink_json_materialize(cJSON_CreateRaw("{\"a\":1}"));
+        CHECK(cJSON_IsObject(m) && cJSON_IsNumber(get(m, "a")) && get(m, "a")->valuedouble == 1);
+        cJSON_Delete(m);
+        CHECK(uplink_json_materialize(cJSON_CreateRaw("{bad")) == NULL);
+        cJSON *plain = cJSON_CreateObject();
+        CHECK(uplink_json_materialize(plain) == plain);
+        cJSON_Delete(plain);
+        CHECK(uplink_json_materialize(NULL) == NULL);
+
+        cJSON *rp = uplink_json_materialize(cJSON_CreateRaw(PUMP_JSON));
+        cJSON *rc = uplink_json_materialize(cJSON_CreateRaw(COOLING_JSON));
+        cJSON *rs = uplink_json_materialize(cJSON_CreateRaw(STATUS_JSON));
+        CHECK(rp != NULL && rc != NULL && rs != NULL);
+        if (rp != NULL && rc != NULL && rs != NULL) {
+            const cJSON *rsrcs[UPLINK_SRC_COUNT] = {rp, rc, rs};
+            cJSON *ro = cJSON_CreateObject();
+            int rn = uplink_status_flatten(rsrcs, ro, NULL);
+            CHECK(rn == (int)uplink_status_field_count);
+            CHECK(str_is(ro, "pump_phase", "OFF"));
+            CHECK(cJSON_IsTrue(get(ro, "wifi_connected")));
+            cJSON_Delete(ro);
+        }
+        cJSON_Delete(rp);
+        cJSON_Delete(rc);
+        cJSON_Delete(rs);
+    }
+
     /* ---- flattener ---- */
     cJSON *pump = cJSON_Parse(PUMP_JSON);
     cJSON *cool = cJSON_Parse(COOLING_JSON);

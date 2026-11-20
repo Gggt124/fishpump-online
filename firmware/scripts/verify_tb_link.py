@@ -314,6 +314,11 @@ def test_uplink_state():
         spans = _take_give_spans(body)
         assert_test(bool(body) and builder in body and not any(builder in sp for sp in spans),
                     f"{fn} calls {builder[:-1]} and never between a Take and its Give")
+    ds = function_body(src, "do_status")
+    i_pa = ds.find("status_polled_ever = true")
+    i_bs = ds.find("build_status(")
+    assert_test(i_pa != -1 and i_bs != -1 and i_pa < i_bs,
+                "do_status sets status_polled_ever before calling build_status (offline poll backs off)")
     assert_test('"attribute %s sent (%u B)"' in src, "uplink.c logs each sent attribute")
     assert_test('\\"last_status\\":' in src, "preview format string has last_status")
     m = re.search(r"REQUIRES([^)]*)\)", cm)
@@ -338,9 +343,14 @@ def test_tb_state():
     for word in ("password", "token", "secret", "provision"):
         assert_test(word not in low, f"tb_state.c does not contain '{word}'")
     for fn in ("handle_api_change_password", "handle_api_auth_credentials", "handle_api_confirm_post",
-               "handle_api_confirm_delete", "handle_api_ota"):
+               "handle_api_confirm_delete", "handle_api_ota", "handle_api_tb_post"):
         assert_test("uplink_note_settings_changed()" in function_body(web, fn),
                     f"{fn} calls uplink_note_settings_changed()")
+    assert_test("uplink_json_materialize(" in function_body(src, "read_method"),
+                "tb_state.c read_method calls uplink_json_materialize (Raw replies become objects)")
+    af = function_body(src, "add_filtered")
+    assert_test("uplink_json_without" not in af and "cJSON_DeleteItemFromObjectCaseSensitive" in af,
+                "tb_state.c add_filtered drops keys in place, no deep copy")
     for key in ("cfg_pump", "cfg_cooling", "cfg_protection", "hardware_map", "wifi", "tb_link"):
         assert_test(f'"{key}"' in src, f'tb_state.c names the attribute key "{key}"')
 

@@ -351,6 +351,16 @@ cJSON *uplink_json_without(const cJSON *obj, const char *const *drop, size_t ndr
     return copy;
 }
 
+cJSON *uplink_json_materialize(cJSON *reply)
+{
+    if (reply == NULL || !cJSON_IsRaw(reply)) {
+        return reply;
+    }
+    cJSON *parsed = reply->valuestring != NULL ? cJSON_Parse(reply->valuestring) : NULL;
+    cJSON_Delete(reply);
+    return parsed;
+}
+
 /* Keep each row on one line in this exact shape: a verify script parses it. */
 const uplink_status_field_t uplink_status_fields[] = {
     {UPLINK_SRC_PUMP, "system_water.phase", "pump_phase", true},

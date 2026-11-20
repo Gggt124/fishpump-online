@@ -23,7 +23,13 @@ static cJSON *read_method(const char *method)
     cJSON *reply = NULL;
     dapi_status_t st = device_api_call(method, NULL, DAPI_SRC_TB, &reply);
     if (st == DAPI_OK && reply != NULL) {
-        return reply;
+        /* Some methods reply with a Raw node, which is not walkable: make it a real tree. */
+        reply = uplink_json_materialize(reply);
+        if (reply != NULL) {
+            return reply;
+        }
+        ESP_LOGW(TAG, "%s: read failed (parse)", method);
+        return NULL;
     }
     ESP_LOGW(TAG, "%s: read failed (status %d)", method, (int)st);
     cJSON_Delete(reply);
@@ -37,13 +43,16 @@ static bool add_filtered(cJSON *attrs, const char *key, const char *method, cons
     if (reply == NULL) {
         return false;
     }
-    cJSON *copy = uplink_json_without(reply, drop, ndrop);
-    cJSON_Delete(reply);
-    if (copy == NULL) {
+    if (!cJSON_IsObject(reply)) {
+        cJSON_Delete(reply);
         return false;
     }
-    if (!cJSON_AddItemToObject(attrs, key, copy)) {
-        cJSON_Delete(copy);
+    /* The reply is ours: drop the keys in place instead of deep-copying it (hardware.map.get is large). */
+    for (size_t i = 0; i < ndrop; i++) {
+        cJSON_DeleteItemFromObjectCaseSensitive(reply, drop[i]);
+    }
+    if (!cJSON_AddItemToObject(attrs, key, reply)) {
+        cJSON_Delete(reply);
         return false;
     }
     return true;

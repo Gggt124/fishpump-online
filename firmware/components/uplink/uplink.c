@@ -432,13 +432,13 @@ static void do_status(void)
         return;
     }
     s.status_poll_ms = now;
+    s.status_polled_ever = true; /* an empty build still counts as a poll, so offline polls back off */
 
     uint32_t hash = 0;
     cJSON *obj = src.build_status(&hash);
     if (obj == NULL) {
         return; /* try again at the next poll */
     }
-    s.status_polled_ever = true;
     xSemaphoreTake(s.lock, portMAX_DELAY);
     bool ok = cJSON_PrintPreallocated(obj, s.status_buf, UPLINK_TELEMETRY_BUF, false);
     s.status_len = ok ? (int)strlen(s.status_buf) : 0;

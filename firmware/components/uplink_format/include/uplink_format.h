@@ -129,6 +129,10 @@ bool uplink_status_send_due(bool ever, uint32_t since_sent_ms, bool watched_chan
 /* Deep copy of obj minus the listed top-level keys. NULL if obj is not an object or out of memory. */
 cJSON *uplink_json_without(const cJSON *obj, const char *const *drop, size_t ndrop);
 
+/* Takes ownership of reply. A cJSON Raw node (some device_api replies) is parsed into a real tree and the raw
+ * node deleted; NULL if the parse fails. Any other node is returned as is. NULL in, NULL out. */
+cJSON *uplink_json_materialize(cJSON *reply);
+
 typedef enum { UPLINK_SRC_PUMP = 0, UPLINK_SRC_COOLING, UPLINK_SRC_STATUS, UPLINK_SRC_COUNT } uplink_status_src_t;
 
 typedef struct {

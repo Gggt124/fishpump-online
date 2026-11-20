@@ -2503,6 +2503,7 @@ static esp_err_t handle_api_tb_post(httpd_req_t *req) {
     return send_api_error(req, "save_failed", "Could not save the configuration",
                           "500 Internal Server Error");
   }
+  uplink_note_settings_changed();
   return tb_link_send_view(req);
 }
 
