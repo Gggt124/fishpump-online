@@ -2274,7 +2274,7 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
   nvs_store_set_restart_detail("OTA_REBOOT");
   schedule_delayed_reboot();
 
-  ota_lock_release();
+  /* Lock stays held until the reboot: the new slot is the boot partition now. */
   return send_json(req, "{\"ok\":true}", "200 OK");
 }
 

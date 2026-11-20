@@ -537,7 +537,11 @@ def test_ota_lock():
     tail = body[i_after:] if i_after != -1 else ""
     n_ret = len(re.findall(r"\breturn\b", tail))
     n_rel = len(re.findall(r"\bota_lock_release\(\)", tail))
-    assert_test(n_ret > 0 and n_rel >= n_ret, "ota_lock_release calls cover every return after the claim", f"{n_rel} releases, {n_ret} returns")
+    assert_test(n_ret > 1 and n_rel == n_ret - 1, "every error return after the claim releases the lock, the success return does not", f"{n_rel} releases, {n_ret} returns")
+    i_boot = body.find("esp_ota_set_boot_partition(")
+    i_ok = body.rfind(":true}")
+    between = body[body.find("OTA successful", i_boot):i_ok] if i_boot != -1 and i_ok != -1 else "ota_lock_release()"
+    assert_test("ota_lock_release" not in between, "the lock stays held on the success path until the reboot")
     assert_test('"tb_ota_ver"' in nvs, 'nvs_store.c uses the key "tb_ota_ver"')
     hdr = read(COMP_DIR / "nvs_store" / "include" / "nvs_store.h")
     assert_test("nvs_store_set_tb_ota_pending(" in hdr and "nvs_store_get_tb_ota_pending(" in hdr and
