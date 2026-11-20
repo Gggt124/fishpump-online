@@ -1194,6 +1194,9 @@ void app_main(void) {
   }
   /* ThingsBoard link: after uplink_init (sink) and Wi-Fi; a failure leaves local functions untouched. */
   {
+    /* The ThingsBoard OTA boot state is resolved before the link can connect (a session would otherwise see NONE
+     * and the 5 min rollback timer would then start with no later session to cancel it). */
+    tb_ota_boot_init();
     /* Hook first (an atomic pointer): no connect can happen before it is registered. */
     tb_link_set_connected_hook(wifi_remote_on_tb_connected);
     tb_link_set_data_hook(tb_ota_on_data);
@@ -1247,7 +1250,6 @@ void app_main(void) {
 
   /* 4. Start HTTP server. The ThingsBoard OTA boot state is resolved first: a fresh ThingsBoard image is marked
    * valid only after it reaches ThingsBoard. */
-  tb_ota_boot_init();
 #ifdef TB_LINK_TEST_BLOCK_CONNECT
   ESP_LOGW(TAG, "TEST BUILD: ThingsBoard connect is blocked");
 #endif

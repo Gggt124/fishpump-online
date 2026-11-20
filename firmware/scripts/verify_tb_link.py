@@ -645,8 +645,9 @@ def test_ota_boot():
                 f"{guarded}/{len(marks)} guarded")
     assert_test("OTA from ThingsBoard: waiting for the ThingsBoard connect to mark valid" in a, "app_main logs the wait for the ThingsBoard connect")
     i_init, i_web = a.find("tb_ota_boot_init()"), a.find("web_server_start()")
-    assert_test(i_init != -1 and i_init < i_web, "tb_ota_boot_init runs before the first web_server_start")
     i_tl = a.find("tb_link_init()")
+    assert_test(i_init != -1 and i_init < i_web and i_init < i_tl,
+                "tb_ota_boot_init runs before tb_link_init and the first web_server_start")
     i_d, i_s = a.find("tb_link_set_data_hook(tb_ota_on_data)"), a.find("tb_link_set_session_hook(tb_ota_on_session)")
     assert_test(i_d != -1 and i_s != -1 and i_d < i_tl and i_s < i_tl, "both OTA hooks are registered before tb_link_init")
     assert_test('esp_log_level_set("tb_ota", ESP_LOG_INFO)' in a, "the tb_ota tag is raised to INFO")
@@ -660,6 +661,9 @@ def test_ota_boot():
     i_r = sess.find('report_state("UPDATED"')
     i_c = sess.find("nvs_store_clear_tb_ota_pending")
     assert_test(i_m != -1 and i_m < i_r < i_c, "on_session: mark valid, then report UPDATED, then clear the pending version")
+    i_cl = sess.find("nvs_store_clear_tb_ota_pending")
+    assert_test("static bool report_state" in c and "bool ok" in sess and "bool ok = " in sess and 0 < sess.find("if (ok)") < i_cl,
+                "on_session clears the pending version only when the boot report was enqueued")
     assert_test("rolled_back" in sess and "esp_timer_stop" in sess and "TB_FW_ATTR_REQ_PREFIX" in sess and
                 "TB_FW_ATTR_REQUEST_BODY" in sess and "uplink_note_settings_changed()" in sess,
                 "on_session reports rolled_back, stops the timer, requests the attributes and notes the change")

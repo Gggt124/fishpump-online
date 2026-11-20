@@ -52,7 +52,7 @@ static void remember_failed(const char *version) {
 
 /* Publishes fw_state (and fw_error); with_current adds the running title and version. A report while
  * disconnected is lost; the next connect re-reads the state. */
-static void report_state(const char *state, const char *error, bool with_current) {
+static bool report_state(const char *state, const char *error, bool with_current) {
   if (state == NULL) {
     ESP_LOGI(TAG, "reporting the current firmware title and version");
   } else if (error) {
@@ -63,9 +63,7 @@ static void report_state(const char *state, const char *error, bool with_current
   char json[192];
   int n = tb_fw_state_json(json, sizeof json, state, error, with_current ? TB_FW_TITLE : NULL,
                            with_current ? esp_app_get_description()->version : NULL);
-  if (n > 0) {
-    tb_link_publish(TB_TELEMETRY_TOPIC, json, n, 1);
-  }
+  return n > 0 && tb_link_publish(TB_TELEMETRY_TOPIC, json, n, 1) >= 0;
 }
 
 /* ---- the update task ---- */
@@ -427,7 +425,7 @@ void tb_ota_boot_init(void) {
 void tb_ota_on_session(void) {
   tb_fw_boot_t b = (tb_fw_boot_t)atomic_load(&s_boot_state);
   if (b != TB_FW_BOOT_NONE) {
-    bool done = true;
+    bool resolved = true;
     if (b == TB_FW_BOOT_VERIFY) {
       if (s_verify_timer) {
         esp_timer_stop(s_verify_timer);
@@ -438,22 +436,26 @@ void tb_ota_on_session(void) {
         if (s_verify_timer) {
           esp_timer_start_once(s_verify_timer, (uint64_t)TB_FW_VERIFY_TIMEOUT_MS * 1000u);
         }
-        done = false;
+        resolved = false;
       } else {
         ESP_LOGI(TAG, "OTA from ThingsBoard: connected, image marked valid");
-        report_state("UPDATED", NULL, true);
+        /* Valid now: a failed report is retried as UPDATED, without marking again. */
+        atomic_store(&s_boot_state, TB_FW_BOOT_UPDATED);
+        b = TB_FW_BOOT_UPDATED;
       }
-    } else if (b == TB_FW_BOOT_UPDATED) {
-      report_state("UPDATED", NULL, true);
-    } else {
-      report_state("FAILED", "rolled_back", false);
     }
-    if (done) {
-      if (!nvs_store_clear_tb_ota_pending()) {
-        ESP_LOGW(TAG, "could not clear the pending version; the next boot resolves it again");
+    if (resolved) {
+      bool ok = b == TB_FW_BOOT_UPDATED ? report_state("UPDATED", NULL, true)
+                                        : report_state("FAILED", "rolled_back", false);
+      if (ok) {
+        if (!nvs_store_clear_tb_ota_pending()) {
+          ESP_LOGW(TAG, "could not clear the pending version; the next boot resolves it again");
+        }
+        atomic_store(&s_boot_state, TB_FW_BOOT_NONE);
+        uplink_note_settings_changed();
+      } else {
+        ESP_LOGW(TAG, "boot result not sent, it is reported again at the next connect");
       }
-      atomic_store(&s_boot_state, TB_FW_BOOT_NONE);
-      uplink_note_settings_changed();
     }
   }
   report_state(NULL, NULL, true);
