@@ -27,6 +27,7 @@ static const char *TAG = "nvs_store";
 #define NVS_KEY_STG_USER "stg_admin_user"
 #define NVS_KEY_STG_CRED_PASS "stg_admin_pass"
 #define NVS_KEY_RST_DETAIL "rst_detail"
+#define NVS_KEY_TB_OTA_VER "tb_ota_ver"
 
 #define NVS_SESSION_NAMESPACE "session"
 #define NVS_KEY_JWT_SECRET "jwt_secret"
@@ -2223,4 +2224,50 @@ bool nvs_store_pop_restart_detail(char *buf, size_t buf_size) {
 
   nvs_close(h);
   return true;
+}
+
+bool nvs_store_set_tb_ota_pending(const char *version) {
+  if (!version || strlen(version) > 32)
+    return false;
+  nvs_handle_t h;
+  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) {
+    ESP_LOGE(TAG, "tb_ota_ver: NVS open failed");
+    return false;
+  }
+  esp_err_t err = nvs_set_str(h, NVS_KEY_TB_OTA_VER, version);
+  if (err == ESP_OK) {
+    err = nvs_commit(h);
+  } else {
+    ESP_LOGE(TAG, "tb_ota_ver: nvs_set_str failed: %s", esp_err_to_name(err));
+  }
+  nvs_close(h);
+  return err == ESP_OK;
+}
+
+bool nvs_store_get_tb_ota_pending(char *version, size_t size) {
+  if (!version || size == 0)
+    return false;
+  version[0] = '\0';
+  nvs_handle_t h;
+  if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK)
+    return false;
+  size_t len = size;
+  esp_err_t err = nvs_get_str(h, NVS_KEY_TB_OTA_VER, version, &len);
+  nvs_close(h);
+  if (err != ESP_OK) {
+    version[0] = '\0';
+    return false;
+  }
+  return true;
+}
+
+bool nvs_store_clear_tb_ota_pending(void) {
+  nvs_handle_t h;
+  if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK)
+    return false;
+  esp_err_t err = nvs_erase_key(h, NVS_KEY_TB_OTA_VER);
+  if (err == ESP_OK)
+    err = nvs_commit(h);
+  nvs_close(h);
+  return err == ESP_OK || err == ESP_ERR_NVS_NOT_FOUND;
 }

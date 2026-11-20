@@ -515,6 +515,35 @@ def test_ota_link():
     assert_test("firmware/build_block/" in gitignore.splitlines(), ".gitignore lists firmware/build_block/")
 
 
+def test_ota_lock():
+    print("\n--- Milestone 5 Task 3: OTA writer lock and pending version in NVS ---")
+    cmake = read(MAIN_DIR / "CMakeLists.txt")
+    web = read(MAIN_DIR / "web_server.c")
+    nvs = read(COMP_DIR / "nvs_store" / "nvs_store.c")
+    lock_c = read(MAIN_DIR / "ota_lock.c")
+    lock_h = read(MAIN_DIR / "ota_lock.h")
+    assert_test('"ota_lock.c"' in cmake, "ota_lock.c is in SRCS")
+    assert_test("atomic_compare_exchange_strong" in lock_c and "atomic_bool" in lock_c,
+                "ota_lock.c uses an atomic_bool compare-exchange")
+    assert_test("ota_lock_claim(void)" in lock_h and "ota_lock_release(void)" in lock_h and "ota_lock_held(void)" in lock_h,
+                "ota_lock.h declares claim, release, held")
+    body = function_body(web, "handle_api_ota")
+    i_claim = body.find("ota_lock_claim()")
+    i_begin = body.find("esp_ota_begin(")
+    assert_test(i_claim != -1 and i_begin != -1 and i_claim < i_begin, "handle_api_ota claims the lock before esp_ota_begin")
+    i_busy = body.find('ota_busy')
+    assert_test(i_busy != -1 and "409 Conflict" in body[i_busy:i_busy + 120], "ota_busy comes with 409 Conflict")
+    i_after = body.find("409 Conflict", i_busy) if i_busy != -1 else -1
+    tail = body[i_after:] if i_after != -1 else ""
+    n_ret = len(re.findall(r"\breturn\b", tail))
+    n_rel = len(re.findall(r"\bota_lock_release\(\)", tail))
+    assert_test(n_ret > 0 and n_rel >= n_ret, "ota_lock_release calls cover every return after the claim", f"{n_rel} releases, {n_ret} returns")
+    assert_test('"tb_ota_ver"' in nvs, 'nvs_store.c uses the key "tb_ota_ver"')
+    hdr = read(COMP_DIR / "nvs_store" / "include" / "nvs_store.h")
+    assert_test("nvs_store_set_tb_ota_pending(" in hdr and "nvs_store_get_tb_ota_pending(" in hdr and
+                "nvs_store_clear_tb_ota_pending(" in hdr, "nvs_store.h declares the pending-OTA functions")
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
@@ -528,6 +557,7 @@ def main():
     test_wifi_remote()
     test_wifi_connect_remote()
     test_ota_link()
+    test_ota_lock()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

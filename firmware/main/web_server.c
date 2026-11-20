@@ -12,6 +12,7 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_ota_ops.h"
+#include "ota_lock.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -2158,11 +2159,18 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
   ESP_LOGI(TAG, "Writing OTA to partition subtype %d at offset 0x%lx",
            update_partition->subtype, (unsigned long)update_partition->address);
 
+  /* One writer of the OTA slot at a time (web upload or ThingsBoard). */
+  if (!ota_lock_claim()) {
+    return send_json(req, "{\"ok\":false,\"error\":\"ota_busy\"}",
+                     "409 Conflict");
+  }
+
   esp_ota_handle_t ota_handle = 0;
   esp_err_t err =
       esp_ota_begin(update_partition, OTA_WITH_SEQUENTIAL_WRITES, &ota_handle);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_ota_begin failed (%s)", esp_err_to_name(err));
+    ota_lock_release();
     return send_json(req, "{\"ok\":false,\"error\":\"ota_begin_failed\"}",
                      "500 Internal Server Error");
   }
@@ -2191,6 +2199,7 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
       ESP_LOGE(TAG, "Error receiving OTA data");
       esp_ota_abort(ota_handle);
       esp_aes_free(&aes);
+      ota_lock_release();
       return send_json(req, "{\"ok\":false,\"error\":\"recv_failed\"}",
                        "500 Internal Server Error");
     }
@@ -2219,6 +2228,7 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
           ESP_LOGE(TAG, "esp_ota_write failed (%s)", esp_err_to_name(err));
           esp_ota_abort(ota_handle);
           esp_aes_free(&aes);
+          ota_lock_release();
           return send_json(req, "{\"ok\":false,\"error\":\"ota_write_failed\"}",
                            "500 Internal Server Error");
         }
@@ -2237,6 +2247,7 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
   if (remaining > 0) {
     ESP_LOGE(TAG, "Incomplete OTA transfer");
     esp_ota_abort(ota_handle);
+    ota_lock_release();
     return send_json(req, "{\"ok\":false,\"error\":\"incomplete\"}",
                      "500 Internal Server Error");
   }
@@ -2244,6 +2255,7 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
   err = esp_ota_end(ota_handle);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_ota_end failed (%s)", esp_err_to_name(err));
+    ota_lock_release();
     return send_json(req, "{\"ok\":false,\"error\":\"ota_end_failed\"}",
                      "500 Internal Server Error");
   }
@@ -2252,6 +2264,7 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "esp_ota_set_boot_partition failed (%s)",
              esp_err_to_name(err));
+    ota_lock_release();
     return send_json(req, "{\"ok\":false,\"error\":\"ota_set_boot_failed\"}",
                      "500 Internal Server Error");
   }
@@ -2261,6 +2274,7 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
   nvs_store_set_restart_detail("OTA_REBOOT");
   schedule_delayed_reboot();
 
+  ota_lock_release();
   return send_json(req, "{\"ok\":true}", "200 OK");
 }
 

@@ -310,6 +310,22 @@ bool nvs_store_set_restart_detail(const char *detail);
  */
 bool nvs_store_pop_restart_detail(char *buf, size_t buf_size);
 
+/**
+ * ThingsBoard OTA: remember the firmware version being installed, right
+ * before the reboot (key "tb_ota_ver", restart-detail namespace).
+ * Returns false on NVS error or when the version is longer than 32 chars.
+ */
+bool nvs_store_set_tb_ota_pending(const char *version);
+
+/**
+ * Read the pending ThingsBoard OTA version into version (size bytes).
+ * Returns false when absent or on error (version is then "").
+ */
+bool nvs_store_get_tb_ota_pending(char *version, size_t size);
+
+/** Forget the pending OTA version. Returns true also when already absent. */
+bool nvs_store_clear_tb_ota_pending(void);
+
 #ifdef __cplusplus
 }
 #endif
