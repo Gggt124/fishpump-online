@@ -142,6 +142,8 @@ def check_pages(pages, cases, state=None, reg_keys=None):
             c = a.get("confirm")
             if c is not None and (not isinstance(c, str) or not c.strip() or not has_thai(c)):
                 problems.append("%s: confirm must be non-empty Thai text" % where)
+            if m == "wifi.connect" and not (isinstance(c, str) and c.strip() and has_thai(c)):
+                problems.append("wifi.connect action needs a non-empty Thai confirm (the board reboots)")
     return problems
 
 
@@ -189,9 +191,12 @@ BROKEN_FIXTURE = [
     {"id": "lk_bad", "title": "E", "telemetry": [], "actions": [
         {"label": "a", "method": "pump.status", "params": None, "edit": True, "load": None, "load_keys": ["a"], "confirm": None},
         {"label": "b", "method": "pump.status", "params": None, "edit": True, "load": "pump.status", "load_keys": [], "confirm": None}]},
+    {"id": "wc_bad", "title": "F", "telemetry": [], "actions": [
+        {"label": "w", "method": "wifi.connect", "params": {"ssid": "x"}, "edit": True, "load": None, "confirm": None}]},
 ]
 BROKEN_EXPECT = ["telemetry key 'no_such_telemetry_key'", "attribute 'no_such_attribute'", "attributes must be a list of strings",
-                 "load_keys without load", "load_keys must be a non-empty list"]
+                 "load_keys without load", "load_keys must be a non-empty list",
+                 "wifi.connect action needs a non-empty Thai confirm"]
 
 
 class _RecordingApi:

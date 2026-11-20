@@ -319,6 +319,11 @@ def cases_for_selftest():
     return json.loads(CASES_FILE.read_text(encoding="utf-8"))
 
 
+def _forget_in_use_case():
+    """The wifi.profiles.forget error case that looks the connected ssid up (found by params_from, not by position)."""
+    return next(c for c in cases_for_selftest()["wifi"]["errors"] if "params_from" in c)
+
+
 class _FakeBoardMap:
     """Board stand-in that answers GET <path> from a dict of replies."""
     def __init__(self, replies):
@@ -550,7 +555,7 @@ def selftest():
           not shapes_match(sh, shape_of({"ok": True}))
           and not shapes_match(sh, shape_of({"ok": True, "networks": [{"ssid": 5, "rssi": -50, "auth": "x", "channel": 6, "connected": False}]}))
           and not shapes_match(sh, shape_of({"ok": False, "error": "scan_busy"})))
-    fspec = cases_for_selftest()["wifi"]["errors"][2]["params_from"]
+    fspec = _forget_in_use_case()["params_from"]
     prof = {"ok": True, "auto_index": 0, "profiles": [{"ssid": "farm", "auto": True, "connected": False},
                                                        {"ssid": "shed", "auto": False, "connected": True}]}
     check("fill_param takes the connected SSID from the reply", fill_param({}, fspec, prof) == {"ssid": "shed"})
@@ -558,10 +563,10 @@ def selftest():
           fill_param({}, fspec, {"ok": True, "profiles": [{"ssid": "farm", "connected": False}]}) is None
           and fill_param({}, fspec, {"ok": False, "error": "x"}) is None)
     r = Runner(_FakeTbProfiles(prof), "dev", None)
-    _quiet(r.run_error, "wifi", cases_for_selftest()["wifi"]["errors"][2])
+    _quiet(r.run_error, "wifi", _forget_in_use_case())
     check("in_use case sends the connected SSID and expects in_use", r.counts["PASS"] == 1 and r.counts["FAIL"] == 0)
     r = Runner(_FakeTbProfiles({"ok": True, "profiles": []}), "dev", None)
-    _quiet(r.run_error, "wifi", cases_for_selftest()["wifi"]["errors"][2])
+    _quiet(r.run_error, "wifi", _forget_in_use_case())
     check("in_use case SKIPs when no network is connected", r.counts["SKIP"] == 1 and r.counts["FAIL"] == 0)
     wifi = cases_for_selftest()["wifi"]
     check("wifi case file: connect and disconnect have no HTTP side, setauto write is a no-op",

@@ -59,6 +59,7 @@ python thingsboard/api_golden.py compare --base base --label new --with-writes  
   ไม่มีเคสที่สตาร์ทปั๊ม/วัด/คาลิเบรต/รีเซ็ตพลังงาน/เชื่อม Wi-Fi/บันทึก hardware map
   และไม่ครอบคลุม `/api/tb*`, login/logout/credentials, `/api/confirm`, `/api/ota`, `/api/events`
 - `/api/wifi/scan` รันเป็นเคสสุดท้ายเสมอ
+- กลุ่ม Wi-Fi ไม่เคยส่ง `wifi.connect` ที่อาจ stage ได้ (the Wi-Fi group never sends a `wifi.connect` that could stage): เคส error ทั้งหมดถูกปฏิเสธก่อน stage (`local_only`, `missing_ssid`, `ssid_too_long`)
 - ถ้าเคส `exact` ต่างกันเองระหว่างสองรอบบนเฟิร์มแวร์เดิม ให้ย้ายเป็น `shape` แล้วใส่ key ที่เปลี่ยนใน `ignore`
 
 ## Dashboard ทดสอบและ parity

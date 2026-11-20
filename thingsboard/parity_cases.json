@@ -140,7 +140,9 @@
       {"method": "wifi.scan", "http": "/api/wifi/scan", "ignore": [], "shape": true}
     ],
     "errors": [
-      {"method": "wifi.connect", "params": {"ssid": "parity-no-such-network"}, "http": null, "error": "local_only"},
+      {"method": "wifi.connect", "params": {"ssid": "parity-no-such-network", "ip": "192.168.1.250", "gateway": "192.168.1.1"}, "http": null, "error": "local_only"},
+      {"method": "wifi.connect", "params": {}, "http": "/api/wifi/connect", "error": "missing_ssid"},
+      {"method": "wifi.connect", "params": {"ssid": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}, "http": "/api/wifi/connect", "error": "ssid_too_long"},
       {"method": "wifi.disconnect", "params": {}, "http": null, "error": "local_only"},
       {"method": "wifi.profiles.forget", "params": {}, "http": null, "error": "in_use",
        "params_from": {"key": "ssid", "method": "wifi.profiles.get", "path": "profiles[connected=True].ssid"}},
