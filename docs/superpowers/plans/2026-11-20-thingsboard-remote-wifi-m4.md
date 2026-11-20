@@ -316,6 +316,13 @@ How the work is split:
 - Claude runs the scripts through the user's Terminal 2 scripts and drives the dashboard.
 - Before J2–J4, ask the user which second 2.4 GHz network they have. It may be a phone hotspot, which cannot reach ThingsBoard on the LAN, or a second access point on the LAN.
 
+**Changes after the final review (2026-11-20, commit f07e58b):**
+- The final review found that a committed remote switch never saved the new profile (the staging overlay in `nvs_store_load_wifi_profiles`). It is fixed, but the QEMU selftest does not link `nvs_store`, so only J4 proves the fix on hardware. **J4 is required for sign-off**; if no second LAN access point exists, record F1 as unverified on hardware.
+- J2, J3 and J4: before and after each, read `wifi.profiles.get`. J2/J3 expect the list and `auto_index` unchanged; J4 expects the new SSID present, `auto_index` pointing at it and the old profiles intact.
+- J2 may roll back through either path: within about 30 s, or, when wifi_manager falls back to the old credential, through the 180 s confirm timer (the log shows `connected on <old>, not on staged <new>; leaving it staged`). Both pass.
+- J5 step 3: the empty-password `in_use` guard applies only to the connected network when it has no saved profile; another SSID gets `not_connected` first. Accept `not_connected` for an unsaved, unconnected SSID.
+- J6: read the tb_link stack HWM after a successful J4 commit.
+
 - [ ] **J0 (before flashing):** run `api_golden.py capture --label m4pre --with-writes`.
 - [ ] **J1:**
   - Flash.
