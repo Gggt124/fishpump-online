@@ -200,6 +200,14 @@ static void tb_ota_task(void *arg) {
     code = "invalid_image";
     goto fail;
   }
+  {
+    /* The image's own version must be the package version, or the next boot could never match the pending one. */
+    esp_app_desc_t desc;
+    if (esp_ota_get_partition_description(next, &desc) != ESP_OK || !tb_fw_version_equal(desc.version, s_job.version)) {
+      code = "version_mismatch";
+      goto fail;
+    }
+  }
   report_state("VERIFIED", NULL, false);
 
   bool logged = false;
@@ -409,6 +417,10 @@ void tb_ota_boot_init(void) {
   atomic_store(&s_boot_state, (int)b);
   ESP_LOGI(TAG, "boot state %d (pending %s, running %s, pending_verify %d)", (int)b, has_pending ? pending : "none",
            running, (int)pending_verify);
+  if (b == TB_FW_BOOT_ROLLED_BACK && has_pending) {
+    /* The rolled-back version must not be fetched again at once (reboot loop): final until the next reboot. */
+    remember_failed(pending);
+  }
   if (b == TB_FW_BOOT_VERIFY) {
     const esp_timer_create_args_t args = {.callback = verify_timeout_cb, .name = "tb_ota_verify"};
     esp_err_t e = esp_timer_create(&args, &s_verify_timer);

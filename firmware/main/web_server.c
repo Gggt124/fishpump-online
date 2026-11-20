@@ -2272,6 +2272,8 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
   uplink_note_settings_changed();
   ESP_LOGI(TAG, "OTA successful, rebooting...");
   nvs_store_set_restart_detail("OTA_REBOOT");
+  /* A leftover ThingsBoard pending version must not put this image under the ThingsBoard 5-minute rule. */
+  nvs_store_clear_tb_ota_pending();
   schedule_delayed_reboot();
 
   /* Lock stays held until the reboot: the new slot is the boot partition now. */

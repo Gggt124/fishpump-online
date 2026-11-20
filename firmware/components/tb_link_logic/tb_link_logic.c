@@ -526,7 +526,7 @@ tb_fw_decision_t tb_fw_decide(const tb_fw_info_t *fw, const char *running_versio
 bool tb_fw_error_is_final(const char *code)
 {
     static const char *const finals[] = {"bad_attributes", "too_large", "bad_chunk", "checksum_mismatch",
-                                         "invalid_image"};
+                                         "invalid_image", "rolled_back", "version_mismatch"};
     if (code == NULL) {
         return false;
     }

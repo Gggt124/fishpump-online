@@ -531,6 +531,11 @@ def test_ota_lock():
     i_claim = body.find("ota_lock_claim()")
     i_begin = body.find("esp_ota_begin(")
     assert_test(i_claim != -1 and i_begin != -1 and i_claim < i_begin, "handle_api_ota claims the lock before esp_ota_begin")
+    i_sb = body.find("esp_ota_set_boot_partition(")
+    i_clr = body.find("nvs_store_clear_tb_ota_pending(")
+    i_rb = body.find("schedule_delayed_reboot(")
+    assert_test(-1 not in (i_sb, i_clr, i_rb) and i_sb < i_clr < i_rb,
+                "handle_api_ota clears the ThingsBoard pending version between set boot partition and the reboot")
     i_busy = body.find('ota_busy')
     assert_test(i_busy != -1 and "409 Conflict" in body[i_busy:i_busy + 120], "ota_busy comes with 409 Conflict")
     i_after = body.find("409 Conflict", i_busy) if i_busy != -1 else -1
@@ -586,6 +591,11 @@ def test_tb_ota():
     assert_test("nvs_store_clear_tb_ota_pending(" in after_boot, "set_boot_failed clears the pending version")
     assert_test("ota_lock_release" not in task[task.find("UPDATING"):i_rest] if "UPDATING" in task and i_rest != -1 else False,
                 "the lock stays held on the success path until esp_restart")
+    i_end = task.find("esp_ota_end(")
+    i_desc = task.find("esp_ota_get_partition_description(")
+    assert_test(-1 not in (i_end, i_desc, i_pend) and i_end < i_desc < i_pend and "version_mismatch" in task and
+                "tb_fw_version_equal(" in task[i_desc:i_pend],
+                "the task compares the image's own version with the package version after esp_ota_end and before set pending")
     assert_test('"TB_OTA_REBOOT"' in c, 'the restart detail "TB_OTA_REBOOT" is set')
     assert_test("session_invalidate_all(" in task and "uplink_note_settings_changed(" in task,
                 "the success path invalidates sessions and notes the settings change")
@@ -671,6 +681,9 @@ def test_ota_boot():
     assert_test(init != "" and "nvs_store_clear_tb_ota_pending" not in init and "tb_fw_boot_state(" in init and
                 "ESP_OTA_IMG_PENDING_VERIFY" in init,
                 "tb_ota_boot_init resolves the state and never clears the pending version")
+    i_rb = init.find("TB_FW_BOOT_ROLLED_BACK")
+    assert_test(i_rb != -1 and "remember_failed(" in init[i_rb:],
+                "tb_ota_boot_init remembers the pending version on the ROLLED_BACK path")
 
 
 def main():

@@ -28,6 +28,31 @@ STATUS_TELEMETRY = ("fw_state", "fw_error", "current_fw_title", "current_fw_vers
                     "target_fw_title", "target_fw_version", "target_fw_ts")
 
 
+# esp_app_desc_t sits after the 24-byte image header and the 8-byte first segment header; its magic word
+# (0xABCD5432, little-endian) is the first field and the 32-byte NUL-padded version string starts 16 bytes in.
+APP_DESC_MAGIC = 0xABCD5432
+APP_DESC_OFFSET = 24 + 8
+IMAGE_VERSION_OFFSET = APP_DESC_OFFSET + 16
+IMAGE_VERSION_LEN = 32
+
+
+def read_image_version(data):
+    """The version string built into an ESP-IDF app image; ValueError when it cannot be read."""
+    if len(data) < IMAGE_VERSION_OFFSET + IMAGE_VERSION_LEN:
+        raise ValueError("file is too short to be an ESP-IDF app image (%d bytes)" % len(data))
+    if int.from_bytes(data[APP_DESC_OFFSET:APP_DESC_OFFSET + 4], "little") != APP_DESC_MAGIC:
+        raise ValueError("no app descriptor magic at byte %d: not a plain ESP-IDF app .bin" % APP_DESC_OFFSET)
+    raw = data[IMAGE_VERSION_OFFSET:IMAGE_VERSION_OFFSET + IMAGE_VERSION_LEN].split(b"\x00", 1)[0]
+    return raw.decode("ascii", "replace")
+
+
+def versions_equal(a, b):
+    """Equal when they differ only by one leading v/V (the same rule as the firmware)."""
+    def strip(v):
+        return v[1:] if v[:1] in ("v", "V") else v
+    return strip(a) == strip(b)
+
+
 def build_multipart(filename, data, boundary):
     """multipart/form-data body with one file part named "file"."""
     head = ('--%s\r\nContent-Disposition: form-data; name="file"; filename="%s"\r\n'
@@ -70,6 +95,14 @@ def need_device(api, name):
 def cmd_upload(api, args):
     with open(args.image, "rb") as f:
         data = f.read()
+    if not args.no_version_check:
+        try:
+            built_in = read_image_version(data)
+        except ValueError as e:
+            raise tb_api.TbError("%s (use --no-version-check to upload anyway)" % e) from None
+        if not versions_equal(built_in, args.version):
+            raise tb_api.TbError("the image's built-in version is %r but --version is %r; the board would refuse it "
+                                 "(version_mismatch). Fix --version or use --no-version-check" % (built_in, args.version))
     profile = api.find_by_name("/api/deviceProfiles", PROFILE)
     if not profile:
         raise tb_api.TbError("device profile %s not found (run tb_setup.py)" % PROFILE)
@@ -148,6 +181,8 @@ def build_parser():
     s.add_argument("image")
     s.add_argument("--version", required=True)
     s.add_argument("--title", default=DEFAULT_TITLE)
+    s.add_argument("--no-version-check", action="store_true",
+                   help="do not compare the image's built-in version with --version (for test files)")
     s.add_argument("--checksum", help="expected SHA-256 hex (ThingsBoard computes it when omitted)")
     s = sub.add_parser("assign", help="assign a package version to a device")
     s.add_argument("device")
@@ -194,6 +229,26 @@ def selftest():
     a = ap.parse_args(["delete", "1.2.3"])
     check((a.cmd, a.version) == ("delete", "1.2.3"), "delete args")
     check(set(COMMANDS) == {"upload", "assign", "unassign", "status", "delete"}, "all subcommands handled")
+    def synth(magic=APP_DESC_MAGIC, ver=b"0.3.2"):
+        buf = bytearray(80)
+        buf[24 + 8:24 + 8 + 4] = magic.to_bytes(4, "little")
+        buf[IMAGE_VERSION_OFFSET:IMAGE_VERSION_OFFSET + len(ver)] = ver
+        return bytes(buf)
+
+    check(read_image_version(synth()) == "0.3.2", "image version read from a synthetic image")
+    check(read_image_version(synth(ver=b"v1.0")) == "v1.0", "image version keeps the leading v")
+    check(IMAGE_VERSION_OFFSET == 48, "version offset is 48")
+    for what, blob in (("wrong magic", synth(magic=0x12345678)), ("short file", synth()[:60]), ("empty", b"")):
+        try:
+            read_image_version(blob)
+            check(False, "read_image_version must refuse " + what)
+        except ValueError:
+            pass
+    check(versions_equal("v0.3.2", "0.3.2") and versions_equal("0.3.2", "0.3.2") and not versions_equal("0.3.2", "0.3.3"),
+          "versions_equal ignores one leading v")
+    a = ap.parse_args(["upload", "x.bin", "--version", "1", "--no-version-check"])
+    check(a.no_version_check is True, "--no-version-check parsed")
+    check(ap.parse_args(["upload", "x.bin", "--version", "1"]).no_version_check is False, "version check on by default")
     import contextlib
     import io
     try:

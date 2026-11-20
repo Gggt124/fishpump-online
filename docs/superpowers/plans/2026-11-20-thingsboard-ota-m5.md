@@ -89,7 +89,8 @@ Out of scope:
   | `checksum_mismatch` | the SHA-256 of all bytes differs from `fw_checksum` | yes |
   | `invalid_image` | `esp_ota_end` rejected the image | yes |
   | `set_boot_failed` | `esp_ota_set_boot_partition` failed | no |
-  | `rolled_back` | after the reboot the running version is not the pending one | — (reported once at boot) |
+  | `rolled_back` | after the reboot the running version is not the pending one | yes (reported once at boot; remembered until the next reboot) |
+  | `version_mismatch` | the image's built-in version differs from the package version | yes |
 
 - **Version:**
   - `firmware/CMakeLists.txt` takes the version from `firmware/version.txt`, which must be numeric `x.y.z`. It sets both `PROJECT_VER` and `project(... VERSION ...)`.

@@ -492,8 +492,9 @@ Telemetry from the device: `DOWNLOADING` -> `DOWNLOADED` -> `VERIFIED` -> `UPDAT
 | `write_failed` | `esp_ota_write` failed | no |
 | `checksum_mismatch` | the SHA-256 of all bytes differs from `fw_checksum` | yes |
 | `invalid_image` | `esp_ota_end` rejected the image | yes |
+| `version_mismatch` | the image's built-in version differs from the package version | yes |
 | `set_boot_failed` | `esp_ota_set_boot_partition` failed | no |
-| `rolled_back` | after the reboot the running version is not the pending one | reported once at boot |
+| `rolled_back` | after the reboot the running version is not the pending one | yes (reported once at boot; the version is not fetched again until the next reboot) |
 
 ### 12.4 The 5-minute rule
 

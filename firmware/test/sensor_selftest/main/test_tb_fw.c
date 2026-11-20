@@ -112,7 +112,7 @@ static void test_small(void)
     CHECK(!tb_fw_version_equal("vv1", "v1"));
 
     static const char *const fin[] = {"bad_attributes", "too_large", "bad_chunk", "checksum_mismatch",
-                                      "invalid_image"};
+                                      "invalid_image", "rolled_back", "version_mismatch"};
     static const char *const nfin[] = {"busy",      "chunk_timeout",    "server_error",    "write_failed",
                                        "no_memory", "ota_begin_failed", "set_boot_failed", "nonsense"};
     for (size_t k = 0; k < sizeof(fin) / sizeof(fin[0]); k++) {
