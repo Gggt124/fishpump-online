@@ -265,7 +265,7 @@ Source: `firmware/main/dapi_wifi.c`. Macros: `WIFI_CONNECT_BODY_BYTES` = 512, `W
 | `wifi.profiles.save` | POST /api/wifi/profiles/save | WRITE | 384 |
 | `wifi.profiles.setauto` | POST /api/wifi/profiles/setauto | WRITE | 256 |
 | `wifi.profiles.forget` | POST /api/wifi/profiles/forget | WRITE | 256 |
-| `wifi.connect` | POST /api/wifi/connect | WRITE, LOCAL_ONLY | 512 |
+| `wifi.connect` | POST /api/wifi/connect | WRITE, STAGED | 512 |
 | `wifi.disconnect` | POST /api/wifi/disconnect | WRITE, LOCAL_ONLY | 0 |
 
 Replies. Some `ok:false` replies carry status 200, as the old handlers did. The status is shown after the code.
@@ -274,10 +274,10 @@ Replies. Some `ok:false` replies carry status 200, as the old handlers did. The 
 |---|---|---|
 | `wifi.scan` | `ok`, `networks[]` (`ssid`, `rssi`, `auth`, `channel`, `connected`). Cached for 10 s. | `scan_busy` 503 (a scan is already running); `scan_failed` 200; `scan_timeout` 200 (waits 5 s); `memory` 500 |
 | `wifi.profiles.get` | `ok`, `auto_index`, `profiles[]` (`ssid`, `auto`, `connected`). No passwords. | 500 |
-| `wifi.profiles.save` | `ok`, `reboot_pending` (always false) | `invalid_ssid` 400, `invalid_password` 400, `missing_ssid` 400; `not_connected` 200 (only the connected SSID can be saved); `in_use` 409 (ThingsBoard only); `save_failed` 200 |
+| `wifi.profiles.save` | `ok`, `reboot_pending` (always false) | `invalid_ssid` 400, `invalid_password` 400, `missing_ssid` 400; `not_connected` 200 (only the connected SSID can be saved); `in_use` 409 (ThingsBoard only: also an empty password for a network that is not saved); `save_failed` 200 |
 | `wifi.profiles.setauto` | `ok` | `in_use` 409 (ThingsBoard only); `setauto_failed` 200 |
 | `wifi.profiles.forget` | `ok` | `invalid_ssid` 400, `missing_ssid` 400, `in_use` 409 (ThingsBoard only); `forget_failed` 200 |
-| `wifi.connect` | `ok`, `connecting`, `ssid`; or `ok`, `already_connected`, `ssid`, `ip` | `invalid_ssid`, `invalid_password`, `invalid_ip`, `invalid_gateway`, `invalid_netmask`, `invalid_dns` (too long) 400; `ssid_too_long`, `password_too_long`, `missing_gateway` 400; `missing_ssid` 200; `connect_error` 200 |
+| `wifi.connect` | `ok`, `connecting`, `ssid`; or `ok`, `already_connected`, `ssid`, `ip` | `invalid_ssid`, `invalid_password`, `invalid_ip`, `invalid_gateway`, `invalid_netmask`, `invalid_dns` (too long) 400; `ssid_too_long`, `password_too_long`, `missing_gateway` 400; `missing_ssid` 200; `connect_error` 200. ThingsBoard only: `{ok:true, staged:true}` on success; `local_only` 403 (static-IP fields, message `Static IP needs the local web app`); `staging_active` 409; `measure_running` 409; `stage_failed` 500 |
 | `wifi.disconnect` | `ok`, `disconnect_pending` (the link drops 500 ms after the reply) | `disconnect_task_failed` 500 |
 
 Params:
@@ -298,6 +298,21 @@ Params:
 ### 7.2 wifi.scan and the lock
 
 `wifi.scan` is the only `NO_LOCK` method. A scan can take seconds, and a locked scan would block every other call. A second scan is refused at once (`scan_busy`). The cache has its own mutex.
+
+### 7.3 Remote Wi-Fi change (milestone 4)
+
+`wifi.connect` from ThingsBoard does not connect in place. It runs these steps:
+
+1. Validate, then refuse with `local_only` (static IP), `staging_active` (another change is pending) or `measure_running` (dry-run measurement).
+2. Stage the network (`nvs_store_stage_wifi`). On failure reply `stage_failed`.
+3. Reply `{"ok":true,"staged":true}`. The board restarts after the reply is acked (PUBACK, or 2 s at most) into the staged network.
+4. After the restart the board joins the staged network. When the ThingsBoard link connects over it, the change is committed and the rollback timers are cancelled.
+
+Rollback is automatic: if Wi-Fi does not come up within 30 s, or ThingsBoard is not confirmed within 180 s, the board returns to the previous network. A network that cannot reach ThingsBoard therefore always rolls back.
+
+The commit saves the new profile and makes it the auto-connect network.
+
+`wifi.profiles.save` from ThingsBoard with an empty password for an SSID that is not saved gets `in_use` 409.
 
 ## 8. Status, sensors, uplink and hardware (5 methods)
 
@@ -347,7 +362,7 @@ Notes:
 
 ## 10. Known limits
 
-- `wifi.connect` is LOCAL_ONLY until milestone 4 adds the staged commit. The `STAGED` flag is reserved for it.
+- `wifi.connect` is `WRITE, STAGED`. From ThingsBoard it stages the network and restarts (section 7.3); from HTTP it connects as before. Static-IP fields are refused from ThingsBoard.
 - `wifi.disconnect` and `hardware.map.set` are LOCAL_ONLY for good. The first would cut the link the command arrived on. The second needs a reboot and a local confirmation.
 - ThingsBoard may deliver an RPC again after a reconnect (seen at checkpoint A, id 90). The board answers a repeat of the same id and payload within 30 s from its reply cache and does not run the method again (section 1.1). The cache holds 4 requests and is lost on a reboot. A repeat after 30 s, or after a restart, runs again.
 - `pump.start` has no confirm on the dashboard, as the web app has none.

@@ -420,6 +420,26 @@ def test_wifi_remote():
     assert_test(src != "" and not bad, "wifi_remote.c has no ESP_LOG line mentioning pass", str(bad))
 
 
+def test_wifi_connect_remote():
+    print("\n--- Milestone 4 Task 4: wifi.connect and wifi.profiles.save from ThingsBoard ---")
+    src = read(MAIN_DIR / "dapi_wifi.c")
+    body = function_body(src, "dapi_wifi_connect")
+    i_conn = body.find("already_connected")
+    i_tb = body.find("DAPI_SRC_TB", i_conn)
+    i_sta = body.find("wifi_manager_connect_sta")
+    branch = body[i_tb:i_sta] if i_tb != -1 and i_sta != -1 else ""
+    names = ["dapi_wifi_connect_refusal", "nvs_store_stage_wifi", "tb_link_defer_after_reply(wifi_remote_restart_for_stage)",
+             "nvs_store_rollback_staging", 'staged\\"', "dry_run_guard_get_measure", "stage_failed"]
+    miss = [n for n in names if n not in branch]
+    assert_test(branch != "" and not miss, "the TB branch of dapi_wifi_connect (after already_connected, before the HTTP connect) has the stage steps", f"missing={miss}")
+    pos = [branch.find(n) for n in ("dapi_wifi_connect_refusal", "nvs_store_stage_wifi", "tb_link_defer_after_reply")]
+    assert_test(all(x != -1 for x in pos) and pos == sorted(pos), "refusal, then stage, then defer", f"{pos}")
+    save = function_body(src, "dapi_wifi_profiles_save")
+    assert_test("dapi_wifi_save_empty_blocked(" in save, "dapi_wifi_profiles_save calls dapi_wifi_save_empty_blocked")
+    bad = [l for l in src.splitlines() if "ESP_LOG" in l and re.search(r",\s*password", l)]
+    assert_test(src != "" and not bad, "no ESP_LOG line in dapi_wifi.c prints the password variable", str(bad))
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
@@ -431,6 +451,7 @@ def main():
     test_state_cases_drift()
     test_remote_wifi_link()
     test_wifi_remote()
+    test_wifi_connect_remote()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

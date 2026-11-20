@@ -314,13 +314,14 @@ def test_water_power_group():
 
 def test_wifi_group():
     local = r"DAPI_F_WRITE\s*\|\s*DAPI_F_LOCAL_ONLY"
+    staged = r"DAPI_F_WRITE\s*\|\s*DAPI_F_STAGED"
     methods = [
         ("wifi.scan", r"DAPI_F_READ\s*\|\s*DAPI_F_NO_LOCK", "0"),
         ("wifi.profiles.get", r"DAPI_F_READ", "0"),
         ("wifi.profiles.save", r"DAPI_F_WRITE", "WIFI_SAVE_BODY_BYTES"),
         ("wifi.profiles.setauto", r"DAPI_F_WRITE", "WIFI_PROFILE_BODY_BYTES"),
         ("wifi.profiles.forget", r"DAPI_F_WRITE", "WIFI_PROFILE_BODY_BYTES"),
-        ("wifi.connect", local, "WIFI_CONNECT_BODY_BYTES"),
+        ("wifi.connect", staged, "WIFI_CONNECT_BODY_BYTES"),
         ("wifi.disconnect", local, "0"),
     ]
     handlers = [

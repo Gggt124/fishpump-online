@@ -7,6 +7,7 @@
 
 #include "api_json.h"
 #include "dapi_guards.h"
+#include "dry_run_guard.h"
 #include "device_api.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -16,13 +17,15 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nvs_store.h"
+#include "tb_link.h"
 #include "wifi_manager.h"
+#include "wifi_remote.h"
 
 /* Wi-Fi methods: the code that used to run inside the /api/wifi/ handlers after
  * the request body was parsed. Replies keep the exact status and bytes of the
  * old handlers, including the ones that answer 200 with ok:false.
- * wifi.connect and wifi.disconnect are local-only: they can cut the link the
- * remote caller is using. */
+ * wifi.disconnect is local-only: it cuts the link the remote caller is using.
+ * wifi.connect from ThingsBoard is staged with an automatic rollback. */
 
 static const char *TAG = "dapi_wifi";
 
@@ -316,9 +319,11 @@ static dapi_status_t dapi_wifi_profiles_save(const cJSON *params, dapi_source_t 
   }
   int count = 0, auto_idx = -1;
   bool exists_unchanged = false;
+  bool exists_ssid = false;
   if (nvs_store_load_wifi_profiles(profiles, &count, &auto_idx)) {
     for (int i = 0; i < count; i++) {
       if (strcmp(profiles[i].ssid, ssid) == 0) {
+        exists_ssid = true;
         if (password[0] == '\0' || strcmp(profiles[i].pass, password) == 0) {
           exists_unchanged = true;
           break;
@@ -327,6 +332,12 @@ static dapi_status_t dapi_wifi_profiles_save(const cJSON *params, dapi_source_t 
     }
   }
   free(profiles);
+
+  /* ThingsBoard may not create an open (empty-password) profile for a new network */
+  if (dapi_wifi_save_empty_blocked(src, password, exists_ssid)) {
+    *out = dapi_error("in_use", "Cannot save a network without a password from ThingsBoard");
+    return DAPI_CONFLICT;
+  }
 
   if (exists_unchanged) {
     ESP_LOGI(TAG, "Wi-Fi profile already exists and is unchanged for SSID=%s", ssid);
@@ -437,7 +448,6 @@ static dapi_status_t dapi_wifi_profiles_forget(const cJSON *params, dapi_source_
 
 /* {"ssid":"..","password":"..", "ip":"..","gateway":"..","netmask":"..","dns":".."} - local only */
 static dapi_status_t dapi_wifi_connect(const cJSON *params, dapi_source_t src, cJSON **out) {
-  (void)src;
   char ssid[64] = {0};
   char password[65] = {0};
   wifi_sta_ip_config_t ip_cfg = {0};
@@ -555,6 +565,36 @@ static dapi_status_t dapi_wifi_connect(const cJSON *params, dapi_source_t src, c
     return DAPI_OK;
   }
 
+  if (src == DAPI_SRC_TB) {
+    /* From ThingsBoard the network is staged and the board restarts into it after the reply is acked;
+     * the commit happens when the ThingsBoard link connects over the new network (wifi_remote.c). */
+    uint8_t stg_type = 0;
+    nvs_store_get_staging_type(&stg_type);
+    dry_run_measure_status_t ms = {0};
+    bool measuring = dry_run_guard_get_measure(&ms) && ms.state == DRY_RUN_MEASURE_RUNNING;
+    const char *refusal = dapi_wifi_connect_refusal(src, has_static_ip, stg_type != 0, measuring);
+    if (refusal) {
+      if (strcmp(refusal, "local_only") == 0) {
+        *out = dapi_error("local_only", "Static IP needs the local web app");
+        return DAPI_LOCAL_ONLY;
+      }
+      *out = raw(strcmp(refusal, "staging_active") == 0 ? "{\"ok\":false,\"error\":\"staging_active\"}"
+                                                         : "{\"ok\":false,\"error\":\"measure_running\"}");
+      return DAPI_CONFLICT;
+    }
+    if (!nvs_store_stage_wifi(ssid, password)) {
+      *out = raw("{\"ok\":false,\"error\":\"stage_failed\"}");
+      return DAPI_INTERNAL;
+    }
+    if (!tb_link_defer_after_reply(wifi_remote_restart_for_stage)) {
+      nvs_store_rollback_staging();
+      *out = raw("{\"ok\":false,\"error\":\"stage_failed\"}");
+      return DAPI_INTERNAL;
+    }
+    *out = raw("{\"ok\":true,\"staged\":true}");
+    return DAPI_OK;
+  }
+
   if (!wifi_manager_connect_sta(ssid, password, has_static_ip ? &ip_cfg : NULL)) {
     *out = raw("{\"ok\":false,\"error\":\"connect_error\"}");
     return DAPI_OK;
@@ -614,14 +654,14 @@ static dapi_status_t dapi_wifi_disconnect(const cJSON *params, dapi_source_t src
   return DAPI_OK;
 }
 
-/* wifi.connect stays local-only until milestone 4 adds the staged commit. */
+/* wifi.connect from ThingsBoard stages the network (milestone 4); wifi.disconnect stays local-only. */
 static const dapi_method_t s_wifi_methods[] = {
     {"wifi.scan", DAPI_F_READ | DAPI_F_NO_LOCK, 0, dapi_wifi_scan},
     {"wifi.profiles.get", DAPI_F_READ, 0, dapi_wifi_profiles_get},
     {"wifi.profiles.save", DAPI_F_WRITE, WIFI_SAVE_BODY_BYTES, dapi_wifi_profiles_save},
     {"wifi.profiles.setauto", DAPI_F_WRITE, WIFI_PROFILE_BODY_BYTES, dapi_wifi_profiles_setauto},
     {"wifi.profiles.forget", DAPI_F_WRITE, WIFI_PROFILE_BODY_BYTES, dapi_wifi_profiles_forget},
-    {"wifi.connect", DAPI_F_WRITE | DAPI_F_LOCAL_ONLY, WIFI_CONNECT_BODY_BYTES, dapi_wifi_connect},
+    {"wifi.connect", DAPI_F_WRITE | DAPI_F_STAGED, WIFI_CONNECT_BODY_BYTES, dapi_wifi_connect},
     {"wifi.disconnect", DAPI_F_WRITE | DAPI_F_LOCAL_ONLY, 0, dapi_wifi_disconnect},
 };
 
