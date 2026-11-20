@@ -8,10 +8,10 @@ set(PROJECT_VER "${FISHPUMP_VERSION}")
 option(TB_TEST_BLOCK_CONNECT "Test image that never connects to ThingsBoard (OTA rollback bench)" OFF)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(fishpump_firmware VERSION ${FISHPUMP_VERSION})
-
+# Before project(): IDF adds the components during project(), so a plain add_compile_definitions would miss them.
 if(TB_TEST_BLOCK_CONNECT)
-    add_compile_definitions(TB_LINK_TEST_BLOCK_CONNECT=1)
+    idf_build_set_property(COMPILE_DEFINITIONS "TB_LINK_TEST_BLOCK_CONNECT=1" APPEND)
 endif()
+project(fishpump_firmware VERSION ${FISHPUMP_VERSION})
 
 add_compile_definitions(APP_TEMPLATE_FIRMWARE_VERSION="v${PROJECT_VERSION}")

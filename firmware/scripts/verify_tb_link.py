@@ -473,11 +473,13 @@ def test_ota_link():
     assert_test("tb_link_is_connected(void)" in hdr, "tb_link.h declares tb_link_is_connected")
     i_case = src.find("case CMD_CONNECTED:")
     order = ["connected_hook", "TB_RPC_SUB_TOPIC", "TB_FW_ATTR_TOPIC", "TB_FW_ATTR_RESP_PREFIX", "TB_FW_RESP_PREFIX", "session_hook"]
-    pos, last = [], i_case
+    i_end = src.find("    case ", i_case + 1)  # the next case label ends the CMD_CONNECTED body
+    case_body = src[i_case:i_end] if i_case != -1 and i_end != -1 else ""
+    pos, last = [], 0
     for tok in order:
-        last = src.find(tok, last + 1) if last != -1 else -1
+        last = case_body.find(tok, last + 1) if last != -1 else -1
         pos.append(last)
-    assert_test(i_case != -1 and all(p != -1 for p in pos),
+    assert_test(case_body != "" and all(p != -1 for p in pos),
                 "CMD_CONNECTED: connected hook, RPC, fw attr, attr response, fw chunk subscribes, session hook in order", str(pos))
     pub = function_body(src, "tb_link_publish", r"int\s+")
     i_take = pub.find("xSemaphoreTake(s.client_lock")
@@ -502,6 +504,13 @@ def test_ota_link():
     assert_test("version.txt" in cmake and "PROJECT_VER" in cmake, "CMakeLists reads version.txt")
     assert_test(re.search(r'option\(TB_TEST_BLOCK_CONNECT.*OFF\)', cmake) is not None,
                 "CMakeLists declares TB_TEST_BLOCK_CONNECT default OFF")
+    i_proj = cmake.find("project(fishpump_firmware")
+    i_def = cmake.find('idf_build_set_property(COMPILE_DEFINITIONS "TB_LINK_TEST_BLOCK_CONNECT=1" APPEND)')
+    assert_test(i_def != -1 and i_proj != -1 and i_def < i_proj and "add_compile_definitions(TB_LINK" not in cmake,
+                "the test-block define is set with idf_build_set_property before project()")
+    mh = function_body(src, "mqtt_event_handler")
+    assert_test("ev->topic == NULL" in mh and "ROUTE_PROV" in mh,
+                "a provision continuation fragment (no topic) returns without queueing a command")
     assert_test("VERSION 0." not in cmake, "CMakeLists has no literal VERSION 0.")
     assert_test("firmware/build_block/" in gitignore.splitlines(), ".gitignore lists firmware/build_block/")
 

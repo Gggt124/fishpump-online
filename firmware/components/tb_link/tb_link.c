@@ -338,8 +338,8 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
             return;
         }
         /* Only the first fragment carries the topic; the reply is small, a fragmented one counts as bad. */
-        if (s_route != ROUTE_PROV) {
-            return;
+        if (s_route != ROUTE_PROV || ev->topic == NULL) {
+            return; /* dropped route, or a PROV continuation fragment: ignored as before */
         }
         c.type = CMD_PROV_REPLY;
         if (ev->current_data_offset == 0 && ev->data_len == ev->total_data_len && ev->data_len > 0 &&
