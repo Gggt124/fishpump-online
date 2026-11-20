@@ -459,6 +459,53 @@ def test_wifi_connect_remote():
     assert_test(src != "" and not bad, "no ESP_LOG line in dapi_wifi.c prints the password variable", str(bad))
 
 
+def test_ota_link():
+    print("\n--- Milestone 5 Task 2: tb_link data/session hooks, publish, OTA subscriptions, version ---")
+    hdr = read(COMP_DIR / "tb_link" / "include" / "tb_link.h")
+    src = read(COMP_DIR / "tb_link" / "tb_link.c")
+    cmake = read(FIRMWARE_DIR / "CMakeLists.txt")
+    gitignore = read(FIRMWARE_DIR.parent / ".gitignore")
+    assert_test("tb_link_data_t" in hdr and "const char *topic; int topic_len;" in hdr and
+                "int offset;" in hdr and "int total;" in hdr, "tb_link.h declares tb_link_data_t")
+    assert_test("tb_link_set_data_hook(void (*hook)(const tb_link_data_t *d))" in hdr, "tb_link.h declares tb_link_set_data_hook")
+    assert_test("tb_link_set_session_hook(void (*hook)(void))" in hdr, "tb_link.h declares tb_link_set_session_hook")
+    assert_test("tb_link_publish(const char *topic, const char *data, int len, int qos)" in hdr, "tb_link.h declares tb_link_publish")
+    assert_test("tb_link_is_connected(void)" in hdr, "tb_link.h declares tb_link_is_connected")
+    i_case = src.find("case CMD_CONNECTED:")
+    order = ["connected_hook", "TB_RPC_SUB_TOPIC", "TB_FW_ATTR_TOPIC", "TB_FW_ATTR_RESP_PREFIX", "TB_FW_RESP_PREFIX", "session_hook"]
+    pos, last = [], i_case
+    for tok in order:
+        last = src.find(tok, last + 1) if last != -1 else -1
+        pos.append(last)
+    assert_test(i_case != -1 and all(p != -1 for p in pos),
+                "CMD_CONNECTED: connected hook, RPC, fw attr, attr response, fw chunk subscribes, session hook in order", str(pos))
+    pub = function_body(src, "tb_link_publish", r"int\s+")
+    i_take = pub.find("xSemaphoreTake(s.client_lock")
+    i_enq = pub.find("esp_mqtt_client_enqueue")
+    i_give = pub.find("xSemaphoreGive(s.client_lock")
+    assert_test(i_take != -1 and i_take < i_enq < i_give, "tb_link_publish enqueues while holding client_lock")
+    assert_test("TB_RPC_LOCK_MS" in pub and "s.client_pub" in pub and "s.connected" in pub,
+                "tb_link_publish uses the rpc_publish guard")
+    assert_test("mc.buffer.size = 2048" in src, "esp-mqtt buffer.size stays 2048")
+    ok, depth = True, 0
+    for line in src.splitlines():
+        t = line.strip()
+        if t.startswith("#if"):
+            depth += 1
+            if "TB_LINK_TEST_BLOCK_CONNECT" in t and not t.startswith("#ifdef"):
+                ok = False
+        elif t.startswith("#endif"):
+            depth -= 1
+        elif "TB_LINK_TEST_BLOCK_CONNECT" in t and not t.startswith("#ifdef"):
+            ok = False
+    assert_test("#ifdef TB_LINK_TEST_BLOCK_CONNECT" in src and ok, "every TB_LINK_TEST_BLOCK_CONNECT is inside an #ifdef")
+    assert_test("version.txt" in cmake and "PROJECT_VER" in cmake, "CMakeLists reads version.txt")
+    assert_test(re.search(r'option\(TB_TEST_BLOCK_CONNECT.*OFF\)', cmake) is not None,
+                "CMakeLists declares TB_TEST_BLOCK_CONNECT default OFF")
+    assert_test("VERSION 0." not in cmake, "CMakeLists has no literal VERSION 0.")
+    assert_test("firmware/build_block/" in gitignore.splitlines(), ".gitignore lists firmware/build_block/")
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
@@ -471,6 +518,7 @@ def main():
     test_remote_wifi_link()
     test_wifi_remote()
     test_wifi_connect_remote()
+    test_ota_link()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

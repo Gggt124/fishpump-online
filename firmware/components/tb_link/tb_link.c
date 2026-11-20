@@ -253,6 +253,15 @@ static void rpc_queue_drain(void)
 static atomic_int s_acked_ids[TB_ACKED_RING];
 static atomic_uint s_acked_next;
 static void (*_Atomic s_connected_hook)(void);
+static void (*_Atomic s_session_hook)(void);
+static void (*_Atomic s_data_hook)(const tb_link_data_t *d);
+
+/* Route of the message being received (esp-mqtt task only): later fragments carry no topic. */
+typedef enum { ROUTE_DROP = 0, ROUTE_RPC, ROUTE_PROV, ROUTE_HOOK } data_route_t;
+#define TB_HOOK_TOPIC_MAX 64
+static data_route_t s_route;
+static char s_route_topic[TB_HOOK_TOPIC_MAX];
+static int s_route_topic_len;
 
 static void acked_ring_clear(void)
 {
@@ -300,14 +309,36 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         atomic_store(&s_acked_ids[atomic_fetch_add(&s_acked_next, 1u) % TB_ACKED_RING], ev->msg_id);
         return;
     case MQTT_EVENT_DATA:
-        if (ev->topic != NULL && ev->topic_len > (int)strlen(TB_RPC_REQ_PREFIX) &&
-            memcmp(ev->topic, TB_RPC_REQ_PREFIX, strlen(TB_RPC_REQ_PREFIX)) == 0) {
+        if (ev->current_data_offset == 0 && ev->topic != NULL) { /* first fragment: decide the route */
+            const size_t rpc_len = strlen(TB_RPC_REQ_PREFIX);
+            s_route = ROUTE_DROP;
+            if (ev->topic_len > (int)rpc_len && memcmp(ev->topic, TB_RPC_REQ_PREFIX, rpc_len) == 0) {
+                s_route = ROUTE_RPC;
+            } else if (ev->topic_len == (int)strlen(TB_PROV_RESPONSE_TOPIC) &&
+                       memcmp(ev->topic, TB_PROV_RESPONSE_TOPIC, (size_t)ev->topic_len) == 0) {
+                s_route = ROUTE_PROV;
+            } else if (atomic_load(&s.token_session) && ev->topic_len > 0 && ev->topic_len < TB_HOOK_TOPIC_MAX) {
+                memcpy(s_route_topic, ev->topic, (size_t)ev->topic_len);
+                s_route_topic_len = ev->topic_len;
+                s_route = ROUTE_HOOK;
+            }
+        }
+        if (s_route == ROUTE_RPC) {
             rpc_on_data(ev, gen);
             return;
         }
+        if (s_route == ROUTE_HOOK) {
+            void (*dh)(const tb_link_data_t *) = atomic_load(&s_data_hook);
+            if (dh != NULL) {
+                tb_link_data_t d = {.topic = s_route_topic, .topic_len = s_route_topic_len, .data = ev->data,
+                                    .data_len = ev->data_len, .offset = ev->current_data_offset,
+                                    .total = ev->total_data_len};
+                dh(&d);
+            }
+            return;
+        }
         /* Only the first fragment carries the topic; the reply is small, a fragmented one counts as bad. */
-        if (ev->topic == NULL || ev->topic_len != (int)strlen(TB_PROV_RESPONSE_TOPIC) ||
-            memcmp(ev->topic, TB_PROV_RESPONSE_TOPIC, (size_t)ev->topic_len) != 0) {
+        if (s_route != ROUTE_PROV) {
             return;
         }
         c.type = CMD_PROV_REPLY;
@@ -420,6 +451,11 @@ static void task_start_session(task_ctx_t *tc)
         task_publish_state(tc, TB_STATE_OFF);
         return;
     }
+#ifdef TB_LINK_TEST_BLOCK_CONNECT
+    task_set_error("test build: connect blocked");
+    task_publish_state(tc, TB_STATE_OFF);
+    return;
+#endif
     bool token_mode = cfg->token[0] != '\0';
     if (!token_mode && (cfg->provision_key[0] == '\0' || cfg->provision_secret[0] == '\0')) {
         task_set_error("config: no token and no provision key/secret");
@@ -589,6 +625,17 @@ static void task_handle_cmd(task_ctx_t *tc, const tb_cmd_t *c)
             if (esp_mqtt_client_subscribe_single(tc->client, TB_RPC_SUB_TOPIC, 1) < 0) {
                 ESP_LOGW(TAG, "rpc: subscribe failed");
             }
+            static const char *const ota_subs[] = {TB_FW_ATTR_TOPIC, TB_FW_ATTR_RESP_PREFIX "+",
+                                                   TB_FW_RESP_PREFIX "+/chunk/+"};
+            for (size_t i = 0; i < sizeof(ota_subs) / sizeof(ota_subs[0]); i++) {
+                if (esp_mqtt_client_subscribe_single(tc->client, ota_subs[i], 1) < 0) {
+                    ESP_LOGW(TAG, "ota: subscribe %u failed", (unsigned)i);
+                }
+            }
+            void (*shook)(void) = atomic_load(&s_session_hook);
+            if (shook != NULL) {
+                shook();
+            }
         } else {
             tc->prov_connected = true;
             tc->deadline_ms = now_ms() + TB_PROV_REPLY_TIMEOUT_MS;
@@ -755,6 +802,37 @@ bool tb_link_defer_after_reply(void (*action)(void))
 void tb_link_set_connected_hook(void (*hook)(void))
 {
     atomic_store(&s_connected_hook, hook);
+}
+
+void tb_link_set_data_hook(void (*hook)(const tb_link_data_t *d))
+{
+    atomic_store(&s_data_hook, hook);
+}
+
+void tb_link_set_session_hook(void (*hook)(void))
+{
+    atomic_store(&s_session_hook, hook);
+}
+
+bool tb_link_is_connected(void)
+{
+    return atomic_load(&s.connected);
+}
+
+/* Same guard as rpc_publish; used by tb_ota (chunk requests, telemetry). Does not touch the sink's counters. */
+int tb_link_publish(const char *topic, const char *data, int len, int qos)
+{
+    int id = -1;
+    if (topic == NULL || len < 0 || !atomic_load(&s.connected)) {
+        return -1;
+    }
+    if (xSemaphoreTake(s.client_lock, pdMS_TO_TICKS(TB_RPC_LOCK_MS)) == pdTRUE) {
+        if (s.client_pub != NULL && atomic_load(&s.connected)) {
+            id = esp_mqtt_client_enqueue(s.client_pub, topic, data != NULL ? data : "", len, qos, 0, true);
+        }
+        xSemaphoreGive(s.client_lock);
+    }
+    return id >= 0 ? id : -1;
 }
 
 /* Last handled requests, keyed by id + payload length + payload hash (tb_link_logic). ThingsBoard re-sends a

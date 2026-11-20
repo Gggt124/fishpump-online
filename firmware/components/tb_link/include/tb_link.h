@@ -7,6 +7,7 @@
  * The token and provision secret are never logged and never returned by tb_link_get_status.
  */
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -55,6 +56,22 @@ int32_t tb_link_rpc_stack_hwm(void);
 bool tb_link_defer_after_reply(void (*action)(void));
 /* Set once at boot. Called on the tb_link task for every accepted token-session connect, before the RPC subscribe. */
 void tb_link_set_connected_hook(void (*hook)(void));
+
+typedef struct {
+    const char *topic; int topic_len;  /* the message's topic, also on later fragments */
+    const char *data;  int data_len;   /* this fragment */
+    int offset;        int total;      /* fragment offset and the message's total length */
+} tb_link_data_t;
+/* Set once at boot, before tb_link_init. Called on the esp-mqtt task for every MQTT_EVENT_DATA fragment of a token
+ * session whose topic is neither the RPC prefix nor the provision response (topics over 63 bytes are dropped).
+ * The hook must not block. */
+void tb_link_set_data_hook(void (*hook)(const tb_link_data_t *d));
+/* Same. Called on the tb_link task after the subscribes of every accepted token-session connect. */
+void tb_link_set_session_hook(void (*hook)(void));
+/* Enqueue a message on the live token session from any task. Returns the message id, or -1 (bad argument, not
+ * connected, lock timeout, no client). data need not be NUL terminated. */
+int tb_link_publish(const char *topic, const char *data, int len, int qos);
+bool tb_link_is_connected(void);
 
 #ifdef __cplusplus
 }
