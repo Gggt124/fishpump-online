@@ -128,6 +128,19 @@ bool nvs_store_load_wifi_profiles(wifi_profile_t *profiles, int *count_out,
                                   int *auto_idx_out);
 
 /**
+ * Same as nvs_store_load_wifi_profiles but always the REAL stored list, never the one-entry
+ * overlay shown while a Wi-Fi switch is staged.
+ */
+bool nvs_store_load_stored_wifi_profiles(wifi_profile_t *profiles, int *count_out,
+                                         int *auto_idx_out);
+
+/**
+ * Read the staged Wi-Fi credentials (staging type 1). pass_out is empty for an open network.
+ * Returns false when no staged SSID is stored.
+ */
+bool nvs_store_get_staged_wifi(char *ssid_out, size_t ssid_len, char *pass_out, size_t pass_len);
+
+/**
  * Add or update a profile (upsert by SSID).
  * If SSID already exists, update the password.
  * If array is full, the oldest entry (index 0) is evicted and entries are

@@ -274,7 +274,7 @@ Replies. Some `ok:false` replies carry status 200, as the old handlers did. The 
 |---|---|---|
 | `wifi.scan` | `ok`, `networks[]` (`ssid`, `rssi`, `auth`, `channel`, `connected`). Cached for 10 s. | `scan_busy` 503 (a scan is already running); `scan_failed` 200; `scan_timeout` 200 (waits 5 s); `memory` 500 |
 | `wifi.profiles.get` | `ok`, `auto_index`, `profiles[]` (`ssid`, `auto`, `connected`). No passwords. | 500 |
-| `wifi.profiles.save` | `ok`, `reboot_pending` (always false) | `invalid_ssid` 400, `invalid_password` 400, `missing_ssid` 400; `not_connected` 200 (only the connected SSID can be saved); `in_use` 409 (ThingsBoard only: also an empty password for a network that is not saved); `save_failed` 200 |
+| `wifi.profiles.save` | `ok`, `reboot_pending` (always false) | `invalid_ssid` 400, `invalid_password` 400, `missing_ssid` 400; `not_connected` 200 (only the connected SSID can be saved); `in_use` 409 (ThingsBoard only: also an empty password for the connected network when it has no saved profile); `save_failed` 200 |
 | `wifi.profiles.setauto` | `ok` | `in_use` 409 (ThingsBoard only); `setauto_failed` 200 |
 | `wifi.profiles.forget` | `ok` | `invalid_ssid` 400, `missing_ssid` 400, `in_use` 409 (ThingsBoard only); `forget_failed` 200 |
 | `wifi.connect` | `ok`, `connecting`, `ssid`; or `ok`, `already_connected`, `ssid`, `ip` | `invalid_ssid`, `invalid_password`, `invalid_ip`, `invalid_gateway`, `invalid_netmask`, `invalid_dns` (too long) 400; `ssid_too_long`, `password_too_long`, `missing_gateway` 400; `missing_ssid` 200; `connect_error` 200. ThingsBoard only: `{ok:true, staged:true}` on success; `local_only` 403 (static-IP fields, message `Static IP needs the local web app`); `staging_active` 409; `measure_running` 409; `stage_failed` 500 |
@@ -312,7 +312,7 @@ Rollback is automatic: if Wi-Fi does not come up within 30 s, or ThingsBoard is 
 
 The commit saves the new profile and makes it the auto-connect network.
 
-`wifi.profiles.save` from ThingsBoard with an empty password for an SSID that is not saved gets `in_use` 409.
+`wifi.profiles.save` from ThingsBoard with an empty password for the connected network when it has no saved profile gets `in_use` 409 (any other SSID gets `not_connected` first).
 
 ## 8. Status, sensors, uplink and hardware (5 methods)
 

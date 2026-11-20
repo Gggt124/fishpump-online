@@ -399,20 +399,39 @@ def test_wifi_remote():
     assert_test('"wifi_remote.c"' in cm, "wifi_remote.c is in main SRCS")
     i_init = app.find("tb_link_init()")
     i_hook = app.find("tb_link_set_connected_hook(wifi_remote_on_tb_connected)")
-    assert_test(i_init != -1 and i_hook > i_init, "app_main registers the hook after tb_link_init")
+    assert_test(i_init != -1 and i_hook != -1 and i_hook < i_init, "app_main registers the hook before tb_link_init")
     assert_test('esp_log_level_set("wifi_remote", ESP_LOG_INFO)' in app, "app_main raises the wifi_remote log tag")
     body = function_body(src, "wifi_remote_on_tb_connected", r"void\s+")
-    order = ["nvs_store_get_staging_type", "nvs_store_commit_staging", "nvs_store_set_wifi_auto_connect",
-             "g_cancel_rollback_timer", "uplink_note_settings_changed"]
+    order = ["nvs_store_get_staging_type", "nvs_store_save_wifi_profile", "nvs_store_set_wifi_auto_connect",
+             "nvs_store_commit_staging", "g_cancel_rollback_timer", "uplink_note_settings_changed"]
     pos = [body.find(n) for n in order]
     assert_test(body != "" and all(x != -1 for x in pos) and pos == sorted(pos),
-                "wifi_remote_on_tb_connected calls the five steps in order", f"positions={pos}")
+                "wifi_remote_on_tb_connected saves the profile and sets auto-connect before clearing the staging, then cancels the timer",
+                f"positions={pos}")
     i_cur = body.find("esp_wifi_sta_get_ap_info")
     i_cmp = body.find("strcmp", i_cur) if i_cur != -1 else -1
-    i_com = body.find("nvs_store_commit_staging")
+    i_com = body.find("nvs_store_save_wifi_profile")
     assert_test(i_cur != -1 and i_cmp != -1 and i_com != -1 and i_cur < i_cmp < i_com,
-                "wifi_remote_on_tb_connected compares the current STA SSID with the staged one before nvs_store_commit_staging",
-                f"cur={i_cur} cmp={i_cmp} commit={i_com}")
+                "wifi_remote_on_tb_connected compares the current STA SSID with the staged one before saving",
+                f"cur={i_cur} cmp={i_cmp} save={i_com}")
+    assert_test("esp_wifi_get_config" in src and "active_password(" in body and body.find("active_password(") < i_com,
+                "wifi_remote_on_tb_connected also compares the active station password before saving")
+    assert_test("nvs_store_get_staged_wifi" in body and "nvs_open" not in src,
+                "wifi_remote.c reads the staged credentials through nvs_store, not raw NVS keys")
+    assert_test("memset" in body, "wifi_remote_on_tb_connected clears its password buffers")
+    ns = read(FIRMWARE_DIR / "components" / "nvs_store" / "nvs_store.c")
+    assert_test("prof_load_stored" in ns, "nvs_store has a private overlay-free profile loader")
+    for fn in ["nvs_store_save_wifi_profile", "nvs_store_forget_wifi_profile", "nvs_store_set_wifi_auto_connect",
+               "nvs_store_migrate_legacy_wifi"]:
+        fb = function_body(ns, fn, r"bool\s+")
+        assert_test(fb != "" and "prof_load_stored" in fb and "nvs_store_load_wifi_profiles(" not in fb,
+                    f"{fn} reads the real list, not the staged overlay")
+    cb = function_body(ns, "nvs_store_commit_staging", r"uint8_t\s+")
+    assert_test("nvs_store_save_wifi_profile(" in cb and "return 0" in cb[cb.find("nvs_store_save_wifi_profile("):],
+                "nvs_store_commit_staging returns 0 and keeps the staging when the profile write fails")
+    da = read(MAIN_DIR / "dapi_wifi.c")
+    assert_test("stg_type = 0xFF" in da, "dapi_wifi_connect treats an unreadable staging type as active (fail closed)")
+    assert_test("could not clear the staging" in da, "dapi_wifi_connect warns when the rollback of the staging fails")
     rb = function_body(src, "wifi_remote_restart_for_stage", r"void\s+")
     assert_test('"WIFI_REMOTE_STAGE"' in rb and "esp_restart" in rb and "session_invalidate_all" in rb,
                 "wifi_remote_restart_for_stage sets the detail, invalidates sessions and restarts")

@@ -26,7 +26,7 @@ typedef enum { DAPI_SRC_HTTP = 0, DAPI_SRC_TB } dapi_source_t;
 #define DAPI_F_READ       0x01
 #define DAPI_F_WRITE      0x02
 #define DAPI_F_LOCAL_ONLY 0x04 /* refused when src == DAPI_SRC_TB */
-#define DAPI_F_STAGED     0x08 /* reserved for M4 */
+#define DAPI_F_STAGED     0x08 /* labels methods that stage a change; no runtime effect */
 #define DAPI_F_NO_LOCK   0x10 /* runs without the call lock (a method that waits on hardware) */
 #define DAPI_MAX_METHODS  64
 #define DAPI_LOCK_TIMEOUT_MS 5000

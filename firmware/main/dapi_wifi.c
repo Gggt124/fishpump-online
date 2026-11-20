@@ -446,7 +446,7 @@ static dapi_status_t dapi_wifi_profiles_forget(const cJSON *params, dapi_source_
   return DAPI_OK;
 }
 
-/* {"ssid":"..","password":"..", "ip":"..","gateway":"..","netmask":"..","dns":".."} - local only */
+/* {"ssid":"..","password":"..", "ip":"..","gateway":"..","netmask":"..","dns":".."} - from ThingsBoard it stages the network (wifi_remote.c); static IP is local only */
 static dapi_status_t dapi_wifi_connect(const cJSON *params, dapi_source_t src, cJSON **out) {
   char ssid[64] = {0};
   char password[65] = {0};
@@ -569,7 +569,9 @@ static dapi_status_t dapi_wifi_connect(const cJSON *params, dapi_source_t src, c
     /* From ThingsBoard the network is staged and the board restarts into it after the reply is acked;
      * the commit happens when the ThingsBoard link connects over the new network (wifi_remote.c). */
     uint8_t stg_type = 0;
-    nvs_store_get_staging_type(&stg_type);
+    if (!nvs_store_get_staging_type(&stg_type)) {
+      stg_type = 0xFF; /* unreadable: fail closed, treat staging as active */
+    }
     dry_run_measure_status_t ms = {0};
     bool measuring = dry_run_guard_get_measure(&ms) && ms.state == DRY_RUN_MEASURE_RUNNING;
     const char *refusal = dapi_wifi_connect_refusal(src, has_static_ip, stg_type != 0, measuring);
@@ -587,7 +589,9 @@ static dapi_status_t dapi_wifi_connect(const cJSON *params, dapi_source_t src, c
       return DAPI_INTERNAL;
     }
     if (!tb_link_defer_after_reply(wifi_remote_restart_for_stage)) {
-      nvs_store_rollback_staging();
+      if (!nvs_store_rollback_staging()) {
+        ESP_LOGW(TAG, "could not clear the staging after the deferred restart failed");
+      }
       *out = raw("{\"ok\":false,\"error\":\"stage_failed\"}");
       return DAPI_INTERNAL;
     }

@@ -456,38 +456,14 @@ static void prof_pass_key(char *buf, int idx) {
   buf[7] = '\0';
 }
 
-bool nvs_store_load_wifi_profiles(wifi_profile_t *profiles, int *count_out,
-                                  int *auto_idx_out) {
+/* The real stored list, never the staged overlay: every writer must start from this. */
+static bool prof_load_stored(wifi_profile_t *profiles, int *count_out,
+                             int *auto_idx_out) {
   if (!profiles || !count_out || !auto_idx_out)
     return false;
   memset(profiles, 0, sizeof(wifi_profile_t) * WIFI_PROFILE_MAX);
   *count_out = 0;
   *auto_idx_out = -1;
-
-  uint8_t stg_type = 0;
-  if (nvs_store_get_staging_type(&stg_type) && stg_type == 1) {
-    nvs_handle_t handle;
-    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) == ESP_OK) {
-      char ssid[33] = {0};
-      char pass[65] = {0};
-      size_t ssid_len = sizeof(ssid);
-      size_t pass_len = sizeof(pass);
-      esp_err_t err_ssid =
-          nvs_get_str(handle, NVS_KEY_STG_SSID, ssid, &ssid_len);
-      esp_err_t err_pass =
-          nvs_get_str(handle, NVS_KEY_STG_PASS, pass, &pass_len);
-      nvs_close(handle);
-      if (err_ssid == ESP_OK) {
-        strlcpy(profiles[0].ssid, ssid, sizeof(profiles[0].ssid));
-        if (err_pass == ESP_OK) {
-          strlcpy(profiles[0].pass, pass, sizeof(profiles[0].pass));
-        }
-        *count_out = 1;
-        *auto_idx_out = 0;
-        return true;
-      }
-    }
-  }
 
   nvs_handle_t h;
   esp_err_t ret = nvs_open(NVS_PROF_NAMESPACE, NVS_READONLY, &h);
@@ -523,6 +499,47 @@ bool nvs_store_load_wifi_profiles(wifi_profile_t *profiles, int *count_out,
   *count_out = (int)count;
   nvs_close(h);
   return true;
+}
+
+bool nvs_store_load_wifi_profiles(wifi_profile_t *profiles, int *count_out,
+                                  int *auto_idx_out) {
+  if (!profiles || !count_out || !auto_idx_out)
+    return false;
+  memset(profiles, 0, sizeof(wifi_profile_t) * WIFI_PROFILE_MAX);
+  *count_out = 0;
+  *auto_idx_out = -1;
+
+  uint8_t stg_type = 0;
+  if (nvs_store_get_staging_type(&stg_type) && stg_type == 1) {
+    nvs_handle_t handle;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) == ESP_OK) {
+      char ssid[33] = {0};
+      char pass[65] = {0};
+      size_t ssid_len = sizeof(ssid);
+      size_t pass_len = sizeof(pass);
+      esp_err_t err_ssid =
+          nvs_get_str(handle, NVS_KEY_STG_SSID, ssid, &ssid_len);
+      esp_err_t err_pass =
+          nvs_get_str(handle, NVS_KEY_STG_PASS, pass, &pass_len);
+      nvs_close(handle);
+      if (err_ssid == ESP_OK) {
+        strlcpy(profiles[0].ssid, ssid, sizeof(profiles[0].ssid));
+        if (err_pass == ESP_OK) {
+          strlcpy(profiles[0].pass, pass, sizeof(profiles[0].pass));
+        }
+        *count_out = 1;
+        *auto_idx_out = 0;
+        return true;
+      }
+    }
+  }
+
+  return prof_load_stored(profiles, count_out, auto_idx_out);
+}
+
+bool nvs_store_load_stored_wifi_profiles(wifi_profile_t *profiles, int *count_out,
+                                         int *auto_idx_out) {
+  return prof_load_stored(profiles, count_out, auto_idx_out);
 }
 
 /* Write the in-memory profile array and auto_idx back to NVS atomically. */
@@ -564,7 +581,7 @@ bool nvs_store_save_wifi_profile(const char *ssid, const char *password) {
 
   wifi_profile_t profiles[WIFI_PROFILE_MAX] = {0};
   int count = 0, auto_idx = -1;
-  nvs_store_load_wifi_profiles(profiles, &count, &auto_idx);
+  prof_load_stored(profiles, &count, &auto_idx);
 
   /* Upsert: if SSID already in list, update password in-place */
   for (int i = 0; i < count; i++) {
@@ -616,7 +633,7 @@ bool nvs_store_forget_wifi_profile(const char *ssid) {
 
   wifi_profile_t profiles[WIFI_PROFILE_MAX] = {0};
   int count = 0, auto_idx = -1;
-  if (!nvs_store_load_wifi_profiles(profiles, &count, &auto_idx))
+  if (!prof_load_stored(profiles, &count, &auto_idx))
     return false;
 
   int found = -1;
@@ -666,7 +683,7 @@ bool nvs_store_forget_wifi_profile(const char *ssid) {
 bool nvs_store_set_wifi_auto_connect(int profile_index) {
   wifi_profile_t profiles[WIFI_PROFILE_MAX] = {0};
   int count = 0, auto_idx = -1;
-  if (!nvs_store_load_wifi_profiles(profiles, &count, &auto_idx))
+  if (!prof_load_stored(profiles, &count, &auto_idx))
     return false;
 
   if (profile_index != -1 && (profile_index < 0 || profile_index >= count))
@@ -688,7 +705,7 @@ bool nvs_store_migrate_legacy_wifi(void) {
   /* Check if profiles already exist — if so, nothing to migrate */
   wifi_profile_t profiles[WIFI_PROFILE_MAX] = {0};
   int count = 0, auto_idx = -1;
-  nvs_store_load_wifi_profiles(profiles, &count, &auto_idx);
+  prof_load_stored(profiles, &count, &auto_idx);
   if (count > 0)
     return true; /* already migrated */
 
@@ -1786,6 +1803,25 @@ bool nvs_store_rollback_staging(void) {
   return ok;
 }
 
+bool nvs_store_get_staged_wifi(char *ssid_out, size_t ssid_len, char *pass_out, size_t pass_len) {
+  if (!ssid_out || ssid_len == 0 || !pass_out || pass_len == 0)
+    return false;
+  ssid_out[0] = '\0';
+  pass_out[0] = '\0';
+  nvs_handle_t handle;
+  if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK)
+    return false;
+  size_t sl = ssid_len;
+  bool ok = (nvs_get_str(handle, NVS_KEY_STG_SSID, ssid_out, &sl) == ESP_OK);
+  if (ok) {
+    size_t pl = pass_len;
+    if (nvs_get_str(handle, NVS_KEY_STG_PASS, pass_out, &pl) != ESP_OK)
+      pass_out[0] = '\0'; /* open network */
+  }
+  nvs_close(handle);
+  return ok;
+}
+
 uint8_t nvs_store_commit_staging(void) {
   uint8_t type = 0;
   if (!nvs_store_get_staging_type(&type) || type == 0) {
@@ -1806,9 +1842,13 @@ uint8_t nvs_store_commit_staging(void) {
     esp_err_t err_pass = nvs_get_str(handle, NVS_KEY_STG_PASS, pass, &pass_len);
     nvs_close(handle);
 
-    if (err_ssid == ESP_OK) {
-      nvs_store_save_wifi_profile(ssid, (err_pass == ESP_OK) ? pass : "");
+    if (err_ssid == ESP_OK &&
+        !nvs_store_save_wifi_profile(ssid, (err_pass == ESP_OK) ? pass : "")) {
+      ESP_LOGE(TAG, "Failed to save the staged Wi-Fi profile - keeping the staging for rollback");
+      memset(pass, 0, sizeof(pass));
+      return 0;
     }
+    memset(pass, 0, sizeof(pass));
   } else if (type == 2) {
     char user[33] = {0};
     char pass[65] = {0};

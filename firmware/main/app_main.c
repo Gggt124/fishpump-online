@@ -1192,11 +1192,11 @@ void app_main(void) {
   }
   /* ThingsBoard link: after uplink_init (sink) and Wi-Fi; a failure leaves local functions untouched. */
   {
+    /* Hook first (an atomic pointer): no connect can happen before it is registered. */
+    tb_link_set_connected_hook(wifi_remote_on_tb_connected);
     esp_err_t tb_err = tb_link_init();
     if (tb_err != ESP_OK) {
       ESP_LOGE(TAG, "ThingsBoard link init failed: %s — continuing without it", esp_err_to_name(tb_err));
-    } else {
-      tb_link_set_connected_hook(wifi_remote_on_tb_connected);
     }
   }
   ESP_LOGI(TAG, "AP SSID: %s, IP: %s", APP_TEMPLATE_AP_SSID,
