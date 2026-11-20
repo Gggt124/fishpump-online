@@ -194,6 +194,14 @@
 - Task 6 (dashboard): `check_pages` อ่าน `state_cases.json`/`signal_registry.c` นอก try (ไฟล์หายได้ traceback แทนข้อความ) · ตรวจ dashboard ที่สร้างแค่ uid ใน layout · template ของ `pump.config.set` ยังใช้ชื่อเก่า `timer1/2_start_phase` ขณะที่ `load_keys` ใช้ `water_set1/2_start_phase` (มีมาก่อน) — เหตุผล: เป็นเครื่องมือทดสอบ
 - final review: ตอนต่อใหม่ ข้อความรวม (identity + rules + attribute 6 ตัว + สถานะ) อาจเกิน outbox 16 KB ประมาณ 0.3 KB จะเห็น "send failed" 1–2 บรรทัดและ `tb_failed` เพิ่มทุกครั้งที่ต่อใหม่ แล้วส่งสำเร็จใน 1–2 วินาที ทางแก้ภายหลัง: ข้าม `do_state` ใน tick ที่เพิ่งส่ง identity/rules
 
+### จาก milestone 4 ThingsBoard (เปลี่ยน Wi-Fi จากระยะไกล, ledger ตามลำดับ task) — ข้อที่แก้แล้วใน final review ไม่ได้ใส่ไว้
+- Task 1–2: เทสต์ `strcmp` กับค่าที่อาจเป็น NULL จะ crash แทนการรายงาน FAIL · ตัวแปร `s_connected_hook` อยู่ใต้ comment ของ ack ring · ack ring ใช้ร่วมกับ ack ของ uplink (ถ้าเกิน 8 ตัวใน 50 ms จะรอเต็ม 2 วินาทีแทน) · ตัวตรวจ verify เป็นการเทียบข้อความ ไม่จำกัดในตัวฟังก์ชัน — เหตุผล: ทางโค้ดถูกต้อง เป็นช่องว่างของเทสต์
+- Task 3–4: ตัวตรวจว่าไม่ log รหัสผ่านดูแค่บรรทัดเดียว — เหตุผล: โค้ดปัจจุบันไม่ log รหัสผ่าน
+- Task 5: selftest ปักหมุด case static IP แค่ว่ามี ip และ gateway · บรรทัด README ปนภาษาอังกฤษ · commit 4924c28 selftest แดง (squash ตอน merge) — เหตุผล: เป็นเครื่องมือทดสอบ
+- final review: ถ้าโปรไฟล์ครบ 5 แล้ว การบันทึกเครือข่ายใหม่จะดันโปรไฟล์ index 0 ออก ถ้า index 0 เป็น auto เดิมและการตั้ง auto ใหม่ล้ม (ต้อง NVS หรือ heap ล้ม) การย้อนกลับจะบูตเป็น AP อย่างเดียว ทางแก้: จำ SSID ของ auto เดิมแล้วหา index ใหม่หลังบันทึก หรือห้ามดันโปรไฟล์ auto ออกช่วง staging — เหตุผล: ต้องมี NVS/heap ล้มก่อน
+- final review: ตัวตรวจ verify ว่า `nvs_store_commit_staging` คืน 0 เมื่อบันทึกล้ม ผ่านได้แม้โค้ดเก่า (เจอ `return 0` ของ type 2) ควรจำกัดในส่วน type 1 · array โปรไฟล์บน heap ถูก free โดยไม่ memset (มีรหัสผ่านอยู่ข้างใน) · selftest QEMU ไม่ link `nvs_store` จึงยืนยัน F1 ได้แค่บนบอร์ด (bench J4)
+- final review: ช่วง boot ที่ staged `wifi.profiles.setauto` คำนวณ index จาก overlay แต่ตั้งกับรายการจริง · `/api/confirm` ของเว็บ (type 1) บันทึกโปรไฟล์แต่ไม่ตั้ง auto และไม่ดูค่าที่ commit คืน · `commit_staging` ไม่ดูว่าล้าง `stg_type` สำเร็จไหม · GOT_IP ตอน boot ที่ staged เขียนทับ credential เดิมด้วยเครือข่ายที่ stage · RPC เดิมถูกส่งซ้ำหลังเกิน 30 วินาทีหลังย้อนกลับจะ stage อีก (widget ใช้ RPC 10 วินาทีแบบไม่ persistent) — เหตุผล: มีมาก่อนหรือไม่ทำให้บอร์ดหลุด
+
 ### จากระบบป้องกันปั๊มเดินแห้ง (`2026-11-16-pump-dry-run-protection-results.md` ส่วน 4 และ 7) ที่ Task 6–7 ไม่ได้แก้
 
 (ข้อที่แก้แล้วในรอบนี้: การซ่อม raise/clear ของแจ้งเตือน, การอ่าน flow switch ไม่ได้ตอนวัด, ช่วงตัวเลขในการ์ด, ข้อความอธิบายเมื่อช่วงเปิดสั้น, poll ตอนซ่อนแท็บ, ฟอร์มไม่เติมค่าหลัง 503, poll วัดล้มเหลว, ข้อ "4." ซ้ำ, ขั้น bench stop ระหว่าง WAIT)
