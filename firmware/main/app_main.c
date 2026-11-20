@@ -32,6 +32,7 @@
 #include "device_api.h"
 #include "tb_link.h"
 #include "tb_state.h"
+#include "wifi_remote.h"
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "led_strip.h"
@@ -837,6 +838,7 @@ void app_main(void) {
   esp_log_level_set("time_sync", ESP_LOG_INFO);
   esp_log_level_set("tb_link", ESP_LOG_INFO);
   esp_log_level_set("tb_state", ESP_LOG_INFO);
+  esp_log_level_set("wifi_remote", ESP_LOG_INFO);
   esp_log_level_set("device_api", ESP_LOG_INFO); /* one line per WRITE call, never params */
   esp_log_level_set("dapi_wifi", ESP_LOG_INFO);  /* Wi-Fi profile save / forget / setauto lines */
   esp_log_level_set("dns_server",
@@ -1193,6 +1195,8 @@ void app_main(void) {
     esp_err_t tb_err = tb_link_init();
     if (tb_err != ESP_OK) {
       ESP_LOGE(TAG, "ThingsBoard link init failed: %s — continuing without it", esp_err_to_name(tb_err));
+    } else {
+      tb_link_set_connected_hook(wifi_remote_on_tb_connected);
     }
   }
   ESP_LOGI(TAG, "AP SSID: %s, IP: %s", APP_TEMPLATE_AP_SSID,

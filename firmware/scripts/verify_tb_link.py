@@ -391,6 +391,29 @@ def test_remote_wifi_link():
     assert_test("tb_after_reply_ready" in src, "the tb_rpc code calls tb_after_reply_ready")
 
 
+def test_wifi_remote():
+    print("\n--- Milestone 4 Task 3: wifi_remote commits the staged network on the ThingsBoard connect ---")
+    cm = read(MAIN_DIR / "CMakeLists.txt")
+    app = read(MAIN_DIR / "app_main.c")
+    src = read(MAIN_DIR / "wifi_remote.c")
+    assert_test('"wifi_remote.c"' in cm, "wifi_remote.c is in main SRCS")
+    i_init = app.find("tb_link_init()")
+    i_hook = app.find("tb_link_set_connected_hook(wifi_remote_on_tb_connected)")
+    assert_test(i_init != -1 and i_hook > i_init, "app_main registers the hook after tb_link_init")
+    assert_test('esp_log_level_set("wifi_remote", ESP_LOG_INFO)' in app, "app_main raises the wifi_remote log tag")
+    body = function_body(src, "wifi_remote_on_tb_connected", r"void\s+")
+    order = ["nvs_store_get_staging_type", "nvs_store_commit_staging", "nvs_store_set_wifi_auto_connect",
+             "g_cancel_rollback_timer", "uplink_note_settings_changed"]
+    pos = [body.find(n) for n in order]
+    assert_test(body != "" and all(x != -1 for x in pos) and pos == sorted(pos),
+                "wifi_remote_on_tb_connected calls the five steps in order", f"positions={pos}")
+    rb = function_body(src, "wifi_remote_restart_for_stage", r"void\s+")
+    assert_test('"WIFI_REMOTE_STAGE"' in rb and "esp_restart" in rb and "session_invalidate_all" in rb,
+                "wifi_remote_restart_for_stage sets the detail, invalidates sessions and restarts")
+    bad = [l for l in src.splitlines() if "ESP_LOG" in l and "pass" in l.lower()]
+    assert_test(src != "" and not bad, "wifi_remote.c has no ESP_LOG line mentioning pass", str(bad))
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
@@ -401,6 +424,7 @@ def main():
     test_tb_state()
     test_state_cases_drift()
     test_remote_wifi_link()
+    test_wifi_remote()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 
