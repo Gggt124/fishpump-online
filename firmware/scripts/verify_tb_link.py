@@ -548,6 +548,57 @@ def test_ota_lock():
                 "nvs_store_clear_tb_ota_pending(" in hdr, "nvs_store.h declares the pending-OTA functions")
 
 
+def test_tb_ota():
+    print("\n--- Milestone 5 Task 4: tb_ota download, verify, write, reboot ---")
+    cmake = read(MAIN_DIR / "CMakeLists.txt")
+    c = read(MAIN_DIR / "tb_ota.c")
+    h = read(MAIN_DIR / "tb_ota.h")
+    assert_test('"tb_ota.c"' in cmake, "tb_ota.c is in SRCS")
+    assert_test("tb_ota_on_data(const tb_link_data_t" in h and "tb_ota_busy(void)" in h, "tb_ota.h declares tb_ota_on_data and tb_ota_busy")
+    req_pubs = [c[m.start():m.start() + 90] for m in re.finditer(r"tb_link_publish\(\s*req_topic", c)]
+    assert_test(len(req_pubs) >= 1 and all("req_topic, TB_FW_CHUNK_SIZE_STR" in p for p in req_pubs),
+                "every chunk request publish carries TB_FW_CHUNK_SIZE_STR", f"{len(req_pubs)} request publishes")
+    assert_test("tb_fw_request_topic(" in c, "the request topic comes from tb_fw_request_topic")
+    for fn in ("psa_hash_setup", "psa_hash_update", "psa_hash_finish", "psa_hash_abort", "tb_fw_digest_matches"):
+        assert_test(fn + "(" in c, f"tb_ota.c uses {fn}")
+    assert_test("PSA_ALG_SHA_256" in c, "the hash is SHA-256")
+    assert_test("esp_ota_abort(" in c and "ota_lock_release(" in c, "tb_ota.c aborts the OTA and releases the lock on failure")
+    hook = function_body(c, "on_attributes")
+    top = function_body(c, "tb_ota_on_data", r"void\s+")
+    chunk = function_body(c, "on_chunk")
+    fetch = function_body(c, "fetch_chunk")
+    i_claim = hook.find("ota_lock_claim()")
+    i_create = hook.find("xTaskCreate(")
+    assert_test(i_claim != -1 and i_create != -1 and i_claim < i_create, "the attribute handler claims the lock before xTaskCreate")
+    assert_test(re.search(r"heap_caps_malloc\(\s*TB_FW_CHUNK_SIZE[^;]*MALLOC_CAP_SPIRAM", c) is not None,
+                "the chunk buffer is heap_caps_malloc(TB_FW_CHUNK_SIZE, MALLOC_CAP_SPIRAM ...)")
+    assert_test("xTaskCreateWithCaps" not in c, "no xTaskCreateWithCaps (the task stack stays in internal RAM)")
+    assert_test(re.search(r"xTaskCreate\([^;]*6144", hook) is not None, "the task is xTaskCreate with a 6144-byte stack")
+    task = function_body(c, "tb_ota_task", r"static\s+void\s+")
+    i_dry = task.find("dry_run_guard_get_measure(")
+    i_pend = task.find("nvs_store_set_tb_ota_pending(")
+    i_boot = task.find("esp_ota_set_boot_partition(")
+    i_rest = task.find("esp_restart(")
+    assert_test(-1 not in (i_dry, i_pend, i_boot, i_rest) and i_dry < i_pend < i_boot < i_rest,
+                "task order: dry-run check, set pending, set boot partition, esp_restart")
+    tail = task[i_rest:] if i_rest != -1 else ""
+    after_boot = task[i_boot:i_rest] if i_boot != -1 and i_rest != -1 else ""
+    assert_test("nvs_store_clear_tb_ota_pending(" in after_boot, "set_boot_failed clears the pending version")
+    assert_test("ota_lock_release" not in task[task.find("UPDATING"):i_rest] if "UPDATING" in task and i_rest != -1 else False,
+                "the lock stays held on the success path until esp_restart")
+    assert_test('"TB_OTA_REBOOT"' in c, 'the restart detail "TB_OTA_REBOOT" is set')
+    assert_test("session_invalidate_all(" in task and "uplink_note_settings_changed(" in task,
+                "the success path invalidates sessions and notes the settings change")
+    assert_test("while (attempts < TB_FW_CHUNK_TRIES)" in fetch, "the chunk loop references TB_FW_CHUNK_TRIES")
+    assert_test("tb_link_is_connected(" in fetch and "offline_ms" in fetch, "the chunk loop waits while disconnected")
+    assert_test("esp_https_ota" not in c, "no esp_https_ota")
+    assert_test("atomic_" in c and "portMUX_TYPE" in c, "shared state uses atomics and a spinlock")
+    assert_test("xTaskNotify(" in chunk, "the data hook wakes the task with xTaskNotify")
+    assert_test("TB_FW_ERROR_TOPIC" in top, "the data hook handles TB_FW_ERROR_TOPIC")
+    assert_test("tb_fw_chunk_len(" in chunk, "the data hook checks the chunk total against tb_fw_chunk_len")
+    assert_test("vTaskDelete(NULL)" in task, "the task deletes itself")
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
@@ -562,6 +613,7 @@ def main():
     test_wifi_connect_remote()
     test_ota_link()
     test_ota_lock()
+    test_tb_ota()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

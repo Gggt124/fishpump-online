@@ -43,6 +43,7 @@ idf_component_register(
         "dapi_hardware.c"
         "tb_state.c"
         "ota_lock.c"
+        "tb_ota.c"
         "wifi_remote.c"
     INCLUDE_DIRS
         "."
