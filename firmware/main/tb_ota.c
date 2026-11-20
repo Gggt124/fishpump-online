@@ -1,9 +1,11 @@
 #include "tb_ota.h"
 
+#include <inttypes.h>
 #include <limits.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "dry_run_guard.h"
@@ -12,6 +14,7 @@
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_store.h"
@@ -50,7 +53,9 @@ static void remember_failed(const char *version) {
 /* Publishes fw_state (and fw_error); with_current adds the running title and version. A report while
  * disconnected is lost; the next connect re-reads the state. */
 static void report_state(const char *state, const char *error, bool with_current) {
-  if (error) {
+  if (state == NULL) {
+    ESP_LOGI(TAG, "reporting the current firmware title and version");
+  } else if (error) {
     ESP_LOGW(TAG, "state %s, error %s", state, error);
   } else {
     ESP_LOGI(TAG, "state %s", state);
@@ -378,5 +383,83 @@ void tb_ota_on_data(const tb_link_data_t *d) {
   uint32_t req = 0, idx = 0;
   if (tb_fw_parse_chunk_topic(d->topic, tl, &req, &idx)) {
     on_chunk(d, req, idx);
+  }
+}
+
+/* ---- boot gating: mark valid only after the image has reached ThingsBoard ---- */
+
+static atomic_int s_boot_state = TB_FW_BOOT_NONE; /* tb_fw_boot_t */
+static esp_timer_handle_t s_verify_timer = NULL;
+static uint32_t s_attr_req_n = 0; /* tb_link task only */
+
+static void verify_timeout_cb(void *arg) {
+  (void)arg;
+  ESP_LOGE(TAG, "OTA from ThingsBoard: no ThingsBoard connect within 5 min, rolling back");
+  esp_ota_mark_app_invalid_rollback_and_reboot();
+}
+
+bool tb_ota_boot_holds_valid(void) { return atomic_load(&s_boot_state) == TB_FW_BOOT_VERIFY; }
+
+void tb_ota_boot_init(void) {
+  char pending[TB_FW_VERSION_MAX];
+  bool has_pending = nvs_store_get_tb_ota_pending(pending, sizeof pending);
+  esp_ota_img_states_t st;
+  bool pending_verify =
+      esp_ota_get_state_partition(esp_ota_get_running_partition(), &st) == ESP_OK && st == ESP_OTA_IMG_PENDING_VERIFY;
+  const char *running = esp_app_get_description()->version;
+  tb_fw_boot_t b = tb_fw_boot_state(has_pending ? pending : NULL, running, pending_verify);
+  atomic_store(&s_boot_state, (int)b);
+  ESP_LOGI(TAG, "boot state %d (pending %s, running %s, pending_verify %d)", (int)b, has_pending ? pending : "none",
+           running, (int)pending_verify);
+  if (b == TB_FW_BOOT_VERIFY) {
+    const esp_timer_create_args_t args = {.callback = verify_timeout_cb, .name = "tb_ota_verify"};
+    esp_err_t e = esp_timer_create(&args, &s_verify_timer);
+    if (e == ESP_OK) {
+      e = esp_timer_start_once(s_verify_timer, (uint64_t)TB_FW_VERIFY_TIMEOUT_MS * 1000u);
+    }
+    if (e != ESP_OK) {
+      ESP_LOGE(TAG, "rollback timer failed (%s), rolling back now", esp_err_to_name(e));
+      esp_ota_mark_app_invalid_rollback_and_reboot();
+    }
+  }
+}
+
+void tb_ota_on_session(void) {
+  tb_fw_boot_t b = (tb_fw_boot_t)atomic_load(&s_boot_state);
+  if (b != TB_FW_BOOT_NONE) {
+    bool done = true;
+    if (b == TB_FW_BOOT_VERIFY) {
+      if (s_verify_timer) {
+        esp_timer_stop(s_verify_timer);
+      }
+      esp_err_t e = esp_ota_mark_app_valid_cancel_rollback();
+      if (e != ESP_OK) {
+        ESP_LOGW(TAG, "mark valid failed (%s), the rollback stays armed", esp_err_to_name(e));
+        if (s_verify_timer) {
+          esp_timer_start_once(s_verify_timer, (uint64_t)TB_FW_VERIFY_TIMEOUT_MS * 1000u);
+        }
+        done = false;
+      } else {
+        ESP_LOGI(TAG, "OTA from ThingsBoard: connected, image marked valid");
+        report_state("UPDATED", NULL, true);
+      }
+    } else if (b == TB_FW_BOOT_UPDATED) {
+      report_state("UPDATED", NULL, true);
+    } else {
+      report_state("FAILED", "rolled_back", false);
+    }
+    if (done) {
+      if (!nvs_store_clear_tb_ota_pending()) {
+        ESP_LOGW(TAG, "could not clear the pending version; the next boot resolves it again");
+      }
+      atomic_store(&s_boot_state, TB_FW_BOOT_NONE);
+      uplink_note_settings_changed();
+    }
+  }
+  report_state(NULL, NULL, true);
+  char topic[sizeof TB_FW_ATTR_REQ_PREFIX + 12];
+  int n = snprintf(topic, sizeof topic, TB_FW_ATTR_REQ_PREFIX "%" PRIu32, ++s_attr_req_n);
+  if (n > 0 && (size_t)n < sizeof topic) {
+    tb_link_publish(topic, TB_FW_ATTR_REQUEST_BODY, (int)strlen(TB_FW_ATTR_REQUEST_BODY), 1);
   }
 }

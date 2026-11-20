@@ -624,6 +624,51 @@ def test_tb_ota():
                 "psa_hash_abort runs unconditionally on the fail path")
 
 
+def test_ota_boot():
+    print("\n--- Milestone 5 Task 5: boot gating, 5 min rollback, boot report ---")
+    a = read(MAIN_DIR / "app_main.c")
+    c = read(MAIN_DIR / "tb_ota.c")
+    h = read(MAIN_DIR / "tb_ota.h")
+    assert_test("tb_ota_boot_init(void)" in h and "tb_ota_boot_holds_valid(void)" in h and "tb_ota_on_session(void)" in h,
+                "tb_ota.h declares boot_init, boot_holds_valid and on_session")
+    marks = [m.start() for m in re.finditer(r"esp_ota_mark_app_valid_cancel_rollback\(\)", a)]
+    guarded = 0
+    for i in marks:
+        g = a.rfind("if (!tb_ota_boot_holds_valid())", 0, i)
+        # the guard's block must still be open at the call: no closing brace at guard depth before the call
+        if g != -1:
+            depth = 0
+            for ch in a[a.find("{", g):i]:
+                depth += (ch == "{") - (ch == "}")
+            guarded += depth > 0
+    assert_test(len(marks) == 2 and guarded == 2, "every mark-valid call in app_main.c is inside a tb_ota_boot_holds_valid guard",
+                f"{guarded}/{len(marks)} guarded")
+    assert_test("OTA from ThingsBoard: waiting for the ThingsBoard connect to mark valid" in a, "app_main logs the wait for the ThingsBoard connect")
+    i_init, i_web = a.find("tb_ota_boot_init()"), a.find("web_server_start()")
+    assert_test(i_init != -1 and i_init < i_web, "tb_ota_boot_init runs before the first web_server_start")
+    i_tl = a.find("tb_link_init()")
+    i_d, i_s = a.find("tb_link_set_data_hook(tb_ota_on_data)"), a.find("tb_link_set_session_hook(tb_ota_on_session)")
+    assert_test(i_d != -1 and i_s != -1 and i_d < i_tl and i_s < i_tl, "both OTA hooks are registered before tb_link_init")
+    assert_test('esp_log_level_set("tb_ota", ESP_LOG_INFO)' in a, "the tb_ota tag is raised to INFO")
+    assert_test("#ifdef TB_LINK_TEST_BLOCK_CONNECT" in a and "TEST BUILD: ThingsBoard connect is blocked" in a,
+                "the block-connect test build warns at boot")
+    assert_test("esp_ota_mark_app_invalid_rollback_and_reboot" in c and "TB_FW_VERIFY_TIMEOUT_MS" in c,
+                "tb_ota.c arms the rollback timer with TB_FW_VERIFY_TIMEOUT_MS")
+    assert_test("no ThingsBoard connect within 5 min, rolling back" in c, "the timer logs before rolling back")
+    sess = function_body(c, "tb_ota_on_session", r"void\s+")
+    i_m = sess.find("esp_ota_mark_app_valid_cancel_rollback")
+    i_r = sess.find('report_state("UPDATED"')
+    i_c = sess.find("nvs_store_clear_tb_ota_pending")
+    assert_test(i_m != -1 and i_m < i_r < i_c, "on_session: mark valid, then report UPDATED, then clear the pending version")
+    assert_test("rolled_back" in sess and "esp_timer_stop" in sess and "TB_FW_ATTR_REQ_PREFIX" in sess and
+                "TB_FW_ATTR_REQUEST_BODY" in sess and "uplink_note_settings_changed()" in sess,
+                "on_session reports rolled_back, stops the timer, requests the attributes and notes the change")
+    init = function_body(c, "tb_ota_boot_init", r"void\s+")
+    assert_test(init != "" and "nvs_store_clear_tb_ota_pending" not in init and "tb_fw_boot_state(" in init and
+                "ESP_OTA_IMG_PENDING_VERIFY" in init,
+                "tb_ota_boot_init resolves the state and never clears the pending version")
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
@@ -639,6 +684,7 @@ def main():
     test_ota_link()
     test_ota_lock()
     test_tb_ota()
+    test_ota_boot()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

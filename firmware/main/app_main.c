@@ -31,6 +31,7 @@
 #include "time_sync.h"
 #include "device_api.h"
 #include "tb_link.h"
+#include "tb_ota.h"
 #include "tb_state.h"
 #include "wifi_remote.h"
 #include "web_server.h"
@@ -839,6 +840,7 @@ void app_main(void) {
   esp_log_level_set("tb_link", ESP_LOG_INFO);
   esp_log_level_set("tb_state", ESP_LOG_INFO);
   esp_log_level_set("wifi_remote", ESP_LOG_INFO);
+  esp_log_level_set("tb_ota", ESP_LOG_INFO);
   esp_log_level_set("device_api", ESP_LOG_INFO); /* one line per WRITE call, never params */
   esp_log_level_set("dapi_wifi", ESP_LOG_INFO);  /* Wi-Fi profile save / forget / setauto lines */
   esp_log_level_set("dns_server",
@@ -1194,6 +1196,8 @@ void app_main(void) {
   {
     /* Hook first (an atomic pointer): no connect can happen before it is registered. */
     tb_link_set_connected_hook(wifi_remote_on_tb_connected);
+    tb_link_set_data_hook(tb_ota_on_data);
+    tb_link_set_session_hook(tb_ota_on_session);
     esp_err_t tb_err = tb_link_init();
     if (tb_err != ESP_OK) {
       ESP_LOGE(TAG, "ThingsBoard link init failed: %s — continuing without it", esp_err_to_name(tb_err));
@@ -1241,7 +1245,12 @@ void app_main(void) {
     ESP_LOGE(TAG, "tb_state init failed");
   }
 
-  /* 4. Start HTTP server */
+  /* 4. Start HTTP server. The ThingsBoard OTA boot state is resolved first: a fresh ThingsBoard image is marked
+   * valid only after it reaches ThingsBoard. */
+  tb_ota_boot_init();
+#ifdef TB_LINK_TEST_BLOCK_CONNECT
+  ESP_LOGW(TAG, "TEST BUILD: ThingsBoard connect is blocked");
+#endif
   if (!web_server_start()) {
     ESP_LOGE(TAG, "HTTP server start failed — will retry");
     s_http_server_retry = true;
@@ -1249,13 +1258,17 @@ void app_main(void) {
     ESP_LOGI(TAG, "HTTP server started");
 
     /* Mark OTA firmware as valid (cancels bootloader rollback timer) */
-    esp_err_t ota_err = esp_ota_mark_app_valid_cancel_rollback();
-    if (ota_err == ESP_OK) {
-      ESP_LOGI(TAG, "OTA firmware validated (PENDING_VERIFY -> VALID)");
-    } else if (ota_err == ESP_ERR_INVALID_STATE) {
-      ESP_LOGD(TAG, "OTA mark_valid: not in PENDING_VERIFY state (ok)");
+    if (!tb_ota_boot_holds_valid()) {
+      esp_err_t ota_err = esp_ota_mark_app_valid_cancel_rollback();
+      if (ota_err == ESP_OK) {
+        ESP_LOGI(TAG, "OTA firmware validated (PENDING_VERIFY -> VALID)");
+      } else if (ota_err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGD(TAG, "OTA mark_valid: not in PENDING_VERIFY state (ok)");
+      } else {
+        ESP_LOGW(TAG, "OTA mark_valid returned: %s", esp_err_to_name(ota_err));
+      }
     } else {
-      ESP_LOGW(TAG, "OTA mark_valid returned: %s", esp_err_to_name(ota_err));
+      ESP_LOGI(TAG, "OTA from ThingsBoard: waiting for the ThingsBoard connect to mark valid");
     }
   }
 
@@ -1393,10 +1406,14 @@ void app_main(void) {
         s_http_server_retry = false;
 
         /* Mark OTA firmware as valid (cancels bootloader rollback timer) */
-        esp_err_t ota_err = esp_ota_mark_app_valid_cancel_rollback();
-        if (ota_err == ESP_OK) {
-          ESP_LOGI(TAG,
-                   "OTA firmware validated on retry (PENDING_VERIFY -> VALID)");
+        if (!tb_ota_boot_holds_valid()) {
+          esp_err_t ota_err = esp_ota_mark_app_valid_cancel_rollback();
+          if (ota_err == ESP_OK) {
+            ESP_LOGI(TAG,
+                     "OTA firmware validated on retry (PENDING_VERIFY -> VALID)");
+          }
+        } else {
+          ESP_LOGI(TAG, "OTA from ThingsBoard: waiting for the ThingsBoard connect to mark valid");
         }
       }
     }
