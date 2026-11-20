@@ -459,9 +459,10 @@ tb_fw_attr_t tb_fw_parse_attrs(const char *json, size_t len, tb_fw_info_t *out)
     }
     const cJSON *title = cJSON_GetObjectItemCaseSensitive(src, "fw_title");
     if (title == NULL) {
+        bool empty = (root->child == NULL);
         cJSON_Delete(root);
         /* reply without fw_title, or an empty object: cleared; any other push (e.g. other keys deleted): none */
-        return (reply || root->child == NULL) ? TB_FW_ATTR_CLEARED : TB_FW_ATTR_NONE;
+        return (reply || empty) ? TB_FW_ATTR_CLEARED : TB_FW_ATTR_NONE;
     }
     if (!cJSON_IsString(title) || title->valuestring == NULL || strlen(title->valuestring) > 32) {
         cJSON_Delete(root);
