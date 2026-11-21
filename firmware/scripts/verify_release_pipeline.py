@@ -64,8 +64,18 @@ def test_build_inputs():
     assert_test("'*'" not in yml and '"*"' not in yml, "no wildcard component versions", "pin every dependency")
 
 
+def test_release_gate():
+    print("\n[release key gate]")
+    cmake = read(FIRMWARE_DIR / "CMakeLists.txt")
+    assert_test("option(FISHPUMP_RELEASE" in cmake, "CMakeLists has the FISHPUMP_RELEASE option")
+    assert_test("cmake/check_release_key.cmake" in cmake, "CMakeLists includes the release key check")
+    check = read(FIRMWARE_DIR / "cmake" / "check_release_key.cmake")
+    assert_test("FATAL_ERROR" in check, "check script fails the build", "expected message(FATAL_ERROR ...)")
+
+
 def main():
     test_build_inputs()
+    test_release_gate()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

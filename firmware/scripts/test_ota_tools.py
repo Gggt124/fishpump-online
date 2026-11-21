@@ -5,6 +5,7 @@ Run: python -m unittest firmware/scripts/test_ota_tools.py -v
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -186,6 +187,59 @@ class WriteSecretsTests(unittest.TestCase):
             self.assertNotEqual(ka, kb)
             self.assertEqual(ota_crypto.normalize_key(ka), ka)
             self.assertNotIn(ka, r.stdout)
+
+
+CHECK_CMAKE = SCRIPTS.parent / "cmake" / "check_release_key.cmake"
+SECRETS_LINE = '#define APP_CONFIG_OTA_ENCRYPTION_KEY "{key}"\n'
+
+
+@unittest.skipIf(shutil.which("cmake") is None, "cmake not on PATH (activate ESP-IDF first)")
+class ReleaseKeyCheckTests(unittest.TestCase):
+    def check(self, content=None, raw=None):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "secrets.h"
+            if raw is not None:
+                f.write_bytes(raw)
+            elif content is not None:
+                f.write_text(content, encoding="utf-8", newline="")
+            return subprocess.run(
+                ["cmake", f"-DSECRETS_FILE={f.as_posix()}", "-P", str(CHECK_CMAKE)],
+                capture_output=True,
+                text=True,
+            )
+
+    def assert_fails_without_leaking_key(self, r, key):
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn(key, r.stdout + r.stderr)
+
+    def test_missing_file_fails(self):
+        r = subprocess.run(
+            ["cmake", "-DSECRETS_FILE=/nonexistent/secrets.h", "-P", str(CHECK_CMAKE)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("write_secrets.py", r.stdout + r.stderr)
+
+    def test_zero_key_fails(self):
+        self.assert_fails_without_leaking_key(self.check(SECRETS_LINE.format(key=ZERO_KEY)), ZERO_KEY)
+
+    def test_template_placeholder_fails(self):
+        r = self.check(SECRETS_LINE.format(key="REPLACE_WITH_64_HEX_CHARS_FROM_generate_secrets_ps1"))
+        self.assertNotEqual(r.returncode, 0)
+
+    def test_short_key_fails(self):
+        self.assert_fails_without_leaking_key(self.check(SECRETS_LINE.format(key=NIST_KEY[:-1])), NIST_KEY[:-1])
+
+    def test_good_key_passes(self):
+        r = self.check(SECRETS_LINE.format(key=NIST_KEY))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn(NIST_KEY, r.stdout + r.stderr)
+
+    def test_bom_and_crlf_still_pass(self):
+        body = "#pragma once\r\n" + SECRETS_LINE.format(key=NIST_KEY).replace("\n", "\r\n")
+        r = self.check(raw=b"\xef\xbb\xbf" + body.encode())
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
 if __name__ == "__main__":
