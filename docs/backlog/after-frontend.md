@@ -68,12 +68,17 @@
 - [ ] **dashboard ทดสอบ:** ปุ่ม `wifi.connect` ส่ง params ตัวอย่าง (`แก้ก่อนส่ง`) ได้ ทำให้บอร์ด stage เครือข่ายที่ไม่มีอยู่และรีบูตฟรี 2 ครั้ง ควรให้ widget ไม่ยอมส่งค่าตัวอย่าง หรือให้เฟิร์มแวร์ปฏิเสธ SSID ที่ไม่เห็นใน scan ล่าสุด
 - [ ] การย้อนกลับเมื่อรหัส Wi-Fi ผิดใช้เวลา 180 วินาที ไม่ใช่ 30 วินาที เพราะ `wifi_manager` ถอยไปเครือข่ายเดิมเองก่อน ปลอดภัยแต่ช้า ทางแก้: ให้ timer 30 วินาทีดูว่าต่ออยู่บน SSID ที่ stage ไว้
 - [ ] `pump.config.set` มีเพดาน params 512 ไบต์ เท่ากับ body ของ HTTP กรณียาวสุดของเว็บแอปตอนนี้คือ 475 ไบต์ ถ้าเพิ่ม key ใน config ต้องเช็กเพดานนี้
-- [ ] การอัปโหลดเฟิร์มแวร์ผ่านเว็บ (`POST /api/ota`) มีเพดาน 1,966,080 ไบต์ แต่อิมเมจปัจจุบันประมาณ 2.06 MB จะได้ 413 `file_too_large` ต้องปรับเพดานให้ตรงกับ slot (0x380000) การอัปเดตผ่าน ThingsBoard ไม่ติดเพดานนี้
+- [x] ~~การอัปโหลดเฟิร์มแวร์ผ่านเว็บ (`POST /api/ota`) ติดเพดาน 1,966,080 ไบต์ (413)~~ แก้แล้ว 2026-11-21: เพดานตามขนาด slot + 16 ไบต์ IV (`ota_upload_limit`) ยังต้องยืนยันบนบอร์ด ดู `docs/bench-test-release.md` R3
 - [ ] `tb_ota.py`: เมื่อ upload ล้ม ThingsBoard ทิ้ง package ว่างไว้ ควรลบให้เอง
 - [ ] ไม่มีที่รายงาน HWM ของ task `tb_ota` ทางแก้: log ตอน task จบ หรือใส่ใน `BOARD_DIAG`
 - [ ] log `OTA firmware validated (PENDING_VERIFY -> VALID)` ขึ้นแม้สถานะเป็น VALID อยู่แล้ว ทำให้อ่าน log สับสน
 - [ ] โปรไฟล์ Wi-Fi `Ggggg` บนบอร์ดทดสอบอาจเก็บรหัสที่ผิดไว้ (เหลือจากการทดสอบแทน J4)
 - [ ] ตามแผนแพลตฟอร์ม: กฎอยู่ในเฟิร์มแวร์ ส่วน ThingsBoard เก็บข้อมูลและส่งแจ้งเตือน รองรับหลายลูกค้าและหลาย firmware (`identity` มี `fw_type` และ `contract_version` ไว้สำหรับเรื่องนี้)
+- [ ] **release pipeline: ยืนยันการรัน CI จริง** (`ci.yml`, `release.yml`, `run_selftest.sh` สำหรับ QEMU ยังไม่เคยรันบน GitHub/Linux) ดู `docs/release/handover.md`
+- [ ] **secure boot และ OTA ที่เซ็นลายเซ็น** ตอนนี้คีย์ OTA ฝังใน flash ไม่ได้เข้ารหัส และคีย์เดียวทั้งฝูง จำเป็นเมื่อขายหลายลูกค้า
+- [ ] **TLS ของ ThingsBoard ก่อนขึ้น VPS:** ThingsBoard OTA ส่งไฟล์ธรรมดาผ่าน MQTT ธรรมดา
+- [ ] พิจารณานำของอื่นจากโปรเจกต์เก่า `fish-pump-RelayTimerControl` มาใช้ (`mock_server.py`, `hardware_simulator.py`, `monitor-soak.ps1`, `serial_bridge.py`, `docs/`) ยังไม่ได้ดู
+- [ ] ล้างโฟลเดอร์ว่างที่มีแค่ `.gitkeep` (`scripts/`, `scratch/`, `infra/`, `frontend-app/`) และ branch เก่าบน origin เมื่อเจ้าของสั่งเท่านั้น
 
 ---
 

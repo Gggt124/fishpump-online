@@ -153,12 +153,32 @@ def test_workflows():
     assert_test("gh release create" in rel_text, "release.yml publishes the files with gh release create")
 
 
+def test_release_docs():
+    print(chr(10) + "[release docs]")
+    names = ["README.md", "keys.md", "release.md", "install.md", "handover.md"]
+    for n in names:
+        assert_test((REPO_DIR / "docs" / "release" / n).exists(), "docs/release/" + n + " exists")
+    assert_test((REPO_DIR / "docs" / "bench-test-release.md").exists(), "docs/bench-test-release.md exists")
+    assert_test("docs/release/README.md" in read(REPO_DIR / "docs" / "summary.md"), "docs/summary.md links the release docs")
+    hexrun = re.compile(r"(?<![0-9A-Za-z])[0-9a-fA-F]{64}(?![0-9A-Za-z])")
+    leaked = [n for n in names + ["../bench-test-release.md"] if hexrun.search(read(REPO_DIR / "docs" / "release" / n))]
+    assert_test(not leaked, "release docs contain no 64-hex-character string (no key)", str(leaked))
+    keys = read(REPO_DIR / "docs" / "release" / "keys.md")
+    for word in ("66687aad", "OTA_ENCRYPTION_KEY", "write_secrets.py"):
+        assert_test(word in keys, "keys.md mentions " + word)
+    assert_test("check_release_tag.py" in read(REPO_DIR / "docs" / "release" / "release.md") or
+                "tag" in read(REPO_DIR / "docs" / "release" / "release.md"), "release.md explains tagging")
+    assert_test("flash-package.zip" in read(REPO_DIR / "docs" / "release" / "install.md"), "install.md explains the install kit")
+    assert_test("QEMU" in read(REPO_DIR / "docs" / "release" / "handover.md"), "handover.md records the QEMU/CI status")
+
+
 def main():
     test_build_inputs()
     test_release_gate()
     test_firmware_reports_key()
     test_packaging()
     test_workflows()
+    test_release_docs()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

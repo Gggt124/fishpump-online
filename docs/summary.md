@@ -16,6 +16,8 @@
 | API ทุก method, attribute และ telemetry ของ ThingsBoard | [`firmware/device-api.md`](firmware/device-api.md) |
 | build, flash, ตั้งเวอร์ชัน | [`firmware-workflow.md`](firmware-workflow.md) |
 | ตั้งค่า ThingsBoard ด้วยสคริปต์ | [`../thingsboard/README.md`](../thingsboard/README.md) |
+| release, คีย์ OTA, ชุดติดตั้ง, ส่งมอบ (`docs/release/README.md`) | [`release/README.md`](release/README.md) |
+| ทดสอบบนบอร์ดของส่วน release (เจ้าของทำเอง) | [`bench-test-release.md`](bench-test-release.md) |
 | ทดสอบบนบอร์ดที่ยังค้าง | [`bench-test-pending.md`](bench-test-pending.md) |
 | งานที่รอทำและข้อเล็กที่เลื่อนไว้ | [`backlog/after-frontend.md`](backlog/after-frontend.md) |
 | แผนเก็บข้อมูลใน ThingsBoard และ deploy บน VPS | [`backlog/thingsboard-data-and-deploy.md`](backlog/thingsboard-data-and-deploy.md) |
