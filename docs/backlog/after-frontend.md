@@ -108,7 +108,7 @@
     - `relay_polarity` (ชื่อเก่า) ถูกตรวจด้วยแม้มี `relay1_polarity` อยู่แล้ว (เข้มเกินไปแต่ไม่มีผลเสีย)
 - [ ] **ข้อที่พบใน bench milestone 3 (รอบ 4 ใน `bench-test-thingsboard.md`, 2026-11-20):**
   - ~~I4 ยังไม่ผ่าน~~ **ผ่านแล้ว** (รอบที่สามทำผ่านหน้าเว็บจริง: `POST /api/pump/config` 200 แล้ว ThingsBoard เห็นค่าใหม่และค่าที่คืนภายใน 1.7 วินาที สองรอบแรกหน้าเว็บไม่ได้ส่งคำขอ)
-  - ~~I7 (ปิดลิงก์แล้วต่อใหม่) เลื่อนไปรวมกับทดสอบ ThingsBoard ล่มใน milestone 6~~ **ผ่านแล้ว** ใน L2 รอบ 7 (2026-11-21): host ผิด backoff ถึง 60 วินาที คืน host แล้วต่อใน 2 วินาที ส่ง attribute ครบ 6 ตัวใหม่
+  - ~~I7 (ปิดลิงก์แล้วต่อใหม่) เลื่อนไปรวมกับทดสอบ ThingsBoard ล่มใน milestone 6~~ **ผ่านแล้ว** ใน L2 รอบ 7 (2026-11-21): host ผิด backoff ถึง 60 วินาที คืน host แล้วต่อติดประมาณ 6 วินาทีหลังกดบันทึก ส่ง attribute ครบ 6 ตัวใหม่
   - `heap_min` ลดจาก 110.6 KB (M2) เป็น 107.5 KB ยังเกินงบ 100 KB เฝ้าดูต่อใน M4/M5 (OTA และ TLS จะใช้หน่วยความจำเพิ่ม)
   - ThingsBoard ไม่เก็บสมาชิกที่เป็น null ใน attribute แบบ JSON (เช่น `hardware_map.pending`) frontend ต้องถือว่า field ที่หายไปคือ null
 - [ ] **ข้อที่พบใน bench milestone 4 (รอบ 5 ใน `bench-test-thingsboard.md`, 2026-11-20):**
@@ -246,9 +246,12 @@
 - จาก bench รอบ 7 (milestone 6, `docs/bench-test-thingsboard.md`) ไม่มีข้อที่ไม่ผ่าน ข้อสังเกต:
   - ring เหตุการณ์ 32 ช่องเต็มเมื่อ ThingsBoard ล่มนานประมาณ 29 นาทีที่อัตรา 1.1 event ต่อนาที (กฎทดสอบที่เกิด/หายทุกรอบปั๊ม) ล่ม 38 นาทีจึงเสีย event เก่าสุด 9 ตัว (มี log `overwritten` ทุกตัว) ถ้าจะใช้ alarm ของ ThingsBoard แจ้งเตือนจริง ควรรวมกับทางแก้ของข้อจำกัด milestone 1 ด้านบน (ส่งรายการ alarm ที่ยัง active เป็น attribute) หรือขยาย ring
   - ตอนต่อกลับพร้อม event ค้าง 32 ตัว outbox ของ MQTT เต็ม `rules attribute send failed: ESP_FAIL` 2 ครั้งและ `status send failed` 1 ครั้ง (ลองใหม่เองแล้วผ่าน การ์ดนับ "ล้มเหลว 3")
-  - กดบันทึกการ์ด ThingsBoard ขณะลิงก์อยู่ใน backoff จะมีผลช้าสุดประมาณ 5 วินาที (รอบตรวจของ task) ไม่ใช่ทันทีเหมือนตอน connected
+  - กดบันทึกการ์ด ThingsBoard ขณะลิงก์อยู่ใน backoff จะมีผลช้าสุดประมาณ 5 วินาที ไม่ใช่ทันทีเหมือนตอน connected สาเหตุยังไม่ยืนยัน (`TB_TICK_MS` 1000 และการบันทึกปลุก task ทันที ที่น่าจะเป็นคือ `esp_mqtt_client_destroy` ใน `task_teardown`)
   - ThingsBoard ไม่เก็บ `alarm_event` เป็น timeseries (rule chain แปลงเป็น alarm แล้วเก็บแค่ `last_alarm_event`) frontend ที่อยากได้ประวัติ event ต้องอ่านจาก alarm ของ ThingsBoard
-  - `hwm_alarm` ต่ำสุด 2136 ตอน ring เต็ม (รอบก่อน 2600–2712) ยังเกินงบ 512
+  - `hwm_alarm` ต่ำสุด 2136 ในช่วง ThingsBoard ล่ม (รอบก่อน 2600–2712) ยังเกินงบ 512 สาเหตุยังไม่ชัด (ring ของ task alarm เขียนเหมือนกันไม่ว่าส่งได้หรือไม่)
+  - **ยังค้างจาก spec ข้อ 6.6:** TLS ชี้พอร์ตที่ไม่มี TLS การ์ดขึ้นแค่ "mqtt: transport error" เหมือนตอน host ผิด (L1) ควรแยก error ของ TLS handshake (เช่น `mbedtls_ssl_handshake` -0x7280) เป็นข้อความเช่น "TLS handshake ไม่สำเร็จ (เซิร์ฟเวอร์อาจไม่ได้เปิด TLS)" ต้องแก้เฟิร์มแวร์และทดสอบบนบอร์ด
+  - **ยังค้าง:** ทาง `checksum_mismatch` ของ `tb_ota` ยังไม่เคยรันบนบอร์ดจริง (ThingsBoard ปฏิเสธ checksum ผิดตอน upload) ต้องใช้วิธีอื่น เช่นแก้ attribute `fw_checksum` ของ device ตรงๆ
+  - เวลาที่ ThingsBoard พร้อมหลัง `docker start` (L3) ไม่ได้วัด ถ้าจะยืนยันเกณฑ์ "ต่อติดภายใน 60 วินาทีหลัง 8080 ตอบ" ให้ดู `docker logs --timestamps tb-node` คู่กับ serial log
 
 ### จากระบบป้องกันปั๊มเดินแห้ง (`2026-11-16-pump-dry-run-protection-results.md` ส่วน 4 และ 7) ที่ Task 6–7 ไม่ได้แก้
 
