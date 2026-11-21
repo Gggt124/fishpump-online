@@ -73,9 +73,27 @@ def test_release_gate():
     assert_test("FATAL_ERROR" in check, "check script fails the build", "expected message(FATAL_ERROR ...)")
 
 
+def test_firmware_reports_key():
+    print(chr(10) + "[firmware: upload limit and key fingerprint]")
+    web = read(FIRMWARE_DIR / "main" / "web_server.c")
+    assert_test("0x1E0000" not in web, "web OTA no longer uses the fixed 0x1E0000 limit")
+    assert_test("ota_upload_limit(" in web, "web OTA limit comes from ota_upload_limit()")
+    assert_test("ota_key_fingerprint(" in read(FIRMWARE_DIR / "main" / "dapi_status.c"), "status.get reports the key fingerprint")
+    assert_test("ota_key_fp" in read(FIRMWARE_DIR / "main" / "dapi_status.c"), "status.get has ota_key_fp")
+    assert_test("ota_key_dev" in read(FIRMWARE_DIR / "main" / "dapi_status.c"), "status.get has ota_key_dev")
+    assert_test("ota_key_fp" in read(FIRMWARE_DIR / "main" / "tb_state.c"), "ThingsBoard attributes carry ota_key_fp")
+    assert_test("ota_key_dev" in read(FIRMWARE_DIR / "main" / "tb_state.c"), "ThingsBoard attributes carry ota_key_dev")
+    assert_test("OTA key fp=" in read(FIRMWARE_DIR / "main" / "app_main.c"), "boot log prints the key fingerprint")
+    cm = read(FIRMWARE_DIR / "main" / "CMakeLists.txt")
+    assert_test(re.search(r"REQUIRES[\s\S]*\bota_key\b", cm) is not None, "main requires ota_key")
+    doc = read(REPO_DIR / "docs" / "firmware" / "device-api.md")
+    assert_test("ota_key_fp" in doc, "device-api.md documents ota_key_fp")
+
+
 def main():
     test_build_inputs()
     test_release_gate()
+    test_firmware_reports_key()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

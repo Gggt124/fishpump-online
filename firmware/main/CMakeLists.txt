@@ -65,6 +65,7 @@ idf_component_register(
         alarm_rules
         signal_registry
         app_config
+        ota_key
         cooling_control
         dns_server
         dry_run_guard

@@ -146,7 +146,7 @@ task หลัก: `cooling_control`, `power_mon`, `water_q`, `flow_sw`, `alarm_
 | สิ่งที่ทดสอบ | คำสั่ง |
 |---|---|
 | build เฟิร์มแวร์ | `idf.py -C firmware build` |
-| self-test บน QEMU (2089 checks: ตรรกะของเซนเซอร์, กฎ, เดินแห้ง, device_api, uplink, tb_link, OTA) | `firmware/test/sensor_selftest/run_selftest.ps1` |
+| self-test บน QEMU (2108 checks: ตรรกะของเซนเซอร์, กฎ, เดินแห้ง, device_api, uplink, tb_link, OTA) | `firmware/test/sensor_selftest/run_selftest.ps1` |
 | ตรวจโค้ดตามแต่ละ feature | `python firmware/scripts/verify_<ชื่อ>.py` (`tb_link`, `device_api`, `alarm_system`, `dry_run`, `pre_mqtt`, `sensor_integration`, `pt100_inverter_system`) |
 | เว็บ API กับ RPC ตอบตรงกัน (ต้องมีบอร์ดและ ThingsBoard) | `python thingsboard/parity_test.py` (`--selftest` ตรวจแบบออฟไลน์) |
 | คำตอบของเว็บ API ไม่เปลี่ยนหลังแก้ handler | `python thingsboard/api_golden.py` |

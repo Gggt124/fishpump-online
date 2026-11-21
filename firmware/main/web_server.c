@@ -1,5 +1,6 @@
 #include "web_server.h"
 #include "aes/esp_aes.h"
+#include "ota_key.h"
 #include "app_config.h"
 #include "app_main.h"
 #include "cJSON.h"
@@ -2126,11 +2127,6 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
     return send_json(req, "{\"ok\":false,\"error\":\"empty_file\"}",
                      "400 Bad Request");
   }
-  if (req->content_len > 0x1E0000) {
-    return send_json(req, "{\"ok\":false,\"error\":\"file_too_large\"}",
-                     "413 Payload Too Large");
-  }
-
   // Validate OTA encryption key before opening OTA session
   const char *key_hex = APP_CONFIG_OTA_ENCRYPTION_KEY;
   if (strlen(key_hex) != 64) {
@@ -2154,6 +2150,12 @@ static esp_err_t handle_api_ota(httpd_req_t *req) {
     ESP_LOGE(TAG, "No OTA partition found");
     return send_json(req, "{\"ok\":false,\"error\":\"no_ota_partition\"}",
                      "500 Internal Server Error");
+  }
+
+  /* Encrypted upload = 16-byte IV + image; the image must fit the target slot. */
+  if (req->content_len > ota_upload_limit(update_partition->size)) {
+    return send_json(req, "{\"ok\":false,\"error\":\"file_too_large\"}",
+                     "413 Payload Too Large");
   }
 
   ESP_LOGI(TAG, "Writing OTA to partition subtype %d at offset 0x%lx",
