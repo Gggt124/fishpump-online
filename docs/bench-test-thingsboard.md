@@ -181,6 +181,32 @@ firmware 98e5272 (โค้ดถึง 82e035d) วันที่ 2026-11-20 �
 - [/] **K3 ซ้ำหลังแก้ (e9f9a92, 2026-11-21)** — flash 0.3.2 ที่แก้แล้วทาง USB (banner `v0.3.2`, `ota_0` VALID, ไม่มี DOWNLOADING หลัง unassign 0.3.6) assign 0.3.4 (ไฟล์สุ่ม) log `OTA image has invalid magic byte (expected 0xE9, saw 0x3b)` ตามด้วย `state FAILED, error invalid_image` ภายใน 1.2 วินาที unassign แล้ว assign 0.3.4 ซ้ำ บอร์ดไม่ดาวน์โหลด (ไม่มี `update offered` ใน 40 วินาที) แปลว่ารหัส final ถูกจำไว้ เรื่องเวอร์ชัน: image ทดสอบ 0.3.7 ที่ build หลังแก้มีสตริง `v0.3.7` และไม่มี `v0.3.2` แล้ว
 - [/] **เก็บกวาด** — unassign แล้วลบ package ทดสอบ 0.3.3, 0.3.4, 0.3.5, 0.3.6 ออกจาก ThingsBoard (ผู้ใช้อนุญาต) บอร์ดอยู่ที่ 0.3.2 (e9f9a92) ไม่มี firmware ผูกไว้
 
+## รอบ 7: ทนทานและ ThingsBoard ล่ม (milestone 6)
+
+firmware e9f9a92 (0.3.2 flash ทาง USB วันที่ 2026-11-21) ไม่แก้เฟิร์มแวร์ในรอบนี้ ตาม Task 2 ของ `docs/superpowers/plans/2026-11-21-thingsboard-soak-m6.md` งบตาม spec ข้อ 6.7: `heap_free` ไม่ต่ำกว่า 100 KB และ HWM ทุกตัว (`main_stack_hwm`, `hwm_alarm`, `hwm_uplink`, `hwm_dry_run`, `tb_hwm`, `tb_rpc_hwm`) ไม่ต่ำกว่า 512
+
+- [ ] **L0 เตรียม** — เปิด monitor ที่ COM12 เปิดตัวคุมการทดสอบ (ผู้ทดสอบพิมพ์รหัส ThingsBoard เอง) และเปิดสคริปต์ที่เช็ค `GET http://192.168.1.34/` ทุก 30 วินาที บันทึกสถานะและเวลาลงไฟล์
+  - **ต้องเห็น:** banner `v0.3.2` บูตจาก `ota_0` สถานะ VALID ไม่มี firmware ผูกไว้ใน ThingsBoard ลิงก์ connected สคริปต์เช็คได้ 200
+  - บันทึก:
+- [ ] **L1 TLS ผิดพอร์ต** — บนการ์ด ThingsBoard ติ๊ก TLS host `192.168.1.51` port `1883` แล้วบันทึก รอดู backoff อย่างน้อย 3 รอบ แล้วเอาติ๊ก TLS ออกและบันทึก
+  - **ต้องเห็น:** การ์ดขึ้น error ไม่ใช่ "connected" ลองใหม่ห่างขึ้น 5 → 10 → 20 วินาที บรรทัด `E` ของ `tb_link` มีแค่ error ของ mqtt/transport ไม่รีบูต สคริปต์เช็คได้ 200 ตลอด หลังปิด TLS ต่อติดภายใน 10 วินาที และมี `uplink: attribute … sent` ครบ 6 บรรทัดภายใน 2 วินาทีหลัง connected
+  - บันทึก:
+- [ ] **L2 I7 ปิดลิงก์แล้วต่อใหม่** — เปลี่ยน host เป็น `192.168.1.250` แล้วบันทึก รออย่างน้อย 60 วินาที แล้วเปลี่ยนกลับเป็น `192.168.1.51`
+  - **ต้องเห็น:** ระหว่าง host ผิด backoff ขึ้นไปถึง 60 วินาที ไม่รีบูต หลังคืนค่าต่อติด ส่ง attribute ครบ 6 ตัวใหม่ และ `uptime` ล่าสุดใน ThingsBoard ขยับอีกภายใน 30 วินาที
+  - บันทึก:
+- [ ] **L3 ThingsBoard ล่ม** — ก่อนเริ่ม: อ่านกฎ id 19 ด้วย `alarms.rules.get` จดค่าไว้ แล้วตั้งด้วย `alarms.rules.set` เป็น `signal` `relay1_on` `condition` `is_true` `enabled` true ล่ม: ผู้ทดสอบรัน `docker stop tb-node` บน copter (ขอ OK ก่อน) รออย่างน้อย 3 นาที จดเวลาบอร์ดที่กฎ 19 เกิดและหายจาก serial log กลับมา: ผู้ทดสอบรัน `docker start tb-node` จบแล้วคืนกฎ 19 เป็นค่าที่จดไว้ (ปิด) และอ่าน `alarms.rules.get` ยืนยัน
+  - **ต้องเห็น:** ก่อนล่ม alarm `rule_19` เกิดและหายในรอบปั๊มเดียว ระหว่างล่ม ลองต่อใหม่ห่างสุด 60 วินาที ไม่รีบูต (uptime ใน BOARD_DIAG เพิ่มต่อเนื่อง) PUMP_DIAG เปลี่ยน phase ตามรอบ สคริปต์เช็คได้ 200 `heap_free` ไม่ต่ำกว่า 100 KB ไม่มี `unsent alarm event(s) overwritten` หลังกลับมา ต่อติดภายใน 60 วินาทีหลัง ThingsBoard ตอบที่ 8080 timeseries `alarm_event` ช่วงล่มมีครบทุก seq เรียงตามลำดับ `ts` ห่างจากเวลาใน serial log ไม่เกิน 2 วินาที ประวัติ alarm `rule_19` ใน ThingsBoard มีเกิดและหายตรงกัน ส่ง attribute ใหม่ครบ
+  - บันทึก:
+- [ ] **L4 ทนทาน 1 ชั่วโมง** — เปิด dashboard ของ ThingsBoard ค้างใน browser pane 60 นาที (ผู้ทดสอบ login) ทุก 10 นาทียิง RPC อ่าน 10 คำสั่ง (`status.get`, `pump.status`, `cooling.status`, `sensors.get`, `alarms.status` อย่างละ 2 ครั้ง) จดค่าต่ำสุดของแต่ละตัว
+  - **ต้องเห็น:** RPC ทุกคำสั่งตอบ ok ภายใน timeout 10 วินาที ตลอดชั่วโมง `heap_free` และ `heap_min` ไม่ต่ำกว่า 100 KB HWM ทุกตัวไม่ต่ำกว่า 512 จำนวน `tasks` คงที่ ไม่รีบูต `HTTP_DIAG failed=0` (หรือไม่เพิ่ม) สคริปต์เช็คได้ 200
+  - บันทึก:
+- [ ] **L5 J4 แบบเต็ม (ถ้ามี access point ตัวที่สองใน LAN เดียวกับ ThingsBoard)** — อ่าน `wifi.profiles.get` ก่อน ส่ง `wifi.connect` ไป AP ตัวที่สองจาก ThingsBoard อ่าน `wifi.profiles.get` อีกครั้ง ถอดไฟแล้วเสียบใหม่ แล้วสลับกลับเครือข่ายบ้านด้วยวิธีเดียวกัน ถ้าไม่มี AP ตัวที่สอง เว้น `[ ]` ไว้พร้อมเหตุผล (F1 ยังไม่ได้ยืนยันบนบอร์ด)
+  - **ต้องเห็น:** บอร์ด stage เครือข่ายใหม่ ต่อได้ ต่อ ThingsBoard ได้ แล้ว commit เอง รายการโปรไฟล์มี SSID ใหม่ `auto_index` ชี้ไปที่ตัวใหม่ โปรไฟล์เดิมยังอยู่ หลังถอดไฟกลับมาที่เครือข่ายใหม่
+  - บันทึก:
+- [ ] **L6 สรุปงบหน่วยความจำ** — รวมค่าต่ำสุดของ heap และ HWM แต่ละตัวตลอด L1–L4 เทียบกับงบ
+  - **ต้องเห็น:** `heap_min` ไม่ต่ำกว่า 100 KB และ HWM ทุกตัวไม่ต่ำกว่า 512
+  - บันทึก:
+
 ## หลังทดสอบ
 
 - [/] ปิดกฎที่เปิดไว้ทดสอบ ให้ลิงก์ยังตั้งค่าอยู่ และ host เป็น `192.168.1.51` — กฎ id 19 คืนเป็น `pump_is_running` และปิดแล้ว (ตรวจจาก attribute `alarm_rules` ใน ThingsBoard) host = `192.168.1.51` ลิงก์ connected
