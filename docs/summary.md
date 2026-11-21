@@ -20,7 +20,7 @@
 | งานที่รอทำและข้อเล็กที่เลื่อนไว้ | [`backlog/after-frontend.md`](backlog/after-frontend.md) |
 | แผนเก็บข้อมูลใน ThingsBoard และ deploy บน VPS | [`backlog/thingsboard-data-and-deploy.md`](backlog/thingsboard-data-and-deploy.md) |
 
-ประวัติละเอียด (design spec, แผนงาน, ผล bench ทุกรอบ, commit ย่อย 246 ตัว) ไม่ได้เข้า `main` แต่ยังอยู่ใน branch เก็บถาวร `feature/thingsboard-mqtt` (รวม `feature/alarm-rules`)
+ประวัติละเอียด (design spec, แผนงาน, ผล bench ทุกรอบ, commit ย่อย 246 ตัว) ไม่ได้เข้า `main` แต่ยังอยู่ใน branch เก็บถาวร `archive/fw-v0.4.0-history`
 
 ---
 
