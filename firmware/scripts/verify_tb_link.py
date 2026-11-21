@@ -707,6 +707,22 @@ def test_bench6_fixes():
                 "app_config.h has no hard-coded version fallback and stops the build when the define is missing")
 
 
+def test_tls_card_error():
+    print("\n--- Spec 6.6: a TLS failure shows a TLS-specific card error ---")
+    c = read(COMP_DIR / "tb_link" / "tb_link.c")
+    assert_test(re.search(r"esp_tls_last_esp_err\s*==\s*ESP_ERR_MBEDTLS_SSL_HANDSHAKE_FAILED", c) is not None,
+                "MQTT_EVENT_ERROR records whether esp-tls failed the TLS handshake")
+    assert_test("esp_tls_cert_verify_flags" in c, "MQTT_EVENT_ERROR records the certificate verify flags")
+    body = function_body(c, "task_handle_error", r"static\s+void\s+")
+    assert_test(re.search(r"tb_transport_error_text\(\s*tc->cfg\.tls\s*,", body) is not None,
+                "task_handle_error builds the transport error text with tb_transport_error_text and the session's tls flag")
+    assert_test('"mqtt: transport error"' not in body,
+                "task_handle_error no longer hard-codes the generic transport error")
+    h = read(COMP_DIR / "tb_link_logic" / "include" / "tb_link_logic.h")
+    assert_test(re.search(r"const\s+char\s+\*\s*tb_transport_error_text\(\s*bool\s+tls\s*,\s*bool\s+handshake_failed\s*,\s*uint32_t\s+cert_flags\s*\)", h) is not None,
+                "tb_link_logic.h declares tb_transport_error_text(bool tls, bool handshake_failed, uint32_t cert_flags)")
+
+
 def main():
     test_nvs_storage()
     test_time_sync()
@@ -724,6 +740,7 @@ def main():
     test_tb_ota()
     test_ota_boot()
     test_bench6_fixes()
+    test_tls_card_error()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

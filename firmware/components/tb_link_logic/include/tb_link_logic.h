@@ -64,6 +64,11 @@ uint32_t tb_backoff_after_fail_ms(uint32_t current_ms, bool at_cap, bool staging
 /* True once the reply was acked or TB_AFTER_REPLY_MAX_MS passed since it was published. */
 bool tb_after_reply_ready(bool acked, uint32_t elapsed_ms);
 
+/* Card text for an MQTT transport error (spec 6.6: a TLS failure must say so). tls: the session uses TLS;
+ * handshake_failed: esp-tls reported ESP_ERR_MBEDTLS_SSL_HANDSHAKE_FAILED; cert_flags: the certificate verify
+ * flags esp-tls reported (0 = none). Without TLS, or without a TLS failure, it is the generic transport error. */
+const char *tb_transport_error_text(bool tls, bool handshake_failed, uint32_t cert_flags);
+
 /* ---- ThingsBoard server-side RPC ---- */
 #define TB_RPC_REQ_PREFIX  "v1/devices/me/rpc/request/"
 #define TB_RPC_RESP_PREFIX "v1/devices/me/rpc/response/"

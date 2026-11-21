@@ -270,6 +270,17 @@ uint32_t tb_backoff_after_fail_ms(uint32_t current_ms, bool at_cap, bool staging
     return tb_backoff_next_ms(current_ms);
 }
 
+const char *tb_transport_error_text(bool tls, bool handshake_failed, uint32_t cert_flags)
+{
+    if (tls && cert_flags != 0) {
+        return "tls: server certificate not trusted";
+    }
+    if (tls && handshake_failed) {
+        return "tls: handshake failed (is TLS enabled on this port?)";
+    }
+    return "mqtt: transport error";
+}
+
 bool tb_after_reply_ready(bool acked, uint32_t elapsed_ms)
 {
     return acked || elapsed_ms >= TB_AFTER_REPLY_MAX_MS;

@@ -331,4 +331,20 @@ void test_tb_link(void)
         CHECK(tb_rpc_dedup_find(&d, 7, pa, la, 0x00000100u) == w);
         CHECK(tb_rpc_dedup_find(&d, 7, NULL, 0, 0) == -1);
     }
+
+    /* transport error text on the card (spec 6.6: a TLS failure must say it is TLS) */
+    {
+        const char *generic = "mqtt: transport error";
+        CHECK(strcmp(tb_transport_error_text(false, false, 0), generic) == 0);
+        CHECK(strcmp(tb_transport_error_text(false, true, 0), generic) == 0);   /* TLS off: not a TLS failure */
+        CHECK(strcmp(tb_transport_error_text(true, false, 0), generic) == 0);   /* TLS on, host unreachable */
+        const char *hs = tb_transport_error_text(true, true, 0);              /* TLS on a plain port */
+        CHECK(strncmp(hs, "tls: handshake failed", 21) == 0);
+        CHECK(strstr(hs, "port") != NULL);
+        const char *cert = tb_transport_error_text(true, true, 0x08);         /* cert verify flags set */
+        CHECK(strncmp(cert, "tls: server certificate", 23) == 0);
+        CHECK(strcmp(cert, hs) != 0);
+        CHECK(strcmp(tb_transport_error_text(false, false, 0x08), generic) == 0);
+        CHECK(strlen(hs) < 80 && strlen(cert) < 80); /* fits TB_ERR_MAX (96) */
+    }
 }

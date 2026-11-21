@@ -12,6 +12,7 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_timer.h"
+#include "esp_tls_errors.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -87,6 +88,8 @@ typedef struct {
     uint32_t gen;
     int err_type;    /* CMD_ERROR: esp_mqtt_error_type_t */
     int refuse_code; /* CMD_ERROR: esp_mqtt_connect_return_code_t */
+    bool tls_handshake_failed; /* CMD_ERROR: esp-tls failed the TLS handshake */
+    uint32_t tls_cert_flags;   /* CMD_ERROR: esp-tls certificate verify flags (0 = none) */
     uint32_t attempt; /* connection attempt of the client that produced it */
     size_t len;      /* CMD_PROV_REPLY: bytes in data; 0 = truncated or empty */
     char data[TB_REPLY_MAX];
@@ -353,6 +356,8 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         if (ev->error_handle != NULL) {
             c.err_type = (int)ev->error_handle->error_type;
             c.refuse_code = (int)ev->error_handle->connect_return_code;
+            c.tls_handshake_failed = ev->error_handle->esp_tls_last_esp_err == ESP_ERR_MBEDTLS_SSL_HANDSHAKE_FAILED;
+            c.tls_cert_flags = (uint32_t)ev->error_handle->esp_tls_cert_verify_flags;
         }
         break;
     default:
@@ -592,7 +597,7 @@ static void task_handle_error(task_ctx_t *tc, const tb_cmd_t *c)
         task_fail(tc, "provision: subscribe failed", true);
         break;
     default:
-        task_fail(tc, "mqtt: transport error", false);
+        task_fail(tc, tb_transport_error_text(tc->cfg.tls, c->tls_handshake_failed, c->tls_cert_flags), false);
         break;
     }
 }
