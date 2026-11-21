@@ -90,7 +90,7 @@
   - ลิงก์หลุดเงียบที่ไม่ใช่ Wi-Fi หลุด (เช่นเราเตอร์ค้าง ใช้เวลาจนรู้ตัวประมาณ 45 วินาที) แล้วส่งไม่ทันใน 300 วินาทีที่ outbox เก็บไว้
   - การบันทึกการตั้งค่าใหม่ หรือการสลับจากลงทะเบียนเป็นใช้ token ซึ่งทิ้ง outbox
   ทางแก้มี 2 แบบ: ส่งต่อเหตุการณ์จาก `uplink` เมื่อได้ ack แล้วเท่านั้น (ผ่าน `MQTT_EVENT_PUBLISHED`) หรือส่งรายการ alarm ที่ยัง active เป็น attribute ใน milestone 3 ให้ ThingsBoard เทียบเอง ควรแก้ก่อนใช้ alarm ของ ThingsBoard ส่งแจ้งเตือนจริง
-- [ ] `clear_ts` ของ alarm ใน ThingsBoard เป็นเวลาที่เซิร์ฟเวอร์ได้รับ ไม่ใช่เวลาที่หายจริงบนบอร์ด (bench B7) เพราะ node Clear Alarm ใช้เวลาเซิร์ฟเวอร์ ถ้าต้องการเวลาจริง ให้ rule chain ใส่ `ts` ของเหตุการณ์ลงใน alarm details หรือใช้ `ts` ของข้อความ
+- [ ] `clear_ts` ของ alarm ใน ThingsBoard เป็นเวลาที่เซิร์ฟเวอร์ได้รับ ไม่ใช่เวลาที่หายจริงบนบอร์ด (bench B7) เพราะ node Clear Alarm ใช้เวลาเซิร์ฟเวอร์ ถ้าต้องการเวลาจริง ให้ rule chain ใส่ `ts` ของเหตุการณ์ลงใน alarm details หรือใช้ `ts` ของข้อความ (L3 รอบ 7 ยืนยันอีกครั้ง: `startTs` ของ alarm ใช้ `ts` ของข้อความอยู่แล้ว แต่ `clearTs` ของ event ที่ backfill เป็นเวลาที่ต่อกลับ)
 - [ ] ข้อเล็กที่เลื่อนไว้จากรีวิว milestone 1 (ไม่มีข้อไหนทำให้บอร์ดค้างหรือข้อมูลหาย นอกจากข้อจำกัดด้านบน) ทบทวนตอนวางแผน milestone 2:
   - `tb_link`: SUBACK ล้มเหลวแล้วขึ้นข้อความ error ผิด · log หลายบรรทัดต่อความล้มเหลวหนึ่งครั้ง · `send` อาจบล็อก task uplink ได้ 10–20 วินาทีใต้ lock ของ esp-mqtt · `tb_link_init` ล้มเหลวแล้วไม่คืน mutex/queue (OOM ตอนบูตเท่านั้น) · `client_pub` ประกาศหลัง start ทำให้ `failed` นับเพิ่มได้หนึ่งครั้ง · PROVISIONING ไม่มีทางลัดเมื่อ Wi-Fi หลุด (รอ timeout 15 วินาที)
   - `tb_link_logic`: ไม่ตรวจชุดตัวอักษรของ token ที่ได้จากการลงทะเบียน · `cJSON_Add*` ใน `to_json` ไม่ตรวจผล (OOM เท่านั้น)
@@ -108,11 +108,11 @@
     - `relay_polarity` (ชื่อเก่า) ถูกตรวจด้วยแม้มี `relay1_polarity` อยู่แล้ว (เข้มเกินไปแต่ไม่มีผลเสีย)
 - [ ] **ข้อที่พบใน bench milestone 3 (รอบ 4 ใน `bench-test-thingsboard.md`, 2026-11-20):**
   - ~~I4 ยังไม่ผ่าน~~ **ผ่านแล้ว** (รอบที่สามทำผ่านหน้าเว็บจริง: `POST /api/pump/config` 200 แล้ว ThingsBoard เห็นค่าใหม่และค่าที่คืนภายใน 1.7 วินาที สองรอบแรกหน้าเว็บไม่ได้ส่งคำขอ)
-  - I7 (ปิดลิงก์แล้วต่อใหม่) เลื่อนไปรวมกับทดสอบ ThingsBoard ล่มใน milestone 6
+  - ~~I7 (ปิดลิงก์แล้วต่อใหม่) เลื่อนไปรวมกับทดสอบ ThingsBoard ล่มใน milestone 6~~ **ผ่านแล้ว** ใน L2 รอบ 7 (2026-11-21): host ผิด backoff ถึง 60 วินาที คืน host แล้วต่อใน 2 วินาที ส่ง attribute ครบ 6 ตัวใหม่
   - `heap_min` ลดจาก 110.6 KB (M2) เป็น 107.5 KB ยังเกินงบ 100 KB เฝ้าดูต่อใน M4/M5 (OTA และ TLS จะใช้หน่วยความจำเพิ่ม)
   - ThingsBoard ไม่เก็บสมาชิกที่เป็น null ใน attribute แบบ JSON (เช่น `hardware_map.pending`) frontend ต้องถือว่า field ที่หายไปคือ null
 - [ ] **ข้อที่พบใน bench milestone 4 (รอบ 5 ใน `bench-test-thingsboard.md`, 2026-11-20):**
-  - J4 แบบเต็ม (commit ผ่าน hook ตอนต่อ ThingsBoard ติดบนเครือข่ายใหม่ + ตั้ง auto-connect + ถอดไฟแล้วยังอยู่เครือข่ายใหม่) ยังไม่ได้ทำ ต้องมี access point 2.4 GHz ตัวที่สองใน LAN เดียวกับ ThingsBoard ทำตอนมีอุปกรณ์ หรือรวมกับรอบทดสอบ M6
+  - J4 แบบเต็ม (commit ผ่าน hook ตอนต่อ ThingsBoard ติดบนเครือข่ายใหม่ + ตั้ง auto-connect + ถอดไฟแล้วยังอยู่เครือข่ายใหม่) ยังไม่ได้ทำ ต้องมี access point 2.4 GHz ตัวที่สองใน LAN เดียวกับ ThingsBoard ทำตอนมีอุปกรณ์ (รอบ 7 ของ M6 ข้อ L5 ไม่ได้ทำ: ผู้ใช้ยืนยันว่ายังไม่มี access point ตัวที่สอง)
   - ปุ่ม `wifi.connect` บน dashboard ส่ง params ตัวอย่าง (`แก้ก่อนส่ง`) ไปได้ ทำให้บอร์ด stage เครือข่ายที่ไม่มีอยู่และรีบูตฟรี 2 ครั้ง ควรให้ widget ไม่ยอมส่งเมื่อค่ายังเป็นข้อความตัวอย่าง (หรือให้เฟิร์มแวร์ปฏิเสธ SSID ที่ไม่เห็นใน scan ล่าสุด)
   - การย้อนกลับเมื่อรหัสผิดใช้เวลา 180 วินาที ไม่ใช่ 30 วินาที เพราะ wifi_manager ถอยไปต่อเครือข่ายเดิมเองก่อน timer 30 วินาทีจึงไม่ทำงาน ปลอดภัย แต่บอร์ดรีบูตช้ากว่าที่ควร ถ้าอยากให้เร็วขึ้น ให้ timer 30 วินาทีดูว่าต่ออยู่บน SSID ที่ stage ไว้ ไม่ใช่แค่ว่ามี STA
   - โปรไฟล์ `Ggggg` บนบอร์ดอาจเก็บรหัสที่ผิดไว้ (จากการทดสอบแทน J4)
@@ -243,6 +243,12 @@
   - ไม่มีที่รายงาน HWM ของ task `tb_ota` (K7 วัดไม่ได้) ทางแก้: log HWM ตอน task จบ หรือใส่ใน `BOARD_DIAG` ขณะ task ยังอยู่
   - log `OTA firmware validated (PENDING_VERIFY -> VALID)` ของ `app_main` ขึ้นแม้สถานะเป็น VALID อยู่แล้ว (หลัง flash USB และหลัง rollback) ทำให้อ่าน log สับสน
   - ThingsBoard ปฏิเสธ checksum ที่ไม่ตรงตอน upload และทิ้ง package ว่างไว้ ตัวเลือก `--checksum` ของ `tb_ota.py` จึงใช้สร้างเคส checksum ผิดไม่ได้ ควรลบ package ว่างให้เองเมื่อ upload ล้ม
+- จาก bench รอบ 7 (milestone 6, `docs/bench-test-thingsboard.md`) ไม่มีข้อที่ไม่ผ่าน ข้อสังเกต:
+  - ring เหตุการณ์ 32 ช่องเต็มเมื่อ ThingsBoard ล่มนานประมาณ 29 นาทีที่อัตรา 1.1 event ต่อนาที (กฎทดสอบที่เกิด/หายทุกรอบปั๊ม) ล่ม 38 นาทีจึงเสีย event เก่าสุด 9 ตัว (มี log `overwritten` ทุกตัว) ถ้าจะใช้ alarm ของ ThingsBoard แจ้งเตือนจริง ควรรวมกับทางแก้ของข้อจำกัด milestone 1 ด้านบน (ส่งรายการ alarm ที่ยัง active เป็น attribute) หรือขยาย ring
+  - ตอนต่อกลับพร้อม event ค้าง 32 ตัว outbox ของ MQTT เต็ม `rules attribute send failed: ESP_FAIL` 2 ครั้งและ `status send failed` 1 ครั้ง (ลองใหม่เองแล้วผ่าน การ์ดนับ "ล้มเหลว 3")
+  - กดบันทึกการ์ด ThingsBoard ขณะลิงก์อยู่ใน backoff จะมีผลช้าสุดประมาณ 5 วินาที (รอบตรวจของ task) ไม่ใช่ทันทีเหมือนตอน connected
+  - ThingsBoard ไม่เก็บ `alarm_event` เป็น timeseries (rule chain แปลงเป็น alarm แล้วเก็บแค่ `last_alarm_event`) frontend ที่อยากได้ประวัติ event ต้องอ่านจาก alarm ของ ThingsBoard
+  - `hwm_alarm` ต่ำสุด 2136 ตอน ring เต็ม (รอบก่อน 2600–2712) ยังเกินงบ 512
 
 ### จากระบบป้องกันปั๊มเดินแห้ง (`2026-11-16-pump-dry-run-protection-results.md` ส่วน 4 และ 7) ที่ Task 6–7 ไม่ได้แก้
 

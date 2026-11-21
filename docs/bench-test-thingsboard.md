@@ -1,8 +1,8 @@
 # คู่มือทดสอบบนบอร์ด: การเชื่อมต่อ ThingsBoard (MQTT)
 
-Firmware: branch `feature/thingsboard-mqtt` (commit `c058d1a`..`45a5fe8`)
+Firmware: branch `feature/thingsboard-mqtt` (ทดสอบตั้งแต่ commit `c058d1a` ถึง `e9f9a92` แต่ละรอบเขียน commit ของตัวเองไว้)
 Spec: `docs/superpowers/specs/2026-11-18-thingsboard-mqtt-link-design.md`
-Plan: `docs/superpowers/plans/2026-11-18-thingsboard-link-m1.md` (Task 7)
+Plan: `docs/superpowers/plans/2026-11-18-thingsboard-link-m1.md` (Task 7) ถึง `docs/superpowers/plans/2026-11-21-thingsboard-soak-m6.md` (milestone 1–6)
 ฝั่ง ThingsBoard: `thingsboard/README.md` (ThingsBoard CE 4.3.1 บนเครื่อง copter `192.168.1.51`, HTTP 8080, MQTT 1883)
 
 > **รอบนี้บอร์ดต้องต่อ Wi-Fi บ้าน (STA)** ไม่ใช่ AP `FishPump-Setup` เพราะทั้ง PC และบอร์ดต้องเห็น `192.168.1.51`
@@ -147,7 +147,7 @@ firmware 0258279 (โค้ดถึง 1bb904a) สคริปต์ ThingsBoa
 - [/] **I4 แก้ค่าบนหน้าเว็บแอปแล้ว ThingsBoard เห็น** — สองรอบแรก (ผู้ใช้แก้เอง เฝ้า 3 และ 4 นาที) บอร์ดไม่ได้รับคำสั่งเขียนเลย (ไม่มี `write pump.config.set src=http` ใน log) รอบที่สามทำผ่านหน้าเว็บของบอร์ดในหน้าต่าง browser หลังผู้ใช้ล็อกอิน: แก้ "หยุดพัก (Idle)" ของ Set 1 จาก 1:00 เป็น 1:30 แล้วกด "บันทึกการตั้งค่า" ได้ `POST /api/pump/config` 200 และ `cfg_pump.water_set1_off` ใน ThingsBoard เป็น 90 ภายในไม่กี่วินาที คืนเป็น 1:00 ได้ 200 อีกครั้ง และ ThingsBoard เห็น 60 ภายใน 1.7 วินาทีนับจากกดบันทึก (รวมเวลาที่ REST ตอบ) สองรอบแรกจึงเป็นเพราะหน้าเว็บไม่ได้ส่งคำขอ ไม่ใช่เฟิร์มแวร์
 - [/] **I5 สถานะส่งทันทีเมื่อ phase เปลี่ยน** — เฝ้า 3 นาทีเห็น phase เปลี่ยน 4 ครั้ง ข้อความถึง ThingsBoard ตอนนับถอยหลังเหลือ 49/50, 59/60, 49/50, 60/60 (ภายในประมาณ 1 วินาที) ช่วงที่ไม่มีอะไรเปลี่ยนข้อความสถานะมาทุก 29.2–30.2 วินาที
 - [/] **I6 dashboard ทุกหน้า** — `tb_setup.py` อัปโหลด dashboard 9 หน้า หน้า Pump, Cooling, Protection, Wi-Fi, Status และ Hardware มีตาราง "ค่าตั้งปัจจุบัน (client attributes)" พร้อมข้อมูล และตารางค่าล่าสุดมีคีย์สถานะใหม่ ปุ่ม "โหลดค่าปัจจุบัน" ของ `pump.config.set` ได้ 14 key ที่เขียนได้ (377 B) และกดส่งต่อได้ `ok:true` (แก้ข้อค้างจาก M2) หน้า Hardware ตารางค่าล่าสุดว่างเพราะหน้านี้ไม่มีคีย์ telemetry
-- [ ] **I7 ปิดลิงก์แล้วต่อใหม่** — ไม่ได้ทำ ต้องแก้ host บนการ์ด ThingsBoard ในเว็บแอป ซึ่งรอบนี้หน้าเว็บบันทึกไม่ถึงบอร์ด (ดู I4) เลื่อนไปทดสอบรวมกับ ThingsBoard ล่มใน milestone 6 การส่ง attribute ครบหลังต่อติดเห็นแล้วใน I1 (6 ตัวภายใน 0.9 วินาทีหลัง connected)
+- [/] **I7 ปิดลิงก์แล้วต่อใหม่** — (ทำแล้วใน L2 ของรอบ 7: ต่อกลับเอง ส่ง attribute ครบ 6 ตัวใหม่) เดิม: ไม่ได้ทำ ต้องแก้ host บนการ์ด ThingsBoard ในเว็บแอป ซึ่งรอบนี้หน้าเว็บบันทึกไม่ถึงบอร์ด (ดู I4) เลื่อนไปทดสอบรวมกับ ThingsBoard ล่มใน milestone 6 การส่ง attribute ครบหลังต่อติดเห็นแล้วใน I1 (6 ตัวภายใน 0.9 วินาทีหลัง connected)
 - [/] **I8 งบหน่วยความจำ** — uptime 92 นาที เปิด dashboard ค้างตั้งแต่ 09:28 ไม่มีรีบูต `heap_free` 146 KB `heap_min` 107.5 KB (M2 110.6 KB ลดลงประมาณ 3 KB ยังเกิน 100 KB) HWM ต่ำสุด `main_stack_hwm` 1284 `hwm_alarm` 2664 `hwm_uplink` 2928 (stack ใหม่ 6144) `hwm_dry_run` 3364 `tb_hwm` 3700 `tb_rpc_hwm` 3568 HTTP 300 request `failed=0`
 
 ## รอบ 5: เปลี่ยน Wi-Fi จากระยะไกล (milestone 4)
@@ -208,6 +208,20 @@ firmware e9f9a92 (0.3.2 flash ทาง USB วันที่ 2026-11-21) ไ�
   - บันทึก: ทั้งรอบ (07:21–10:13, uptime ถึง 3.6 ชั่วโมง รวม TLS ผิด, host ผิด, ThingsBoard ล่ม 38 นาทีพร้อม backfill 32 event และ soak) ต่ำสุด `heap_free` 143.2 KB `heap_min` 107.5 KB (งบ 100 KB) `main_stack_hwm` 1012 `hwm_alarm` 2136 `hwm_uplink` 2928 `hwm_dry_run` 3204 `tb_hwm` 2988 `tb_rpc_hwm` 3448 (งบ 512 ทุกตัว) tasks 23 ตลอด หน้าเว็บ 343 ครั้งได้ 200 ทั้งหมด ผ่านงบทุกข้อ ค่า `hwm_alarm` ต่ำสุดของรอบนี้ (2136) ต่ำกว่ารอบก่อน (2600–2712) และเกิดตอน ring เต็มระหว่าง ThingsBoard ล่ม ยังเหลือเกิน 4 เท่าของงบ
 
 - [/] **หลังรอบ 7** — host `192.168.1.51` TLS ปิด ลิงก์ connected (การ์ด "เชื่อมต่อแล้ว · 6603 วิ" ส่งแล้ว 846 ล้มเหลว 3 คือ 3 ครั้งตอน backfill ใน L3) กฎ 19 คืนค่าเดิม (`pump_is_running`, ปิด) อ่านกลับจากเว็บแอปแล้ว ตัวคุมการทดสอบ quit ตัวเช็คหน้าเว็บและตัวเก็บ serial log หยุดแล้ว
+
+## ครอบคลุม spec ข้อ 8
+
+ข้อ bench ของ spec ข้อ 8 (`docs/superpowers/specs/2026-11-18-thingsboard-mqtt-link-design.md`) กับขั้นที่ทดสอบ:
+
+- ลงทะเบียนจากค่าว่าง — B1 (และลงทะเบียนซ้ำ B3)
+- telemetry และ event ที่มี `ts` ถูก หลัง SNTP — B2, B6 · หลังหลุด 2 นาที — B7 · หลัง ThingsBoard ล่มนาน — L3 (`startTs` ของ alarm ตรงเวลาบอร์ดไม่เกิน 0.4 วินาที)
+- parity script — A4, F4, H4, I2, I3, J1, K1
+- เดิน dashboard ทุกหน้า — A5, F5, I6 (และปุ่ม Wi-Fi J5)
+- เปลี่ยน Wi-Fi จากระยะไกล รหัสผิดแล้วย้อนกลับ — J2, J3 · สำเร็จ — J4 แบบแทนเท่านั้น **ยังค้าง** J4 แบบเต็ม (L5) เพราะไม่มี access point ตัวที่สองใน LAN เดียวกับ ThingsBoard
+- OTA สำเร็จ — K2, K5 · อิมเมจเสีย — K3 (ไฟล์สุ่ม ไม่ใช่ checksum ผิด เพราะ ThingsBoard ปฏิเสธ checksum ผิดตั้งแต่ upload) และ K3 ซ้ำหลังแก้ · อิมเมจที่ไม่ต่อ ThingsBoard ย้อนกลับใน 5 นาที — K4
+- ThingsBoard ล่ม (`docker stop tb-node` ด้วย OK ของผู้ใช้) งานในบอร์ดไม่สะดุด ต่อกลับและ backfill — L3
+- heap และ HWM ตลอด soak 1 ชั่วโมงที่เปิด dashboard — L4, L6 (และ B8, F7, I8, J6, K7)
+- นอกข้อ 8 แต่ spec ข้อ 6.6 กำหนด: TLS ชี้พอร์ตที่ไม่มี TLS ต้องล้มอย่างเรียบร้อย — L1
 
 ## หลังทดสอบ
 
