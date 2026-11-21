@@ -76,6 +76,7 @@
 - [ ] ตามแผนแพลตฟอร์ม: กฎอยู่ในเฟิร์มแวร์ ส่วน ThingsBoard เก็บข้อมูลและส่งแจ้งเตือน รองรับหลายลูกค้าและหลาย firmware (`identity` มี `fw_type` และ `contract_version` ไว้สำหรับเรื่องนี้)
 - [ ] **release pipeline: ยืนยันการรัน CI จริง** (`ci.yml`, `release.yml`, `run_selftest.sh` สำหรับ QEMU ยังไม่เคยรันบน GitHub/Linux) ดู `docs/release/handover.md`
 - [ ] **secure boot และ OTA ที่เซ็นลายเซ็น** ตอนนี้คีย์ OTA ฝังใน flash ไม่ได้เข้ารหัส และคีย์เดียวทั้งฝูง จำเป็นเมื่อขายหลายลูกค้า
+- [ ] **NVS encryption และ flash encryption ปิดอยู่** (ตรวจ 2026-11-21: `CONFIG_NVS_ENCRYPTION` และ `CONFIG_SECURE_FLASH_ENC_ENABLED` ไม่ได้ตั้งใน `firmware/sdkconfig`, บูต log `NVS init OK (no encryption)`) รหัส Wi-Fi, token ThingsBoard, JWT secret และคีย์ OTA อยู่ใน flash แบบอ่านได้ ใครถือบอร์ดแล้วอ่าน flash ผ่าน USB ได้ก็เห็น partition `nvs_keys` มีแล้วแต่ยังไม่ได้ใช้ ทำพร้อม secure boot และต้องวางแผนก่อน เพราะเปิด flash encryption แล้วย้อนกลับไม่ได้ (eFuse) และ `FLASH.bat` ต้องเปลี่ยนวิธีติดตั้ง
 - [ ] **TLS ของ ThingsBoard ก่อนขึ้น VPS:** ThingsBoard OTA ส่งไฟล์ธรรมดาผ่าน MQTT ธรรมดา
 - [ ] พิจารณานำของอื่นจากโปรเจกต์เก่า `fish-pump-RelayTimerControl` มาใช้ (`mock_server.py`, `hardware_simulator.py`, `monitor-soak.ps1`, `serial_bridge.py`, `docs/`) ยังไม่ได้ดู
 - [ ] ล้างโฟลเดอร์ว่างที่มีแค่ `.gitkeep` (`scripts/`, `scratch/`, `infra/`, `frontend-app/`) และ branch เก่าบน origin เมื่อเจ้าของสั่งเท่านั้น
