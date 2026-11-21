@@ -90,10 +90,25 @@ def test_firmware_reports_key():
     assert_test("ota_key_fp" in doc, "device-api.md documents ota_key_fp")
 
 
+def test_packaging():
+    print(chr(10) + "[packaging and customer tools]")
+    wifi = read(FIRMWARE_DIR / "components" / "wifi_manager" / "wifi_manager.c")
+    ps = read(FIRMWARE_DIR / "scripts" / "customer" / "tools" / "ap_password.ps1")
+    assert_test("SALT = 0x5A" in wifi and "mac[2] ^ SALT" in wifi and "mac[5] ^ SALT" in wifi,
+                "firmware AP password formula is MAC[2..5] XOR 0x5A",
+                "if the firmware formula changes, update ap_password.ps1 and its test vector")
+    assert_test("$salt = 0x5A" in ps and "$Mac[2]" in ps and "$Mac[5]" in ps,
+                "ap_password.ps1 uses the same formula")
+    flash = read(FIRMWARE_DIR / "scripts" / "customer" / "tools" / "flash_and_show.ps1")
+    assert_test("0x0" in flash and "factory.bin" in flash, "FLASH installs factory.bin at 0x0")
+    assert_test((FIRMWARE_DIR / "scripts" / "package_release.py").exists(), "package_release.py exists")
+
+
 def main():
     test_build_inputs()
     test_release_gate()
     test_firmware_reports_key()
+    test_packaging()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 
