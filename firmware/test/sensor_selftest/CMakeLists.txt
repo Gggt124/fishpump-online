@@ -15,6 +15,7 @@ set(EXTRA_COMPONENT_DIRS
     ../../components/tb_link_logic
     ../../components/device_api
     ../../components/dapi_guards
+    ../../components/ota_key
     ../../managed_components/espressif__cjson
 )
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
