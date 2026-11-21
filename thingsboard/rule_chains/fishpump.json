@@ -1,0 +1,506 @@
+{
+  "ruleChain": {
+    "additionalInfo": {
+      "description": "fishpump rule chain, modelled on the Root Rule Chain: Message Type Switch then Save Timeseries, Save Client Attributes, RPC and Log. Telemetry first passes the check Has alarm_event. Plain telemetry is saved. Alarm events (alarm_event at top level, or inside values with a ts) go through: fetch the server attribute last_alarm_event (boot_id and seq), normalize and dedupe (drop when boot_id is equal and seq is not greater than the stored one), route, then Create Alarm (type rule_ plus the rule id; critical is CRITICAL, warning is WARNING, info is INDETERMINATE; details are the event) or Clear Alarm (same type), then save last_alarm_event as a SERVER_SCOPE attribute. The source of truth is this file and tb_setup.py imports it by name."
+    },
+    "name": "fishpump",
+    "type": "CORE",
+    "firstRuleNodeId": null,
+    "root": false,
+    "debugMode": false,
+    "configuration": null
+  },
+  "metadata": {
+    "version": 1,
+    "firstNodeIndex": 0,
+    "nodes": [
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbMsgTypeSwitchNode",
+        "name": "Message Type Switch",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "version": 0
+        },
+        "additionalInfo": {
+          "layoutX": 330,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.telemetry.TbMsgTimeseriesNode",
+        "name": "Save Timeseries",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "defaultTTL": 0
+        },
+        "additionalInfo": {
+          "layoutX": 920,
+          "layoutY": 60
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.telemetry.TbMsgAttributesNode",
+        "name": "Save Client Attributes",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scope": "CLIENT_SCOPE",
+          "notifyDevice": false,
+          "sendAttributesUpdatedNotification": false,
+          "updateAttributesOnlyOnValueChange": true
+        },
+        "additionalInfo": {
+          "layoutX": 330,
+          "layoutY": 340
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.action.TbLogNode",
+        "name": "Log RPC from Device",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scriptLang": "TBEL",
+          "jsScript": "return 'x';",
+          "tbelScript": "return \"Incoming message: \" + msg + \" metadata: \" + metadata;"
+        },
+        "additionalInfo": {
+          "layoutX": 330,
+          "layoutY": 440
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.rpc.TbSendRPCRequestNode",
+        "name": "RPC Call Request",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "timeoutInSeconds": 60
+        },
+        "additionalInfo": {
+          "layoutX": 330,
+          "layoutY": 540
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.action.TbLogNode",
+        "name": "Log Other",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scriptLang": "TBEL",
+          "jsScript": "return 'x';",
+          "tbelScript": "return \"Incoming message: \" + msg + \" metadata: \" + metadata;"
+        },
+        "additionalInfo": {
+          "layoutX": 330,
+          "layoutY": 640
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode",
+        "name": "Has alarm_event?",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scriptLang": "TBEL",
+          "jsScript": "return true;",
+          "tbelScript": "return msg.containsKey(\"alarm_event\") || (msg.containsKey(\"values\") && msg.values.containsKey(\"alarm_event\"));"
+        },
+        "additionalInfo": {
+          "layoutX": 620,
+          "layoutY": 200,
+          "description": "True when the data has alarm_event (plain) or values.alarm_event (ts/values form)"
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.metadata.TbGetAttributesNode",
+        "name": "Fetch last_alarm_event",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 1,
+        "configuration": {
+          "tellFailureIfAbsent": false,
+          "getLatestValueWithTs": false,
+          "clientAttributeNames": [],
+          "sharedAttributeNames": [],
+          "serverAttributeNames": [
+            "last_alarm_event"
+          ],
+          "latestTsKeyNames": [],
+          "fetchTo": "METADATA"
+        },
+        "additionalInfo": {
+          "layoutX": 920,
+          "layoutY": 200,
+          "description": "Puts the server attribute into metadata as ss_last_alarm_event"
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
+        "name": "Normalize and dedupe",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scriptLang": "TBEL",
+          "jsScript": "return {msg: msg, metadata: metadata, msgType: msgType};",
+          "tbelScript": "var ev = msg.containsKey(\"alarm_event\") ? msg.alarm_event : msg.values.alarm_event;\nvar dup = false;\nvar last = metadata.ss_last_alarm_event;\nif (last != null && last != \"\") {\n  var l = JSON.parse(last);\n  if (l.boot_id == ev.boot_id && ev.seq <= l.seq) {\n    dup = true;\n  }\n}\nvar route = \"other\";\nif (dup) {\n  route = \"drop\";\n} else if (ev.type == \"raised\") {\n  if (ev.severity == \"critical\") {\n    route = \"raise_critical\";\n  } else if (ev.severity == \"warning\") {\n    route = \"raise_warning\";\n  } else {\n    route = \"raise_info\";\n  }\n} else if (ev.type == \"cleared\") {\n  route = \"clear\";\n}\nmetadata.alarmType = \"rule_\" + ev.rule_id;\nmetadata.alarmRoute = route;\nmetadata.evBootId = \"\" + ev.boot_id;\nmetadata.evSeq = \"\" + ev.seq;\nreturn {msg: ev, metadata: metadata, msgType: msgType};"
+        },
+        "additionalInfo": {
+          "layoutX": 1210,
+          "layoutY": 200,
+          "description": "data becomes the event object; metadata gets alarmType (rule_ plus rule id), alarmRoute, evBootId, evSeq"
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbJsSwitchNode",
+        "name": "Route",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scriptLang": "TBEL",
+          "jsScript": "return ['drop'];",
+          "tbelScript": "return [metadata.alarmRoute];"
+        },
+        "additionalInfo": {
+          "layoutX": 1500,
+          "layoutY": 200
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode",
+        "name": "Create Alarm CRITICAL",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scriptLang": "TBEL",
+          "alarmDetailsBuildJs": "return msg;",
+          "alarmDetailsBuildTbel": "return msg;",
+          "useMessageAlarmData": false,
+          "overwriteAlarmDetails": false,
+          "alarmType": "${alarmType}",
+          "severity": "CRITICAL",
+          "propagate": false,
+          "relationTypes": [],
+          "propagateToOwner": false,
+          "propagateToTenant": false,
+          "dynamicSeverity": false
+        },
+        "additionalInfo": {
+          "layoutX": 1790,
+          "layoutY": 60
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode",
+        "name": "Create Alarm WARNING",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scriptLang": "TBEL",
+          "alarmDetailsBuildJs": "return msg;",
+          "alarmDetailsBuildTbel": "return msg;",
+          "useMessageAlarmData": false,
+          "overwriteAlarmDetails": false,
+          "alarmType": "${alarmType}",
+          "severity": "WARNING",
+          "propagate": false,
+          "relationTypes": [],
+          "propagateToOwner": false,
+          "propagateToTenant": false,
+          "dynamicSeverity": false
+        },
+        "additionalInfo": {
+          "layoutX": 1790,
+          "layoutY": 160
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.action.TbCreateAlarmNode",
+        "name": "Create Alarm INDETERMINATE",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scriptLang": "TBEL",
+          "alarmDetailsBuildJs": "return msg;",
+          "alarmDetailsBuildTbel": "return msg;",
+          "useMessageAlarmData": false,
+          "overwriteAlarmDetails": false,
+          "alarmType": "${alarmType}",
+          "severity": "INDETERMINATE",
+          "propagate": false,
+          "relationTypes": [],
+          "propagateToOwner": false,
+          "propagateToTenant": false,
+          "dynamicSeverity": false
+        },
+        "additionalInfo": {
+          "layoutX": 1790,
+          "layoutY": 260
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.action.TbClearAlarmNode",
+        "name": "Clear Alarm",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scriptLang": "TBEL",
+          "alarmDetailsBuildJs": "return msg;",
+          "alarmDetailsBuildTbel": "return msg;",
+          "alarmType": "${alarmType}"
+        },
+        "additionalInfo": {
+          "layoutX": 1790,
+          "layoutY": 360
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.transform.TbTransformMsgNode",
+        "name": "Build last_alarm_event",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scriptLang": "TBEL",
+          "jsScript": "return {msg: msg, metadata: metadata, msgType: msgType};",
+          "tbelScript": "var out = {};\nout.last_alarm_event = {boot_id: parseLong(metadata.evBootId), seq: parseLong(metadata.evSeq)};\nreturn {msg: out, metadata: metadata, msgType: \"POST_ATTRIBUTES_REQUEST\"};"
+        },
+        "additionalInfo": {
+          "layoutX": 2080,
+          "layoutY": 200,
+          "description": "data becomes last_alarm_event with boot_id and seq taken from metadata"
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.telemetry.TbMsgAttributesNode",
+        "name": "Save last_alarm_event",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scope": "SERVER_SCOPE",
+          "notifyDevice": false,
+          "sendAttributesUpdatedNotification": false,
+          "updateAttributesOnlyOnValueChange": true
+        },
+        "additionalInfo": {
+          "layoutX": 2370,
+          "layoutY": 200
+        }
+      }
+    ],
+    "connections": [
+      {
+        "fromIndex": 0,
+        "toIndex": 6,
+        "type": "Post telemetry"
+      },
+      {
+        "fromIndex": 0,
+        "toIndex": 2,
+        "type": "Post attributes"
+      },
+      {
+        "fromIndex": 0,
+        "toIndex": 3,
+        "type": "RPC Request from Device"
+      },
+      {
+        "fromIndex": 0,
+        "toIndex": 4,
+        "type": "RPC Request to Device"
+      },
+      {
+        "fromIndex": 0,
+        "toIndex": 5,
+        "type": "Other"
+      },
+      {
+        "fromIndex": 6,
+        "toIndex": 1,
+        "type": "False"
+      },
+      {
+        "fromIndex": 6,
+        "toIndex": 7,
+        "type": "True"
+      },
+      {
+        "fromIndex": 7,
+        "toIndex": 8,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 8,
+        "toIndex": 9,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 9,
+        "toIndex": 10,
+        "type": "raise_critical"
+      },
+      {
+        "fromIndex": 9,
+        "toIndex": 11,
+        "type": "raise_warning"
+      },
+      {
+        "fromIndex": 9,
+        "toIndex": 12,
+        "type": "raise_info"
+      },
+      {
+        "fromIndex": 9,
+        "toIndex": 13,
+        "type": "clear"
+      },
+      {
+        "fromIndex": 9,
+        "toIndex": 14,
+        "type": "other"
+      },
+      {
+        "fromIndex": 10,
+        "toIndex": 14,
+        "type": "Created"
+      },
+      {
+        "fromIndex": 10,
+        "toIndex": 14,
+        "type": "Updated"
+      },
+      {
+        "fromIndex": 10,
+        "toIndex": 14,
+        "type": "Cleared"
+      },
+      {
+        "fromIndex": 11,
+        "toIndex": 14,
+        "type": "Created"
+      },
+      {
+        "fromIndex": 11,
+        "toIndex": 14,
+        "type": "Updated"
+      },
+      {
+        "fromIndex": 11,
+        "toIndex": 14,
+        "type": "Cleared"
+      },
+      {
+        "fromIndex": 12,
+        "toIndex": 14,
+        "type": "Created"
+      },
+      {
+        "fromIndex": 12,
+        "toIndex": 14,
+        "type": "Updated"
+      },
+      {
+        "fromIndex": 12,
+        "toIndex": 14,
+        "type": "Cleared"
+      },
+      {
+        "fromIndex": 13,
+        "toIndex": 14,
+        "type": "Cleared"
+      },
+      {
+        "fromIndex": 13,
+        "toIndex": 14,
+        "type": "False"
+      },
+      {
+        "fromIndex": 14,
+        "toIndex": 15,
+        "type": "Success"
+      }
+    ],
+    "ruleChainConnections": null
+  }
+}

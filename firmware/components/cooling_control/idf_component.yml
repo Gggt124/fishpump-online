@@ -1,0 +1,5 @@
+dependencies:
+  espressif/onewire_bus: "^1.1.1"
+  espressif/ds18b20: "^0.3.1"
+  esp-idf-lib/max31865: '*'
+
