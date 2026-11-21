@@ -249,7 +249,7 @@
   - กดบันทึกการ์ด ThingsBoard ขณะลิงก์อยู่ใน backoff จะมีผลช้าสุดประมาณ 5 วินาที ไม่ใช่ทันทีเหมือนตอน connected สาเหตุยังไม่ยืนยัน (`TB_TICK_MS` 1000 และการบันทึกปลุก task ทันที ที่น่าจะเป็นคือ `esp_mqtt_client_destroy` ใน `task_teardown`)
   - ThingsBoard ไม่เก็บ `alarm_event` เป็น timeseries (rule chain แปลงเป็น alarm แล้วเก็บแค่ `last_alarm_event`) frontend ที่อยากได้ประวัติ event ต้องอ่านจาก alarm ของ ThingsBoard
   - `hwm_alarm` ต่ำสุด 2136 ในช่วง ThingsBoard ล่ม (รอบก่อน 2600–2712) ยังเกินงบ 512 สาเหตุยังไม่ชัด (ring ของ task alarm เขียนเหมือนกันไม่ว่าส่งได้หรือไม่)
-  - **ยังค้างจาก spec ข้อ 6.6:** TLS ชี้พอร์ตที่ไม่มี TLS การ์ดขึ้นแค่ "mqtt: transport error" เหมือนตอน host ผิด (L1) ควรแยก error ของ TLS handshake (เช่น `mbedtls_ssl_handshake` -0x7280) เป็นข้อความเช่น "TLS handshake ไม่สำเร็จ (เซิร์ฟเวอร์อาจไม่ได้เปิด TLS)" ต้องแก้เฟิร์มแวร์และทดสอบบนบอร์ด
+  - ~~TLS ชี้พอร์ตที่ไม่มี TLS การ์ดขึ้นแค่ "mqtt: transport error" เหมือนตอน host ผิด (spec ข้อ 6.6)~~ **แก้แล้ว** ใน 377408b: `tb_transport_error_text()` ให้ "tls: handshake failed (is TLS enabled on this port?)" และ "tls: server certificate not trusted" ทดสอบบนบอร์ดแล้ว (L1 ซ้ำหลังแก้) ส่วนข้อความใบรับรองยังไม่ได้ทดสอบบนบอร์ด เพราะไม่มีเซิร์ฟเวอร์ TLS
   - **ยังค้าง:** ทาง `checksum_mismatch` ของ `tb_ota` ยังไม่เคยรันบนบอร์ดจริง (ThingsBoard ปฏิเสธ checksum ผิดตอน upload) ต้องใช้วิธีอื่น เช่นแก้ attribute `fw_checksum` ของ device ตรงๆ
   - เวลาที่ ThingsBoard พร้อมหลัง `docker start` (L3) ไม่ได้วัด ถ้าจะยืนยันเกณฑ์ "ต่อติดภายใน 60 วินาทีหลัง 8080 ตอบ" ให้ดู `docker logs --timestamps tb-node` คู่กับ serial log
 
