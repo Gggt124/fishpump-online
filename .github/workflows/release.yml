@@ -1,0 +1,81 @@
+name: Release
+
+# Runs when a version tag is pushed (for example v0.4.1, or v0.4.1-rc1 for a dry run).
+# The OTA key comes from the repository secret OTA_ENCRYPTION_KEY and is only set
+# in the two steps that need it. Nothing here prints the key; only its fingerprint is shown.
+# See docs/release/release.md.
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Keep this tag equal to firmware/IDF_VERSION (verify_release_pipeline.py checks it).
+    container: espressif/idf:v6.0.1
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      kind: ${{ steps.tag.outputs.kind }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches firmware/version.txt
+        id: tag
+        run: |
+          python3 firmware/scripts/check_release_tag.py "$GITHUB_REF_NAME" | tee tag.txt
+          echo "version=$(cut -d' ' -f1 tag.txt)" >> "$GITHUB_OUTPUT"
+          echo "kind=$(cut -d' ' -f2 tag.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Write the OTA key file
+        env:
+          OTA_ENCRYPTION_KEY: ${{ secrets.OTA_ENCRYPTION_KEY }}
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          pip install --quiet cryptography
+          python firmware/scripts/write_secrets.py --from-env OTA_ENCRYPTION_KEY
+
+      - name: Build (release mode, fails without a real key)
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          idf.py -C firmware -DFISHPUMP_RELEASE=ON build
+
+      - name: Package
+        env:
+          OTA_ENCRYPTION_KEY: ${{ secrets.OTA_ENCRYPTION_KEY }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          python firmware/scripts/package_release.py --build-dir firmware/build --version "$VERSION" --out-dir release-out --key-env OTA_ENCRYPTION_KEY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: release-out/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: release-out
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KIND: ${{ needs.build.outputs.kind }}
+        run: |
+          flags=""
+          if [ "$KIND" = "prerelease" ]; then flags="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" release-out/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes $flags

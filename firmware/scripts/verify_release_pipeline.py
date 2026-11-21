@@ -104,11 +104,61 @@ def test_packaging():
     assert_test((FIRMWARE_DIR / "scripts" / "package_release.py").exists(), "package_release.py exists")
 
 
+def _load_workflow(name):
+    import yaml  # PyYAML: pip install pyyaml
+    path = REPO_DIR / ".github" / "workflows" / name
+    text = read(path)
+    doc = yaml.safe_load(text) if text else {}
+    triggers = doc.get("on", doc.get(True, {})) if isinstance(doc, dict) else {}
+    return text, doc, triggers
+
+
+def test_workflows():
+    print(chr(10) + "[GitHub Actions]")
+    idf = read(FIRMWARE_DIR / "IDF_VERSION").strip()
+    ci_text, ci, ci_on = _load_workflow("ci.yml")
+    assert_test(bool(ci_text), "ci.yml exists")
+    assert_test("pull_request" in ci_on and "push" in ci_on, "ci.yml runs on pull requests and pushes to main")
+    assert_test("main" in (ci_on.get("push") or {}).get("branches", []), "ci.yml push trigger is limited to main")
+    assert_test("espressif/idf:v" + idf in ci_text, "ci.yml uses the pinned ESP-IDF image", "expected espressif/idf:v" + idf)
+    assert_test("verify_" in ci_text and "unittest" in ci_text, "ci.yml runs verify scripts and unit tests")
+    assert_test("idf.py" in ci_text and "build" in ci_text, "ci.yml builds the firmware")
+    assert_test("run_selftest.sh" in ci_text, "ci.yml runs the QEMU selftest")
+
+    rel_text, rel, rel_on = _load_workflow("release.yml")
+    assert_test(bool(rel_text), "release.yml exists")
+    push = rel_on.get("push") or {}
+    assert_test(push.get("tags") == ["v*.*.*"] and "branches" not in push and "pull_request" not in rel_on,
+                "release.yml runs only on version tags")
+    assert_test((rel.get("permissions") or {}).get("contents") == "write" or
+                any((j.get("permissions") or {}).get("contents") == "write" for j in rel.get("jobs", {}).values()),
+                "release.yml can create a release (contents: write)")
+    i_tag = rel_text.find("check_release_tag.py")
+    i_secrets = rel_text.find("write_secrets.py --from-env")
+    i_build = rel_text.find("-DFISHPUMP_RELEASE=ON")
+    i_pack = rel_text.find("package_release.py")
+    assert_test(0 <= i_tag < i_secrets < i_build < i_pack,
+                "release.yml order: check tag, write secrets, build in release mode, package",
+                f"positions {i_tag} {i_secrets} {i_build} {i_pack}")
+    assert_test("secrets.OTA_ENCRYPTION_KEY" in rel_text, "release.yml takes the key from the OTA_ENCRYPTION_KEY secret")
+    jobs = rel.get("jobs", {})
+    key_steps = [st for j in jobs.values() for st in j.get("steps", []) if "OTA_ENCRYPTION_KEY" in (st.get("env") or {})]
+    wide_env = [rel.get("env") or {}] + [j.get("env") or {} for j in jobs.values()]
+    assert_test(rel_text.count("secrets.OTA_ENCRYPTION_KEY") == len(key_steps) == 2 and
+                not any("OTA_ENCRYPTION_KEY" in e for e in wide_env),
+                "the key secret is only set in the env of the two steps that need it (never workflow or job wide)")
+    leaky = [l for l in rel_text.splitlines() if "OTA_ENCRYPTION_KEY" in l and ("echo" in l or "printenv" in l)]
+    assert_test(not leaky and "set -x" not in rel_text and "printenv" not in rel_text and "env |" not in rel_text,
+                "release.yml never echoes or dumps the key", str(leaky))
+    assert_test("gh release create" in rel_text, "release.yml publishes the files with gh release create")
+
+
 def main():
     test_build_inputs()
     test_release_gate()
     test_firmware_reports_key()
     test_packaging()
+    test_workflows()
     print(f"\nPASSED: {passed_tests}  FAILED: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
 

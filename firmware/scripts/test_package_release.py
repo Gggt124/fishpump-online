@@ -175,5 +175,42 @@ class ApPasswordTests(unittest.TestCase):
         self.assertIn("OK", r.stdout)
 
 
+class ReleaseTagTests(unittest.TestCase):
+    """check_release_tag.py: a release tag must match firmware/version.txt before anything is built."""
+
+    def run_check(self, tag, version="0.4.1\n"):
+        with tempfile.TemporaryDirectory() as d:
+            vf = Path(d) / "version.txt"
+            vf.write_text(version)
+            return subprocess.run(
+                [sys.executable, str(SCRIPTS / "check_release_tag.py"), tag, "--version-file", str(vf)],
+                capture_output=True, text=True,
+            )
+
+    def test_matching_tag_passes_and_prints_the_package_version(self):
+        r = self.run_check("v0.4.1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "0.4.1 release")
+
+    def test_release_candidate_suffix_is_a_prerelease(self):
+        r = self.run_check("v0.4.1-rc1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "0.4.1-rc1 prerelease")
+
+    def test_version_file_with_crlf_still_matches(self):
+        self.assertEqual(self.run_check("v0.4.1", version="0.4.1\r\n").returncode, 0)
+
+    def test_mismatched_tag_fails_before_anything_is_built(self):
+        r = self.run_check("v0.4.2")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("version.txt", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_malformed_tags_fail(self):
+        for tag in ("0.4.1", "v0.4", "v0.4.1.2", "vX.Y.Z", ""):
+            with self.subTest(tag=tag):
+                self.assertEqual(self.run_check(tag).returncode, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
