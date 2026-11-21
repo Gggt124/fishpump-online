@@ -1,0 +1,175 @@
+{
+  "alarms": {
+    "reads": [
+      {"method": "alarms.signals", "http": "/api/alarms/signals", "ignore": []},
+      {"method": "alarms.values", "http": "/api/alarms/values", "ignore": ["age_ms", "error", "v", "value", "reason", "pending"]},
+      {"method": "alarms.status", "http": "/api/alarms/status", "ignore": ["age_ms", "error", "v", "value", "reason", "pending", "uptime_ms", "since_ms"]},
+      {"method": "alarms.summary", "http": "/api/alarms/summary", "ignore": ["age_ms", "error", "v", "value", "reason", "pending", "uptime_ms", "since_ms"]},
+      {"method": "alarms.rules.get", "http": "/api/alarms/rules", "ignore": []}
+    ],
+    "errors": [
+      {"method": "alarms.rules.delete", "params": {"id": 0}, "http": "/api/alarms/rules/delete", "error": "value_out_of_range"},
+      {"method": "alarms.rules.delete", "params": {"id": 65000}, "http": "/api/alarms/rules/delete", "error": "not_found"},
+      {"method": "alarms.ack", "params": {"id": 65000}, "http": "/api/alarms/ack", "error": "not_found"},
+      {"method": "alarms.rules.set", "params": {}, "http": "/api/alarms/rules", "error": "missing_field"},
+      {"method": "alarms.rules.set", "params": {"name": "parity", "signal": "water_ph", "condition": "above", "threshold": 9, "severity": "x"},
+       "http": "/api/alarms/rules", "error": null},
+      {"method": "alarms.rules.set", "params": [1], "http": "/api/alarms/rules", "error": "invalid_json"},
+      {"method": "nope.nope", "params": {}, "http": null, "error": "unknown_method"}
+    ],
+    "writes": [
+      {"name": "alarms.rules.set delay_sec +1",
+       "get": "alarms.rules.get", "get_http": "/api/alarms/rules",
+       "rule_path": "rules[id=$RULE_ID]",
+       "guard": {"path": "enabled", "equals": false},
+       "path": "delay_sec", "change": {"add": 1},
+       "set": "alarms.rules.set", "set_http": "/api/alarms/rules"}
+    ]
+  },
+  "protection": {
+    "reads": [
+      {"method": "protection.get", "http": "/api/protection", "ignore": ["wait_remaining_sec", "dry_accum_sec", "trips"]},
+      {"method": "protection.measure.get", "http": "/api/protection/measure", "ignore": ["elapsed_ms"]}
+    ],
+    "errors": [
+      {"method": "protection.set", "params": {}, "http": "/api/protection", "error": "missing_field"},
+      {"method": "protection.set", "params": {"pump": 5}, "http": "/api/protection", "error": "invalid_type"},
+      {"method": "protection.set", "params": {"pump": {}}, "http": "/api/protection", "error": "missing_field"},
+      {"method": "protection.set", "params": {"pump": {"enabled": "yes"}}, "http": "/api/protection", "error": "invalid_type"},
+      {"method": "protection.set", "params": {"pump": {"enabled": true, "prime_sec": 70000}}, "http": "/api/protection", "error": "value_out_of_range"},
+      {"method": "protection.measure.set", "params": {"action": "nope"}, "http": "/api/protection/measure", "error": "invalid_action"},
+      {"method": "protection.measure.set", "params": {"action": "save"}, "http": "/api/protection/measure", "error": "invalid_action"}
+    ],
+    "writes": [
+      {"name": "protection.set prime_sec +1", "get": "protection.get", "get_http": "/api/protection", "rule_path": "pump", "path": "prime_sec", "attr": {"key": "cfg_protection", "path": "pump.prime_sec"}, "change": {"add": 1}, "wrap": "pump", "set": "protection.set", "set_http": "/api/protection"}
+    ]
+  },
+  "pump": {
+    "reads": [
+      {"method": "pump.status", "http": "/api/pump/status", "ignore": ["countdown_sec", "cooldown_remaining_sec", "total_duration_sec", "wait_remaining_sec", "dry_accum_sec", "trips"]},
+      {"method": "pump.config.get", "http": "/api/pump/config", "ignore": []}
+    ],
+    "errors": [
+      {"method": "pump.config.set", "params": {"float_gpio": 1}, "http": "/api/pump/config", "error": "read_only_field"},
+      {"method": "pump.config.set", "params": {}, "http": "/api/pump/config", "error": "missing_or_invalid_field"},
+      {"method": "pump.config.set", "params": {"water_set1_on": "abc"}, "http": "/api/pump/config", "error": "missing_or_invalid_field"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "min_dwell_sec": "x"}, "http": "/api/pump/config", "error": "invalid_type"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "min_dwell_sec": 99999}, "http": "/api/pump/config", "error": "min_dwell_out_of_range"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false}, "http": "/api/pump/config", "error": "missing_field"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "relay1_polarity": "sideways"}, "http": "/api/pump/config", "error": "invalid_relay_polarity"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "relay1_polarity": "active_low"}, "http": "/api/pump/config", "error": "missing_field"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "relay1_polarity": "active_low", "timer1_start_phase": "maybe", "timer2_start_phase": "on"}, "http": "/api/pump/config", "error": "invalid_start_phase"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "relay1_polarity": "active_low", "timer1_start_phase": "on", "timer2_start_phase": "on", "wash_on": "x"}, "http": "/api/pump/config", "error": "invalid_type"},
+      {"method": "pump.config.set", "params": {"water_set1_on": 10, "water_set1_off": 10, "water_set2_on": 10, "water_set2_off": 10, "water_auto_start": false, "relay1_polarity": "active_low", "timer1_start_phase": "on", "timer2_start_phase": "on", "wash_on": 99999999}, "http": "/api/pump/config", "error": "duration_out_of_range"},
+      {"method": "pump.config.set", "params": [1], "http": "/api/pump/config", "error": "invalid_json"},
+      {"method": "pump.control", "params": {"action": "bogus"}, "http": "/api/pump/control", "error": "invalid_action"},
+      {"method": "pump.control", "params": {"system": "bogus", "action": "stop"}, "http": "/api/pump/control", "error": "invalid_system"}
+    ],
+    "writes": [
+      {"name": "pump.config.set water_set1_off +1 min", "get": "pump.config.get", "get_http": "/api/pump/config",
+       "omit": ["float_gpio", "relay_gpio", "debounce_ms", "pump_relay1_gpio", "pump_relay2_gpio", "ds18b20_gpio", "cooling_relay_gpio", "cooling_relay_polarity", "hardware_reboot_required",
+                 "hardware_fields_read_only", "hardware_map_status", "settings_status",
+                 "timer1_on_sec", "timer1_off_sec", "timer2_on_sec", "timer2_off_sec", "auto_start",
+                 "relay_polarity", "timer1_start_phase", "timer2_start_phase"],
+       "path": "water_set1_off", "attr": {"key": "cfg_pump", "path": "water_set1_off"}, "change": {"add": 60}, "set": "pump.config.set", "set_http": "/api/pump/config"}
+    ]
+  },
+  "cooling": {
+    "reads": [
+      {"method": "cooling.status", "http": "/api/cooling/status", "ignore": ["temperature_c", "temperature_valid", "sensor_state", "fault", "fault_code", "relay_energized", "output_volts", "output_mv", "duty_percent", "lockout_active", "lockout_remaining_sec", "test_remaining_sec", "cooling_demand", "blocked_reason"]},
+      {"method": "cooling.config.get", "http": "/api/cooling/config", "ignore": ["status.temperature_c", "status.temperature_valid", "status.sensor_state", "status.fault", "status.fault_code", "status.relay_energized", "status.output_volts", "status.output_mv", "status.duty_percent", "status.lockout_active", "status.lockout_remaining_sec", "status.test_remaining_sec", "status.cooling_demand", "status.blocked_reason"]}
+    ],
+    "errors": [
+      {"method": "cooling.config.set", "params": {}, "http": "/api/cooling/config", "error": "missing_field"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": "x"}, "http": "/api/cooling/config", "error": "invalid_type"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 9999, "hysteresis_c_x10": 10, "auto_enable": true, "test_timeout_sec": 30, "compressor_min_off_sec": 180}, "http": "/api/cooling/config", "error": "value_out_of_range"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 0, "auto_enable": true, "test_timeout_sec": 30, "compressor_min_off_sec": 180}, "http": "/api/cooling/config", "error": "value_out_of_range"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 10, "auto_enable": "x", "test_timeout_sec": 30, "compressor_min_off_sec": 180}, "http": "/api/cooling/config", "error": "invalid_type"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 10, "auto_enable": true, "test_timeout_sec": 0, "compressor_min_off_sec": 180}, "http": "/api/cooling/config", "error": "value_out_of_range"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 10, "auto_enable": true, "test_timeout_sec": 30, "compressor_min_off_sec": 10}, "http": "/api/cooling/config", "error": "value_out_of_range"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 10, "auto_enable": true, "test_timeout_sec": 30, "compressor_min_off_sec": 180, "mode": "bogus", "cooling_relay_polarity": "active_low"}, "http": "/api/cooling/config", "error": "invalid_cooling_mode"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 10, "auto_enable": true, "test_timeout_sec": 30, "compressor_min_off_sec": 180, "mode": "test_on", "cooling_relay_polarity": "active_low"}, "http": "/api/cooling/config", "error": "test_mode_not_persistent"},
+      {"method": "cooling.config.set", "params": {"threshold_c_x10": 100, "hysteresis_c_x10": 10, "auto_enable": true, "test_timeout_sec": 30, "compressor_min_off_sec": 180, "mode": "auto", "cooling_relay_polarity": "sideways"}, "http": "/api/cooling/config", "error": "invalid_relay_polarity"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 20, "output_mv": 1000}]}, "http": "/api/cooling/config", "error": "invalid_points_count"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 999, "output_mv": 1000}, {"temp_c": 30, "output_mv": 5000}]}, "http": "/api/cooling/config", "error": "value_out_of_range"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 20, "output_mv": 1000}, {"temp_c": 30, "output_mv": 5000}], "min_off_sec": 10}, "http": "/api/cooling/config", "error": "hardware_safety"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 20, "output_mv": 1000}, {"temp_c": 30, "output_mv": 5000}], "test_timeout_sec": 99999}, "http": "/api/cooling/config", "error": "value_out_of_range"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 20, "output_mv": 1000}, {"temp_c": 30, "output_mv": 5000}], "curve_type": "wavy"}, "http": "/api/cooling/config", "error": "invalid_curve_type"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 20, "output_mv": 1000}, {"temp_c": 30, "output_mv": 5000}], "mode": "test_on"}, "http": "/api/cooling/config", "error": "test_mode_not_persistent"},
+      {"method": "cooling.config.set", "params": {"points": [{"temp_c": 30, "output_mv": 1000}, {"temp_c": 20, "output_mv": 5000}]}, "http": "/api/cooling/config", "error": "invalid_curve_points"},
+      {"method": "cooling.config.set", "params": [1], "http": "/api/cooling/config", "error": "invalid_json"},
+      {"method": "cooling.mode.set", "params": {"mode": "bogus"}, "http": "/api/cooling/mode", "error": "invalid_cooling_mode"},
+      {"method": "cooling.mode.set", "params": {}, "http": "/api/cooling/mode", "error": "missing_field"},
+      {"method": "cooling.mode.set", "params": {"mode": "test_on", "test_mv": 99999}, "http": "/api/cooling/mode", "error": "value_out_of_range"}
+    ],
+    "writes": [
+      {"name": "cooling.config.set min_off +1 sec",
+       "get": "cooling.config.get", "get_http": "/api/cooling/config",
+       "omit": ["settings_status", "point_count", "threshold_c", "threshold_c_x10", "hysteresis_c", "hysteresis_c_x10", "limits", "modes", "relay_polarities", "curve_types", "status"],
+       "path": "min_off_sec", "attr": {"key": "cfg_cooling", "path": "min_off_sec"}, "change": {"add": 1}, "set": "cooling.config.set", "set_http": "/api/cooling/config"},
+      {"name": "cooling.mode.set current mode (no-op)",
+       "get": "cooling.config.get", "get_http": "/api/cooling/config",
+       "omit": ["settings_status", "auto_enable", "curve_type", "point_count", "points", "min_off_sec", "test_timeout_sec", "threshold_c", "threshold_c_x10", "hysteresis_c", "hysteresis_c_x10", "compressor_min_off_sec", "cooling_relay_polarity", "limits", "modes", "relay_polarities", "curve_types", "status"],
+       "path": "mode", "change": {"same": true}, "set": "cooling.mode.set", "set_http": "/api/cooling/mode"}
+    ]
+  },
+  "water_power": {
+    "reads": [],
+    "errors": [
+      {"method": "water.offset", "params": {}, "http": "/api/water/offset", "error": "missing_field"},
+      {"method": "water.offset", "params": {"ph_offset": 1, "temp_offset": 1}, "http": "/api/water/offset", "error": "missing_field"},
+      {"method": "water.offset", "params": {"ph_offset": "x"}, "http": "/api/water/offset", "error": "missing_field"},
+      {"method": "water.offset", "params": {"ph_offset": 9}, "http": "/api/water/offset", "error": "value_out_of_range"},
+      {"method": "water.offset", "params": {"temp_offset": 99}, "http": "/api/water/offset", "error": "value_out_of_range"},
+      {"method": "water.calibrate", "params": {}, "http": "/api/water/calibrate", "error": "missing_field"},
+      {"method": "water.calibrate", "params": {"point": 3, "buffer_ph": 7}, "http": "/api/water/calibrate", "error": "value_out_of_range"},
+      {"method": "water.calibrate", "params": {"point": 1, "buffer_ph": 15}, "http": "/api/water/calibrate", "error": "value_out_of_range"},
+      {"method": "power.reset_energy", "params": {}, "http": "/api/power/reset-energy", "error": "missing_field"},
+      {"method": "power.reset_energy", "params": {"channel": 2}, "http": "/api/power/reset-energy", "error": "value_out_of_range"}
+    ],
+    "writes": [
+      {"name": "water.offset ph offset (no-op, needs sensors.get)",
+       "get": "sensors.get", "get_http": "/api/sensors/status",
+       "rule_path": "water.offsets", "guard": {"path": "known", "equals": true},
+       "path": "ph", "change": {"same": true}, "send_as": "ph_offset", "set": "water.offset", "set_http": "/api/water/offset"}
+    ]
+  },
+  "wifi": {
+    "reads": [
+      {"method": "wifi.profiles.get", "http": "/api/wifi/profiles", "ignore": ["auto_index", "auto", "connected"]},
+      {"method": "wifi.scan", "http": "/api/wifi/scan", "ignore": [], "shape": true}
+    ],
+    "errors": [
+      {"method": "wifi.connect", "params": {"ssid": "parity-no-such-network", "ip": "192.168.1.250", "gateway": "192.168.1.1"}, "http": null, "error": "local_only"},
+      {"method": "wifi.connect", "params": {}, "http": "/api/wifi/connect", "error": "missing_ssid"},
+      {"method": "wifi.connect", "params": {"ssid": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}, "http": "/api/wifi/connect", "error": "ssid_too_long"},
+      {"method": "wifi.disconnect", "params": {}, "http": null, "error": "local_only"},
+      {"method": "wifi.profiles.forget", "params": {}, "http": null, "error": "in_use",
+       "params_from": {"key": "ssid", "method": "wifi.profiles.get", "path": "profiles[connected=True].ssid"}},
+      {"method": "wifi.profiles.forget", "params": {}, "http": "/api/wifi/profiles/forget", "error": "missing_ssid"},
+      {"method": "wifi.profiles.forget", "params": {"ssid": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}, "http": "/api/wifi/profiles/forget", "error": "invalid_ssid"},
+      {"method": "wifi.profiles.setauto", "params": {"index": 99}, "http": null, "error": "in_use"},
+      {"method": "wifi.profiles.setauto", "params": {"index": -1}, "http": null, "error": "in_use"},
+      {"method": "wifi.profiles.save", "params": {}, "http": "/api/wifi/profiles/save", "error": "missing_ssid"},
+      {"method": "wifi.profiles.save", "params": {"ssid": "parity-no-such-network"}, "http": "/api/wifi/profiles/save", "error": "not_connected"}
+    ],
+    "writes": [
+      {"name": "wifi.profiles.setauto current index (no-op)",
+       "get": "wifi.profiles.get", "get_http": "/api/wifi/profiles",
+       "path": "auto_index", "change": {"same": true}, "send_as": "index",
+       "set": "wifi.profiles.setauto", "set_http": "/api/wifi/profiles/setauto"}
+    ]
+  },
+  "status": {
+    "reads": [
+      {"method": "status.get", "http": "/api/status", "ignore": [], "shape": true},
+      {"method": "sensors.get", "http": "/api/sensors/status", "ignore": [], "shape": true},
+      {"method": "uplink.preview", "http": "/api/uplink/preview", "ignore": [], "shape": true},
+      {"method": "hardware.map.get", "http": "/api/hardware/map", "ignore": []}
+    ],
+    "errors": [
+      {"method": "hardware.map.set", "params": {}, "http": null, "error": "local_only"}
+    ],
+    "writes": []
+  }
+}

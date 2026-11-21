@@ -1,0 +1,150 @@
+[
+  {
+    "id": "alarms",
+    "title": "แจ้งเตือน (Alarms)",
+    "telemetry": ["alarm_active", "alarm_critical", "alarm_unacked", "alarm_max_severity"],
+    "actions": [
+      {"label": "alarms.signals", "method": "alarms.signals", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "alarms.values", "method": "alarms.values", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "alarms.status", "method": "alarms.status", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "alarms.summary", "method": "alarms.summary", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "alarms.rules.get", "method": "alarms.rules.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "alarms.rules.set (ไม่มี id = สร้าง, มี id = แทนที่)", "method": "alarms.rules.set",
+       "params": {"name": "ทดสอบ", "signal": "water_ph", "condition": "above", "threshold": 9, "severity": "warning"},
+       "edit": true, "load": "alarms.rules.get", "load_path": "rules.0", "confirm": null},
+      {"label": "alarms.rules.delete", "method": "alarms.rules.delete", "params": {"id": 1}, "edit": true, "load": null,
+       "confirm": "ลบกฎแจ้งเตือน ใช่หรือไม่?"},
+      {"label": "alarms.ack (ทั้งหมด)", "method": "alarms.ack", "params": {"all": true}, "edit": false, "load": null,
+       "confirm": "รับทราบการแจ้งเตือนทั้งหมดที่กำลังเกิดอยู่? การรับทราบจะปลดล็อกระบบป้องกันเดินแห้ง และปั๊มน้ำอาจเริ่มทำงานอีกครั้ง"},
+      {"label": "alarms.ack (ตาม id)", "method": "alarms.ack", "params": {"id": 1}, "edit": true, "load": null, "confirm": null}
+    ]
+  },
+  {
+    "id": "protection",
+    "title": "ป้องกันเดินแห้ง (Protection)",
+    "telemetry": ["pump_dry_run_state", "dry_run_enabled", "dry_run_state", "dry_run_trips", "dry_run_max_retries", "dry_run_wait_sec", "dry_run_accum_sec"],
+    "attributes": ["cfg_protection"],
+    "actions": [
+      {"label": "protection.get", "method": "protection.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "protection.set", "method": "protection.set",
+       "params": {"pump": {"enabled": "แก้ก่อนส่ง", "prime_sec": "แก้ก่อนส่ง", "dry_trip_sec": "แก้ก่อนส่ง", "retry_wait_min": "แก้ก่อนส่ง", "retry_backoff": "แก้ก่อนส่ง", "max_retries": "แก้ก่อนส่ง"}},
+       "edit": true, "load": "protection.get", "confirm": null},
+      {"label": "protection.measure.get", "method": "protection.measure.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "protection.measure.set (เริ่มวัด)", "method": "protection.measure.set", "params": {"action": "start"}, "edit": false, "load": null,
+       "confirm": "ปั๊มอาจเดินแห้งได้นานสุด 120 วินาทีระหว่างวัด ดำเนินการต่อ?"},
+      {"label": "protection.measure.set (หยุดวัด)", "method": "protection.measure.set", "params": {"action": "stop"}, "edit": false, "load": null, "confirm": null},
+      {"label": "alarms.ack (ปลดล็อกเดินแห้ง id 65001)", "method": "alarms.ack", "params": {"id": 65001}, "edit": true, "load": null,
+       "confirm": "การรับทราบจะปลดล็อกระบบป้องกันเดินแห้ง และปั๊มน้ำอาจเริ่มทำงานอีกครั้ง"}
+    ]
+  },
+  {
+    "id": "pump",
+    "title": "ปั๊มน้ำ (Pump)",
+    "telemetry": ["pump_is_running", "pump_active_set", "pump_dry_run_state", "pump_phase", "pump_countdown_sec", "pump_cycle_sec", "pump_cooldown_sec", "pump_fault", "pump_stabilizing", "wash_running", "wash_phase", "wash_countdown_sec"],
+    "attributes": ["cfg_pump"],
+    "actions": [
+      {"label": "pump.status", "method": "pump.status", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "pump.config.get", "method": "pump.config.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "pump.config.set (แม่แบบ: ต้องกรอกทุกค่าก่อนส่ง)", "method": "pump.config.set",
+       "params": {"water_set1_on": "แก้ก่อนส่ง", "water_set1_off": "แก้ก่อนส่ง", "water_set2_on": "แก้ก่อนส่ง", "water_set2_off": "แก้ก่อนส่ง", "water_auto_start": "แก้ก่อนส่ง", "relay1_polarity": "แก้ก่อนส่ง", "timer1_start_phase": "แก้ก่อนส่ง", "timer2_start_phase": "แก้ก่อนส่ง"},
+       "edit": true, "load": "pump.config.get",
+       "load_keys": ["water_set1_on", "water_set1_off", "water_set1_start_phase", "water_set2_on", "water_set2_off", "water_set2_start_phase", "wash_on", "wash_off", "wash_start_phase", "water_auto_start", "wash_auto_start", "min_dwell_sec", "relay1_polarity", "relay2_polarity"], "confirm": null},
+      {"label": "pump.control (หยุดน้ำ)", "method": "pump.control", "params": {"system": "water", "action": "stop"}, "edit": true, "load": null, "confirm": null},
+      {"label": "pump.start", "method": "pump.start", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "pump.stop", "method": "pump.stop", "params": null, "edit": false, "load": null, "confirm": null}
+    ]
+  },
+  {
+    "id": "cooling",
+    "title": "ทำความเย็น (Cooling)",
+    "telemetry": ["pt100_temp_c", "cooling_mode", "cooling_on", "cooling_duty_pct", "cooling_output_mv", "cooling_lockout_sec", "pt100_fault", "cooling_mode_name", "cooling_auto_enable", "cooling_sensor_state", "cooling_fault_code", "cooling_demand", "cooling_blocked_reason", "cooling_temp_valid", "cooling_test_sec"],
+    "attributes": ["cfg_cooling"],
+    "actions": [
+      {"label": "cooling.status", "method": "cooling.status", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "cooling.config.get", "method": "cooling.config.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "cooling.config.set (แม่แบบ: ต้องกรอกทุกค่าก่อนส่ง)", "method": "cooling.config.set",
+       "params": {"threshold_c_x10": "แก้ก่อนส่ง", "hysteresis_c_x10": "แก้ก่อนส่ง", "auto_enable": "แก้ก่อนส่ง", "test_timeout_sec": "แก้ก่อนส่ง", "compressor_min_off_sec": "แก้ก่อนส่ง", "mode": "แก้ก่อนส่ง", "cooling_relay_polarity": "แก้ก่อนส่ง"},
+       "edit": true, "load": "cooling.config.get",
+       "load_keys": ["auto_enable", "curve_type", "points", "min_off_sec", "test_timeout_sec", "mode", "compressor_min_off_sec", "cooling_relay_polarity"], "confirm": null},
+      {"label": "cooling.mode.set (โหมดอัตโนมัติ)", "method": "cooling.mode.set", "params": {"mode": "auto"}, "edit": true, "load": null, "confirm": null}
+    ]
+  },
+  {
+    "id": "water_power",
+    "title": "น้ำและไฟฟ้า (Water / Power)",
+    "telemetry": ["water_ph", "water_temp_c", "water_ph_stable", "water_sensor_fault", "pump_power_w", "pump_energy_wh", "chiller_power_w", "chiller_energy_wh"],
+    "actions": [
+      {"label": "water.calibrate (จุดที่ 1, แก้ค่า pH ของน้ำยาได้)", "method": "water.calibrate", "params": {"point": 1, "buffer_ph": 4.01}, "edit": true, "load": null,
+       "confirm": "เขียนค่าคาลิเบรตจุดที่ 1 ลงเซนเซอร์?"},
+      {"label": "water.calibrate (จุดที่ 2, แก้ค่า pH ของน้ำยาได้)", "method": "water.calibrate", "params": {"point": 2, "buffer_ph": 9.18}, "edit": true, "load": null,
+       "confirm": "เขียนค่าคาลิเบรตจุดที่ 2 ลงเซนเซอร์?"},
+      {"label": "water.calibrate.cancel", "method": "water.calibrate.cancel", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "water.offset (ตั้ง pH offset, ±2)", "method": "water.offset", "params": {"ph_offset": 0}, "edit": true, "load": null,
+       "confirm": "เขียน pH offset ลงเซนเซอร์?"},
+      {"label": "water.offset (ตั้ง offset อุณหภูมิ, ±10)", "method": "water.offset", "params": {"temp_offset": 0}, "edit": true, "load": null,
+       "confirm": "เขียน offset อุณหภูมิ ลงเซนเซอร์?"},
+      {"label": "water.offset (รีเซ็ต pH offset เป็น 0)", "method": "water.offset", "params": {"ph_offset": 0}, "edit": false, "load": null,
+       "confirm": "ตั้ง pH offset และ offset อุณหภูมิ เป็น 0?"},
+      {"label": "water.offset (รีเซ็ต offset อุณหภูมิเป็น 0)", "method": "water.offset", "params": {"temp_offset": 0}, "edit": false, "load": null,
+       "confirm": "ตั้ง pH offset และ offset อุณหภูมิ เป็น 0?"},
+      {"label": "power.reset_energy (ช่อง 0)", "method": "power.reset_energy", "params": {"channel": 0}, "edit": false, "load": null,
+       "confirm": "รีเซ็ต kWh ของปั๊ม 1 เป็น 0? ย้อนกลับไม่ได้"},
+      {"label": "power.reset_energy (ช่อง 1)", "method": "power.reset_energy", "params": {"channel": 1}, "edit": false, "load": null,
+       "confirm": "รีเซ็ต kWh ของปั๊ม 2 เป็น 0? ย้อนกลับไม่ได้"}
+    ]
+  },
+  {
+    "id": "wifi",
+    "title": "ไวไฟ (Wi-Fi)",
+    "telemetry": ["wifi_connected", "wifi_channel"],
+    "attributes": ["wifi"],
+    "actions": [
+      {"label": "wifi.scan", "method": "wifi.scan", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "wifi.profiles.get", "method": "wifi.profiles.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "wifi.profiles.save (รหัสผ่านถูกส่งไปใน RPC)", "method": "wifi.profiles.save", "params": {"ssid": "แก้ก่อนส่ง", "password": "แก้ก่อนส่ง"},
+       "edit": true, "load": null, "confirm": null},
+      {"label": "wifi.profiles.setauto (จาก ThingsBoard ตั้งได้เฉพาะเครือข่ายที่เชื่อมต่ออยู่)", "method": "wifi.profiles.setauto", "params": {"ssid": "แก้ก่อนส่ง"}, "edit": true, "load": null, "confirm": null},
+      {"label": "wifi.profiles.forget", "method": "wifi.profiles.forget", "params": {"ssid": "แก้ก่อนส่ง"}, "edit": true, "load": null,
+       "confirm": "ลืมเครือข่ายนี้ ใช่หรือไม่?"},
+      {"label": "wifi.connect (สลับเครือข่าย: บอร์ดจะรีบูตแล้วกลับมา)", "method": "wifi.connect", "params": {"ssid": "", "password": ""}, "edit": true, "load": null,
+       "confirm": "บอร์ดจะรีบูตไปต่อเครือข่ายใหม่ ถ้าภายใน 3 นาทีต่อ ThingsBoard ไม่ได้ (รหัสผิด หรือเครือข่ายนั้นมองไม่เห็น ThingsBoard เช่น hotspot มือถือ) บอร์ดจะกลับไปเครือข่ายเดิมเองและรีบูตอีกครั้ง ดำเนินการต่อ?"},
+      {"label": "wifi.disconnect (ใช้ได้เฉพาะเว็บแอปในเครื่องเท่านั้น)", "method": "wifi.disconnect", "params": null, "edit": false, "load": null,
+       "confirm": "คุณต้องการตัดการเชื่อมต่อ Wi-Fi ใช่หรือไม่?"}
+    ]
+
+  },
+  {
+    "id": "status",
+    "title": "สถานะระบบ (Status)",
+    "telemetry": ["free_heap_bytes", "free_psram_bytes", "wifi_rssi_dbm", "uptime_sec", "oom_strikes", "heap_min_free_bytes", "heap_largest_block_bytes", "stack_hwm_alarm", "stack_hwm_uplink", "stack_hwm_dry_run", "stack_hwm_tb_link", "stack_hwm_tb_rpc", "tb_sent", "tb_failed"],
+    "attributes": ["tb_link"],
+    "actions": [
+      {"label": "status.get", "method": "status.get", "params": null, "edit": false, "load": null, "confirm": null},
+      {"label": "uplink.preview (ข้อมูลที่จะส่งขึ้น ThingsBoard)", "method": "uplink.preview", "params": null, "edit": false, "load": null, "confirm": null}
+    ]
+  },
+  {
+    "id": "sensors",
+    "title": "เซนเซอร์ (Sensors)",
+    "telemetry": ["water_ph", "water_temp_c", "water_ph_stable", "water_sensor_fault", "pump_power_w", "chiller_power_w", "flow_on", "float_high"],
+    "actions": [
+      {"label": "sensors.get", "method": "sensors.get", "params": null, "edit": false, "load": null, "confirm": null}
+    ]
+  },
+  {
+    "id": "hardware",
+    "title": "ฮาร์ดแวร์ (Hardware) - อ่านอย่างเดียว",
+    "telemetry": [],
+    "attributes": ["hardware_map"],
+    "actions": [
+      {"label": "hardware.map.get (อ่านอย่างเดียว การแก้ไขต้องใช้เว็บแอปในเครื่องเท่านั้น)", "method": "hardware.map.get", "params": null, "edit": false, "load": null, "confirm": null}
+    ]
+  },
+  {
+    "id": "firmware",
+    "title": "เฟิร์มแวร์ (Firmware)",
+    "telemetry": ["fw_state", "fw_error", "current_fw_title", "current_fw_version", "target_fw_version"],
+    "attributes": ["tb_link"],
+    "actions": []
+  }
+]
