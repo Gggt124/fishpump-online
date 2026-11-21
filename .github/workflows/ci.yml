@@ -23,6 +23,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Build first: verify_pt100_inverter_system.py checks that the build outputs exist.
+      - name: Build firmware (dev)
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          idf.py -C firmware build
+
       - name: Contract checks and script unit tests
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
@@ -32,11 +38,6 @@ jobs:
             python "$f" || exit 1
           done
           python -m unittest discover -s firmware/scripts -p "test_*.py" -v
-
-      - name: Build firmware (dev)
-        run: |
-          . "$IDF_PATH/export.sh" > /dev/null
-          idf.py -C firmware build
 
       - name: QEMU self-test
         run: |
