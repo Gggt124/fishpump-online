@@ -161,7 +161,6 @@ class PackageCliTests(unittest.TestCase):
         self.assertIn(self.fp, self.result.stdout)
 
 
-@unittest.skipIf(shutil.which("powershell") is None, "powershell not available")
 class CustomerToolsTests(unittest.TestCase):
     def test_esptool_calls_use_v5_command_names(self):
         """The bundled esptool v5 prints a deprecation warning for write_flash/erase_flash/read_mac."""
@@ -174,6 +173,7 @@ class CustomerToolsTests(unittest.TestCase):
                         self.assertIsNone(old.search(line), line.strip())
 
 
+@unittest.skipIf(shutil.which("powershell") is None, "powershell not available")
 class ApPasswordTests(unittest.TestCase):
     def run_ps(self, *args):
         return subprocess.run(
