@@ -1,0 +1,47 @@
+name: CI
+
+# Every pull request and every push to main: contract checks, script unit tests,
+# a dev build of the firmware and the QEMU self-test. No secrets are used here;
+# builds fall back to the all-zero dev OTA key.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    # Keep this tag equal to firmware/IDF_VERSION (verify_release_pipeline.py checks it).
+    container: espressif/idf:v6.0.1
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build first: verify_pt100_inverter_system.py checks that the build outputs exist.
+      - name: Build firmware (dev)
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          idf.py -C firmware build
+
+      - name: Contract checks and script unit tests
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          pip install --quiet pyyaml cryptography
+          for f in firmware/scripts/verify_*.py; do
+            echo "== $f"
+            python "$f" || exit 1
+          done
+          python -m unittest discover -s firmware/scripts -p "test_*.py" -v
+
+      - name: QEMU self-test
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          python "$IDF_PATH/tools/idf_tools.py" install qemu-xtensa
+          . "$IDF_PATH/export.sh" > /dev/null
+          bash firmware/test/sensor_selftest/run_selftest.sh

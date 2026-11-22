@@ -43,7 +43,9 @@ build/
 # Firmware / Embedded (ESP-IDF, PlatformIO, CMake)
 firmware/build/
 firmware/managed_components/
-firmware/dependencies.lock
+# secrets (never commit the OTA key)
+firmware/components/app_config/secrets.h
+**/secrets.h
 firmware/sdkconfig
 firmware/sdkconfig.old
 .pio/

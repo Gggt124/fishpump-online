@@ -6,6 +6,7 @@
 
 #include "alarm_engine.h"
 #include "app_config.h"
+#include "ota_key.h"
 #include "cJSON.h"
 #include "device_api.h"
 #include "dry_run_guard.h"
@@ -148,6 +149,10 @@ static bool add_tb_link(cJSON *attrs)
     if (obj != NULL) {
         cJSON_AddStringToObject(obj, "device_name", link_cfg->device_name);
         cJSON_AddStringToObject(obj, "fw_version", APP_TEMPLATE_FIRMWARE_VERSION);
+        char key_fp[OTA_KEY_FP_LEN + 1] = "";
+        ota_key_fingerprint(APP_CONFIG_OTA_ENCRYPTION_KEY, key_fp);
+        cJSON_AddStringToObject(obj, "ota_key_fp", key_fp);
+        cJSON_AddBoolToObject(obj, "ota_key_dev", ota_key_is_dev(APP_CONFIG_OTA_ENCRYPTION_KEY));
         ok = cJSON_AddItemToObject(attrs, "tb_link", obj);
         if (!ok) {
             cJSON_Delete(obj);

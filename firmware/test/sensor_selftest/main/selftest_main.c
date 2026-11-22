@@ -23,6 +23,7 @@ void app_main(void)
     test_tb_fw();
     test_device_api();
     test_dapi_guards();
+    test_ota_key();
 
     if (g_fail == 0) {
         ESP_LOGI("selftest", "SELFTEST PASS (%d checks)", g_pass);

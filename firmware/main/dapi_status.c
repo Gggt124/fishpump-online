@@ -6,6 +6,7 @@
 
 #include "api_json.h"
 #include "app_config.h"
+#include "ota_key.h"
 #include "app_main.h"
 #include "dapi_pump.h"
 #include "device_api.h"
@@ -255,6 +256,10 @@ static dapi_status_t dapi_status_get(const cJSON *params, dapi_source_t src, cJS
   json_gen_add_string(&gen, "idf_version", esp_get_idf_version());
   json_gen_add_string(&gen, "project_name", APP_TEMPLATE_NAME);
   json_gen_add_string(&gen, "project_version", APP_TEMPLATE_FIRMWARE_VERSION);
+  char key_fp[OTA_KEY_FP_LEN + 1] = "";
+  ota_key_fingerprint(APP_CONFIG_OTA_ENCRYPTION_KEY, key_fp);
+  json_gen_add_string(&gen, "ota_key_fp", key_fp);
+  json_gen_add_bool(&gen, "ota_key_dev", ota_key_is_dev(APP_CONFIG_OTA_ENCRYPTION_KEY));
   json_gen_add_string(&gen, "reset_reason", reset_reason_to_string(esp_reset_reason()));
 
   const char *rst_detail = app_get_last_restart_detail();

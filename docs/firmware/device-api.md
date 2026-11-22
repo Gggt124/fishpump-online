@@ -328,7 +328,7 @@ Sources: `firmware/main/dapi_status.c`, `firmware/main/dapi_hardware.c`. Macro: 
 
 | Method | Reply keys on success | Errors |
 |---|---|---|
-| `status.get` | `ok`, system keys (`chip_model`, `board_name`, `project_version`, `reset_reason`, `reset_detail`, `mac_sta`, `mac_ap`), memory keys (`free_heap`, `min_free_heap`, `largest_free_block`, `psram_free`, ...), `uptime_ms`, Wi-Fi keys (`wifi_mode`, `ap_*`, `sta_connected`, `sta_ip`, `sta_ssid`, `sta_rssi`, ...), HTTP counters, `stg_type`. See `dapi_status_get`. | 500 |
+| `status.get` | `ok`, system keys (`chip_model`, `board_name`, `project_version`, `ota_key_fp`, `ota_key_dev`, `reset_reason`, `reset_detail`, `mac_sta`, `mac_ap`), memory keys (`free_heap`, `min_free_heap`, `largest_free_block`, `psram_free`, ...), `uptime_ms`, Wi-Fi keys (`wifi_mode`, `ap_*`, `sta_connected`, `sta_ip`, `sta_ssid`, `sta_rssi`, ...), HTTP counters, `stg_type`. See `dapi_status_get`. | 500 |
 | `sensors.get` | `ok`, `power[]` (channel 0 `pump`, channel 1 `chiller`: `valid`, `fault`, `voltage`, `current`, `power`, `energy_wh`, `frequency`, `pf`, age), `power_notice`, `water{valid, fault, stable, ph, temperature_c, offsets{known, ph, temp}, calibration{state, error}, notice, age}`, `flow{on, age_ms}` | 500 |
 | `uplink.preview` | The JSON the uplink would send (`uplink_preview_json`) | 503 `memory` ("Uplink preview unavailable") |
 | `hardware.map.get` | `ok`, `active_status`, `pending_status`, `pending_valid`, `reboot_required`, `pending` (map or null), `options`, `board`, `locked_pins`, `fixed_bus_pins[]`, `fixed_inputs[]`. See `hardware_map_reply`. | 500 |
@@ -387,7 +387,7 @@ Six keys. Each value is built from one or more reads.
 | `cfg_protection` | `protection.get` without `ok`, `pump_status` |
 | `hardware_map` | `hardware.map.get` without `ok`, `options` |
 | `wifi` | Built field by field. From `status.get`: `ssid` (from `sta_ssid`), `ip` (from `sta_ip`), `mode` (from `wifi_mode`), `ap_enabled`. From `wifi.profiles.get`: `auto_index`, `profiles` as a list of `{ssid, auto, connected}`. The top-level `auto` boolean is the `auto` of the profile with `connected: true`, false when none is connected. |
-| `tb_link` | `{"device_name", "fw_version"}`: the device name from the link config and `APP_TEMPLATE_FIRMWARE_VERSION`. Nothing else of the link config is read. |
+| `tb_link` | `{"device_name", "fw_version", "ota_key_fp", "ota_key_dev"}`: the device name from the link config, `APP_TEMPLATE_FIRMWARE_VERSION`, and the OTA key fingerprint (8 lower-case hex characters, never the key) with a flag that is true when the build uses the all-zero dev key. Nothing else of the link config is read. |
 
 Notes:
 
@@ -459,6 +459,15 @@ All values are in `uplink_format.h`.
 - Five web handlers that do not go through `device_api`: `POST /api/confirm`, `DELETE /api/confirm` (before the reboot), `/api/auth/credentials`, `/api/change-password` and the OTA upload (after the boot partition is set). The reply bodies are unchanged.
 
 ## 12. ThingsBoard OTA (milestone 5)
+
+Two update paths take different image formats:
+
+| Path | Image format | Size limit |
+|---|---|---|
+| Web `POST /api/ota` | encrypted: 16-byte IV + AES-256-CTR with the OTA key (`firmware/scripts/encrypt_ota.py`) | the target OTA partition size plus 16 bytes (`ota_upload_limit`, currently 0x380010); larger files get `413 file_too_large` |
+| ThingsBoard (this section) | plain `.bin`, no decryption | the partition size |
+
+`ota_key_fp` (in `status.get` and the `tb_link` attribute) is the first 8 hex characters of SHA-256 over the raw 32-byte key. Compare it with the fingerprint printed at build time and in the release file name to see which key a board uses. `ota_key_dev` true means the board runs the unconfigured all-zero key (fingerprint `66687aad`).
 
 Sources: `firmware/main/tb_ota.c`, `firmware/components/tb_link_logic` (protocol values and the pure logic).
 

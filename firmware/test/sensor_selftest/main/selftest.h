@@ -33,3 +33,4 @@ void test_tb_link(void);
 void test_tb_fw(void);
 void test_device_api(void);
 void test_dapi_guards(void);
+void test_ota_key(void);

@@ -1,5 +1,6 @@
 #include "app_main.h"
 #include "app_config.h"
+#include "ota_key.h"
 #include "cooling_control.h"
 #include "dns_server.h"
 #include "driver/gpio.h"
@@ -851,6 +852,12 @@ void app_main(void) {
   ESP_LOGI(TAG, "========================================");
   ESP_LOGI(TAG, "  %s %s", APP_TEMPLATE_NAME, APP_TEMPLATE_FIRMWARE_VERSION);
   ESP_LOGI(TAG, "  %s", APP_TEMPLATE_PHASE_LABEL);
+  {
+    char key_fp[OTA_KEY_FP_LEN + 1] = "";
+    ota_key_fingerprint(APP_CONFIG_OTA_ENCRYPTION_KEY, key_fp);
+    ESP_LOGI(TAG, "  OTA key fp=%s (%s)", key_fp,
+             ota_key_is_dev(APP_CONFIG_OTA_ENCRYPTION_KEY) ? "dev" : "release");
+  }
   ESP_LOGI(TAG, "  ESP32-S3 WROOM-1-N16R8, 240MHz, 16MB Flash, 8MB PSRAM");
   ESP_LOGI(TAG, "========================================");
   ESP_LOGI(TAG, "Last reset reason: %s (%d)",
