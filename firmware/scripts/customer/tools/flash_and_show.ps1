@@ -26,7 +26,7 @@ if ($Port -match '^\d+$') { $Port = "COM$Port" }
 
 Write-Host "Installing on $Port (the board is erased first) ..." -ForegroundColor Cyan
 # factory.bin is the whole flash image starting at address 0x0; "keep" leaves the flash settings the build chose.
-& $esptool --chip esp32s3 --port $Port --baud 460800 write_flash --erase-all --flash-mode keep --flash-freq keep --flash-size keep 0x0 $factory
+& $esptool --chip esp32s3 --port $Port --baud 460800 write-flash --erase-all --flash-mode keep --flash-freq keep --flash-size keep 0x0 $factory
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: install failed. Check the cable and use the COM/UART port." -ForegroundColor Red
     Read-Host "Press Enter to exit"; exit 1

@@ -2,7 +2,7 @@
 """Encrypt a firmware image for web OTA upload.
 
     python encrypt_ota.py IN.bin OUT.bin --key-env OTA_ENCRYPTION_KEY
-    python encrypt_ota.py IN.bin OUT.bin --key-file path\to\key.txt
+    python encrypt_ota.py IN.bin OUT.bin --key-file path/to/key.txt
 
 The key is never accepted on the command line (it would show up in process
 lists and CI logs) and is never printed; only its fingerprint is.
