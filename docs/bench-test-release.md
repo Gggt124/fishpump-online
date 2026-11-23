@@ -21,7 +21,7 @@
 
 ทำตาม "ย้ายบอร์ดจากคีย์ศูนย์" ใน [`release/keys.md`](release/keys.md) กับบอร์ดที่ยังรันคีย์ศูนย์
 **ต้องเห็น:** หลังรีบูต `status.get` มี `ota_key_dev` เป็น false และ `ota_key_fp` เท่ากับลายนิ้วมือของ release (ThingsBoard ก็เห็น `tb_link.ota_key_fp` ตรงกัน)
-- [/] ผ่าน  บันทึก: บอร์ดเดิมรัน 0.3.2 (คีย์ศูนย์) ใช้ทางเว็บไม่ได้เพราะ firmware เก่ามีเพดาน 413 จึงย้ายผ่าน ThingsBoard OTA: package `fishpump` 0.4.0 (ไฟล์ธรรมดาของ rc) ดาวน์โหลด 126 chunk ผ่าน VERIFIED แล้วรีบูตเข้าคีย์จริง ยังไม่ได้ดู attribute `tb_link.ota_key_fp` บน ThingsBoard
+- [/] ผ่าน  บันทึก: บอร์ดเดิมรัน 0.3.2 (คีย์ศูนย์) ใช้ทางเว็บไม่ได้เพราะ firmware เก่ามีเพดาน 413 จึงย้ายผ่าน ThingsBoard OTA: package `fishpump` 0.4.0 (ไฟล์ธรรมดาของ rc) ดาวน์โหลด 126 chunk ผ่าน VERIFIED แล้วรีบูตเข้าคีย์จริง 2026-11-23 หลังตั้งบอร์ดใหม่: ThingsBoard เห็น `tb_link.ota_key_fp=1fadb59d`, `tb_link.ota_key_dev=false`, `current_fw_version=0.4.0`
 
 ### R3. web OTA ไม่ติด 413
 
@@ -45,7 +45,7 @@
 
 รัน `SHOW_PASSWORD.bat` กับบอร์ดจาก R5
 **ต้องเห็น:** รหัสที่แสดงใช้ต่อ Wi-Fi `FishPump-Setup` ของบอร์ดนั้นได้จริง (และตรงกับที่ `FLASH.bat` แสดงตอนติดตั้ง)
-- [/] ผ่านครึ่งหนึ่ง  บันทึก: รหัสจาก `show_ap_password.ps1` ตรงกับที่ flash แสดง (เทียบโดยไม่พิมพ์รหัส) รูปแบบฐานสิบหกตัวใหญ่ 8 ตัว **ยังไม่ได้ลองต่อ Wi-Fi จริง** (ต่อ AP แล้ว PC ไม่มีเน็ต) เจ้าของยืนยันตอนตั้งค่าบอร์ดใหม่
+- [/] ผ่าน  บันทึก: รหัสจาก `show_ap_password.ps1` ตรงกับที่ flash แสดง (เทียบโดยไม่พิมพ์รหัส) รูปแบบฐานสิบหกตัวใหญ่ 8 ตัว 2026-11-23 เจ้าของต่อ `FishPump-Setup` ด้วยรหัสจาก `SHOW_PASSWORD.bat` แล้วตั้งค่าบอร์ดใหม่ได้
 
 ### R7. ThingsBoard OTA หลังย้ายคีย์
 
@@ -61,4 +61,6 @@
 
 ---
 
-**หลังรอบที่ 1:** บอร์ดถูกล้างแล้ว รัน 0.4.0 คีย์จริงในโหมด AP ต้องตั้งค่าใหม่ทั้งหมด (Wi-Fi, รหัส admin, ผูก ThingsBoard) ค้าง: R6 ต่อ Wi-Fi จริง, R7, การดู `tb_link.ota_key_fp` บน ThingsBoard, และ FLASH ผ่านช่อง UART
+**หลังรอบที่ 1:** บอร์ดถูกล้างแล้ว รัน 0.4.0 คีย์จริงในโหมด AP ต้องตั้งค่าใหม่ทั้งหมด (Wi-Fi, รหัส admin, ผูก ThingsBoard)
+
+**ตั้งบอร์ดใหม่ 2026-11-23:** ต่อ Wi-Fi บ้านได้ IP `192.168.1.34` เดิม ผูก ThingsBoard ด้วย token เดิมของ `fishpump-1de564` (ประวัติข้อมูลต่อเนื่อง) ตอนแรกใส่ port ผิดเป็น 1880 log serial ขึ้น `esp-tls: ... Connection reset by peer` / `mqtt: transport error` แล้ว backoff 60 วินาที อ่านจาก `/api/tb` แก้เป็น 1883 แล้วต่อติด: `active=true`, telemetry 67 key เข้าทุกไม่กี่วินาที ถ้าเห็นอาการนี้อีกให้เช็ก port ก่อน ค้าง: R7 (รอ 0.4.1) และ FLASH ผ่านช่อง UART
