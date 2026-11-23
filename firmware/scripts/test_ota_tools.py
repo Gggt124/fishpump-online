@@ -39,6 +39,16 @@ def run_script(name, *args, env=None):
     )
 
 
+class ScriptHygieneTests(unittest.TestCase):
+    def test_scripts_compile_without_warnings(self):
+        """A stray backslash in a docstring prints a SyntaxWarning on every run (found on the bench)."""
+        import warnings
+        for path in sorted(SCRIPTS.glob("*.py")):
+            with self.subTest(script=path.name), warnings.catch_warnings():
+                warnings.simplefilter("error")
+                compile(path.read_text(encoding="utf-8"), str(path), "exec")
+
+
 class OtaCryptoTests(unittest.TestCase):
     def test_nist_ctr_vector(self):
         out = ota_crypto.encrypt_bytes(NIST_PLAIN, NIST_KEY, iv=NIST_IV)

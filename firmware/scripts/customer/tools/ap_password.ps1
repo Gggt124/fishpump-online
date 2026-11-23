@@ -14,7 +14,7 @@ function Get-ApPassword {
 # Reads the MAC of the connected board with esptool. Returns [byte[]] or $null.
 function Read-BoardMac {
     param([string]$EsptoolExe, [string]$Port, [string]$Chip = "esp32s3", [string]$Baud = "460800")
-    $out = & $EsptoolExe --chip $Chip --baud $Baud --port $Port read_mac 2>&1
+    $out = & $EsptoolExe --chip $Chip --baud $Baud --port $Port read-mac 2>&1
     $line = $out | Select-String -Pattern "MAC:\s*([0-9a-fA-F:]{17})" | Select-Object -First 1
     if (-not $line) { return $null }
     return [byte[]]($line.Matches.Groups[1].Value.Trim() -split ":" | ForEach-Object { [Convert]::ToInt32($_, 16) })

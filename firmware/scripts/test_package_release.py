@@ -161,6 +161,18 @@ class PackageCliTests(unittest.TestCase):
         self.assertIn(self.fp, self.result.stdout)
 
 
+class CustomerToolsTests(unittest.TestCase):
+    def test_esptool_calls_use_v5_command_names(self):
+        """The bundled esptool v5 prints a deprecation warning for write_flash/erase_flash/read_mac."""
+        import re
+        old = re.compile(r"(?<![\w.\\/-])(write_flash|erase_flash|read_mac)(?![\w.])")
+        for path in sorted((SCRIPTS / "customer" / "tools").glob("*.ps1")):
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if "& $" in line:
+                    with self.subTest(file=path.name, line=n):
+                        self.assertIsNone(old.search(line), line.strip())
+
+
 @unittest.skipIf(shutil.which("powershell") is None, "powershell not available")
 class ApPasswordTests(unittest.TestCase):
     def run_ps(self, *args):

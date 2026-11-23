@@ -47,6 +47,7 @@ repo นี้อยู่ใน OneDrive ถ้าเป็นไปได้�
 2. **เข้ารหัสไฟล์ธรรมดาด้วยคีย์ศูนย์** (ไม่ใช่ใช้ไฟล์ `.ota.bin` ที่เข้ารหัสด้วยคีย์ใหม่) ตั้งตัวแปรสภาพแวดล้อมเป็นเลข 0 จำนวน 64 ตัว แล้วรัน
    `python firmware/scripts/encrypt_ota.py fishpump-<ver>.bin migrate.ota.bin --key-env ชื่อตัวแปร`
 3. อัปโหลด `migrate.ota.bin` ทาง web OTA (หน้าเว็บของบอร์ด) หรือจะอัปโหลดไฟล์ธรรมดา `fishpump-<ver>.bin` ผ่าน ThingsBoard OTA ก็ได้ (ไม่ถอดรหัส)
+   - **บอร์ดที่รัน firmware ที่ build ก่อน release pipeline (เช่นบอร์ดที่ติดป้าย 0.3.2 หรือ 0.4.0 จาก PR #1) ใช้ทางเว็บไม่ได้:** firmware เก่ามีเพดาน upload 1,966,080 ไบต์ เล็กกว่า image ปัจจุบัน (~2.06 MB) จะได้ 413 ให้ใช้ ThingsBoard OTA หรือต่อสายแฟลชแทน (bench 2026-11-22 ย้ายบอร์ดด้วย ThingsBoard OTA สำเร็จ)
 4. บอร์ดรีบูตพร้อมคีย์ใหม่ ตรวจว่า `ota_key_fp` เท่ากับลายนิ้วมือใน release และ `ota_key_dev` เป็น false
 
 ## เปลี่ยนคีย์ในอนาคต
