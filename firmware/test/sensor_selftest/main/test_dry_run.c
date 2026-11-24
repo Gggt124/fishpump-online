@@ -34,6 +34,20 @@ void test_dry_run_config(void)
     CHECK(dry_run_suggest_prime_sec(8100) == 18);      /* ceil(12.15) + 5 */
     CHECK(dry_run_suggest_prime_sec(0) == 5);
     CHECK(dry_run_suggest_prime_sec(1000000) == 120);  /* clamp */
+
+    dry_run_config_t k;
+    dry_run_config_defaults(&k); k.enabled = true;
+    k.prime_sec = 300; k.dry_trip_sec = 90; k.retry_wait_min = 240; k.max_retries = 9;
+    CHECK(dry_run_config_clamp(&k));
+    CHECK(k.enabled && k.prime_sec == 120 && k.dry_trip_sec == 30 && k.retry_wait_min == 60 && k.max_retries == 5);
+    CHECK(dry_run_config_validate(&k, &bad));
+    k.prime_sec = 1; k.dry_trip_sec = 0; k.retry_wait_min = 0;
+    CHECK(dry_run_config_clamp(&k) && k.prime_sec == 5 && k.dry_trip_sec == 3 && k.retry_wait_min == 1);
+    dry_run_config_defaults(&k);
+    CHECK(!dry_run_config_clamp(&k));                       /* already valid: unchanged */
+    CHECK(strcmp(dry_run_cfg_source_name(DRY_RUN_CFG_CLAMPED), "clamped") == 0);
+    CHECK(strcmp(dry_run_cfg_source_name(DRY_RUN_CFG_DEFAULTS_AFTER_ERROR), "defaults_after_error") == 0);
+    CHECK(strcmp(dry_run_cfg_source_name(42), "?") == 0);
 }
 
 /* ---- state machine ---- */

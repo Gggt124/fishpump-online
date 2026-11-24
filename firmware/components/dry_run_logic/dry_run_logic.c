@@ -31,6 +31,48 @@ bool dry_run_config_validate(const dry_run_config_t *cfg, const char **bad_field
     return true;
 }
 
+bool dry_run_config_clamp(dry_run_config_t *cfg)
+{
+    bool changed = false;
+    if (cfg->prime_sec < DRY_RUN_PRIME_SEC_MIN) {
+        cfg->prime_sec = DRY_RUN_PRIME_SEC_MIN;
+        changed = true;
+    } else if (cfg->prime_sec > DRY_RUN_PRIME_SEC_MAX) {
+        cfg->prime_sec = DRY_RUN_PRIME_SEC_MAX;
+        changed = true;
+    }
+    if (cfg->dry_trip_sec < DRY_RUN_TRIP_SEC_MIN) {
+        cfg->dry_trip_sec = DRY_RUN_TRIP_SEC_MIN;
+        changed = true;
+    } else if (cfg->dry_trip_sec > DRY_RUN_TRIP_SEC_MAX) {
+        cfg->dry_trip_sec = DRY_RUN_TRIP_SEC_MAX;
+        changed = true;
+    }
+    if (cfg->retry_wait_min < DRY_RUN_WAIT_MIN_MIN) {
+        cfg->retry_wait_min = DRY_RUN_WAIT_MIN_MIN;
+        changed = true;
+    } else if (cfg->retry_wait_min > DRY_RUN_WAIT_MIN_MAX) {
+        cfg->retry_wait_min = DRY_RUN_WAIT_MIN_MAX;
+        changed = true;
+    }
+    if (cfg->max_retries > DRY_RUN_RETRIES_MAX) {
+        cfg->max_retries = DRY_RUN_RETRIES_MAX;
+        changed = true;
+    }
+    return changed;
+}
+
+const char *dry_run_cfg_source_name(uint8_t source)
+{
+    switch (source) {
+    case DRY_RUN_CFG_STORED: return "stored";
+    case DRY_RUN_CFG_CLAMPED: return "clamped";
+    case DRY_RUN_CFG_DEFAULTS: return "defaults";
+    case DRY_RUN_CFG_DEFAULTS_AFTER_ERROR: return "defaults_after_error";
+    default: return "?";
+    }
+}
+
 uint32_t dry_run_wait_ms(const dry_run_config_t *cfg, uint8_t trip)
 {
     uint32_t min = cfg->retry_wait_min;

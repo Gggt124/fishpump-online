@@ -1111,7 +1111,7 @@ void app_main(void) {
    * lock is ignored when protection is off (dry_run_guard_init also clears the stored flag). */
   dry_run_config_t dry_run_cfg;
   bool dry_run_locked = false;
-  if (!nvs_store_load_dry_run(&dry_run_cfg, &dry_run_locked)) {
+  if (!nvs_store_load_dry_run(&dry_run_cfg, &dry_run_locked, NULL)) {
     ESP_LOGW(TAG, "Dry-run settings load failed; protection off");
     dry_run_locked = false;
   }

@@ -16,7 +16,7 @@ static dapi_status_t protection_unavailable(cJSON **out) {
   return DAPI_UNAVAILABLE;
 }
 
-/* The status document: {"ok":true,"pump":{settings},"pump_status":{runtime}}.
+/* The status document: {"ok":true,"config_source":...,"pump":{settings},"pump_status":{runtime}}.
  * 503 when the guard is not running. */
 static dapi_status_t protection_status(cJSON **out) {
   dry_run_guard_status_t gs;
@@ -31,6 +31,7 @@ static dapi_status_t protection_status(cJSON **out) {
     return DAPI_INTERNAL;
   }
   cJSON_AddBoolToObject(root, "ok", true);
+  cJSON_AddStringToObject(root, "config_source", dry_run_cfg_source_name(gs.cfg_source));
   cJSON_AddBoolToObject(pump, "enabled", gs.cfg.enabled);
   cJSON_AddNumberToObject(pump, "prime_sec", gs.cfg.prime_sec);
   cJSON_AddNumberToObject(pump, "dry_trip_sec", gs.cfg.dry_trip_sec);

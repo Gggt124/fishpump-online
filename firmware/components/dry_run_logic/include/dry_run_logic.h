@@ -27,6 +27,21 @@ void dry_run_config_defaults(dry_run_config_t *out);
 /* false + *bad_field = JSON field name ("prime_sec", ...) on the first bad value */
 bool dry_run_config_validate(const dry_run_config_t *cfg, const char **bad_field);
 
+/* Where the loaded settings came from. */
+typedef enum {
+    DRY_RUN_CFG_STORED = 0,
+    DRY_RUN_CFG_CLAMPED,
+    DRY_RUN_CFG_DEFAULTS,
+    DRY_RUN_CFG_DEFAULTS_AFTER_ERROR
+} dry_run_cfg_source_t;
+
+/* Pull each field into its range, nearest bound. enabled and retry_backoff are untouched.
+ * Returns true when at least one value changed. */
+bool dry_run_config_clamp(dry_run_config_t *cfg);
+
+/* "stored", "clamped", "defaults", "defaults_after_error"; "?" for any other value. */
+const char *dry_run_cfg_source_name(uint8_t source);
+
 /* Wait after trip number `trip` (1-based): retry_wait_min, doubled per earlier trip when
  * retry_backoff, capped at DRY_RUN_WAIT_MIN_MAX minutes. Returns ms. */
 uint32_t dry_run_wait_ms(const dry_run_config_t *cfg, uint8_t trip);
