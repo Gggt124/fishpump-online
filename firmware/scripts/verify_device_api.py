@@ -509,6 +509,9 @@ def test_timed_stop_guards():
     assert_test(svc_stack is not None and rpc_stack is not None
                 and int(svc_stack.group(1)) >= int(rpc_stack.group(1)),
                 "pump_resume task stack is at least the tb_rpc task stack")
+    app = read(MAIN_DIR / "app_main.c")
+    assert_test(re.search(r'esp_log_level_set\(\s*"pump_resume"\s*,\s*ESP_LOG_INFO\s*\)', app) is not None,
+                "app_main raises pump_resume to INFO so 'timed stop over' reaches the log")
 
 
 def test_json_gen_overflow():

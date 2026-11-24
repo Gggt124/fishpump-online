@@ -836,6 +836,7 @@ void app_main(void) {
   esp_log_level_set("telemetry_hub", ESP_LOG_INFO);
   esp_log_level_set("flow_switch", ESP_LOG_INFO);
   esp_log_level_set("dry_run_guard", ESP_LOG_INFO); /* one line per state change */
+  esp_log_level_set("pump_resume", ESP_LOG_INFO);   /* one line when a timed stop ends */
   esp_log_level_set("alarm_engine", ESP_LOG_INFO);
   esp_log_level_set("uplink", ESP_LOG_INFO);
   esp_log_level_set("time_sync", ESP_LOG_INFO);
