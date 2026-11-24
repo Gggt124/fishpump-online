@@ -250,6 +250,21 @@ def test_task6():
     assert_test("ESP_LOGW" in rs and "ESP_LOGI" in rs, "alarm_resync logs one WARN on failure and one INFO on recovery")
 
 
+def dry_run_field_ranges():
+    """(input id, min, max, JSON key) for each dry-run field, read from dry_run_logic.h so the
+    board's web page can never drift from the firmware limits."""
+    h = read(FIRMWARE_DIR / "components" / "dry_run_logic" / "include" / "dry_run_logic.h")
+
+    def mac(name):
+        m = re.search(r"#define " + name + r"\s+(\d+)", h)
+        return int(m.group(1)) if m else None
+
+    return (("dry-run-prime", mac("DRY_RUN_PRIME_SEC_MIN"), mac("DRY_RUN_PRIME_SEC_MAX"), "prime_sec"),
+            ("dry-run-trip", mac("DRY_RUN_TRIP_SEC_MIN"), mac("DRY_RUN_TRIP_SEC_MAX"), "dry_trip_sec"),
+            ("dry-run-wait", mac("DRY_RUN_WAIT_MIN_MIN"), mac("DRY_RUN_WAIT_MIN_MAX"), "retry_wait_min"),
+            ("dry-run-retries", 0, mac("DRY_RUN_RETRIES_MAX"), "max_retries"))
+
+
 def js_function_body(source, name):
     m = re.search(r"\bfunction\s+" + re.escape(name) + r"\s*\([^)]*\)\s*\{", source)
     if not m:
@@ -283,13 +298,14 @@ def test_task7():
                 "alarm-f-gate-when options read ใช่/ไม่ใช่")
     ev = js_function_body(js, "alarmFormatEventValue")
     assert_test("'ครั้งที่ '" in ev, "system alarm events still show ครั้งที่ n")
-    for id_, lo, hi in (("dry-run-prime", 1, 600), ("dry-run-trip", 3, 120),
-                        ("dry-run-wait", 1, 240), ("dry-run-retries", 0, 5)):
+    for id_, lo, hi, key in dry_run_field_ranges():
         m = re.search(r'<input id="' + id_ + r'"[^>]*>', html)
         tag = m.group(0) if m else ""
         assert_test(f'min="{lo}"' in tag and f'max="{hi}"' in tag, f"{id_} has min={lo} max={hi}")
         lab = re.search(r'<label for="' + id_ + r'">([^<]*)</label>', html)
         assert_test(lab is not None and f"{lo}–{hi}" in lab.group(1), f"{id_} label shows {lo}–{hi}")
+        assert_test(re.search(key + r":\s*\[\s*" + str(lo) + r"\s*,\s*" + str(hi) + r"\s*\]", js) is not None,
+                    f"app.js DRY_RUN_RANGE {key} is [{lo}, {hi}]")
     assert_test("ถ้าปั๊มเปิดแต่ละรอบสั้นกว่าประมาณ 6 วินาที แจ้งเตือนเดินแห้งจะไม่หายเองเมื่อน้ำกลับมา ต้องกดรับทราบ" in html,
                 "dry-run card carries the short-cycle note")
     assert_test("document.hidden" in js_function_body(js, "dryRunPollTick"),
@@ -393,8 +409,7 @@ def test_task8():
     assert_test(".alarm-bell" in css and ".alarm-critical-overlay" in css and "var(--error" in css,
                 "style.css styles the bell and overlay through theme variables")
     # Task 7 carry-over: label format
-    for id_, lo, hi in (("dry-run-prime", 1, 600), ("dry-run-trip", 3, 120),
-                        ("dry-run-wait", 1, 240), ("dry-run-retries", 0, 5)):
+    for id_, lo, hi, _key in dry_run_field_ranges():
         lab = re.search(r'<label for="' + id_ + r'">([^<]*)</label>', html)
         assert_test(lab is not None and f", {lo}–{hi}" in lab.group(1) and "))" not in lab.group(1),
                     f"{id_} label has a single parenthesis group with {lo}–{hi}")

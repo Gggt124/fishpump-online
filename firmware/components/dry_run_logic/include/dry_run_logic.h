@@ -3,12 +3,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define DRY_RUN_PRIME_SEC_MIN 1
-#define DRY_RUN_PRIME_SEC_MAX 600
+#define DRY_RUN_PRIME_SEC_MIN 5
+#define DRY_RUN_PRIME_SEC_MAX 120
 #define DRY_RUN_TRIP_SEC_MIN 3
-#define DRY_RUN_TRIP_SEC_MAX 120
+#define DRY_RUN_TRIP_SEC_MAX 30
 #define DRY_RUN_WAIT_MIN_MIN 1
-#define DRY_RUN_WAIT_MIN_MAX 240
+#define DRY_RUN_WAIT_MIN_MAX 60
 #define DRY_RUN_RETRIES_MAX 5
 #define DRY_RUN_FLOW_CONFIRM_MS 5000u
 #define DRY_RUN_MEASURE_TIMEOUT_MS 120000u
@@ -26,6 +26,29 @@ void dry_run_config_defaults(dry_run_config_t *out);
 
 /* false + *bad_field = JSON field name ("prime_sec", ...) on the first bad value */
 bool dry_run_config_validate(const dry_run_config_t *cfg, const char **bad_field);
+
+/* The accepted ranges, so the board can report its own limits. */
+typedef struct {
+    uint16_t prime_min, prime_max, trip_min, trip_max, wait_min_min, wait_min_max;
+    uint8_t retries_max;
+} dry_run_limits_t;
+
+void dry_run_limits(dry_run_limits_t *out);
+
+/* Where the loaded settings came from. */
+typedef enum {
+    DRY_RUN_CFG_STORED = 0,
+    DRY_RUN_CFG_CLAMPED,
+    DRY_RUN_CFG_DEFAULTS,
+    DRY_RUN_CFG_DEFAULTS_AFTER_ERROR
+} dry_run_cfg_source_t;
+
+/* Pull each field into its range, nearest bound. enabled and retry_backoff are untouched.
+ * Returns true when at least one value changed. */
+bool dry_run_config_clamp(dry_run_config_t *cfg);
+
+/* "stored", "clamped", "defaults", "defaults_after_error"; "?" for any other value. */
+const char *dry_run_cfg_source_name(uint8_t source);
 
 /* Wait after trip number `trip` (1-based): retry_wait_min, doubled per earlier trip when
  * retry_backoff, capped at DRY_RUN_WAIT_MIN_MAX minutes. Returns ms. */

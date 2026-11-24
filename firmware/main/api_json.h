@@ -36,6 +36,8 @@ typedef struct {
 } json_gen_t;
 
 void json_gen_init(json_gen_t *gen, char *buf, size_t capacity);
+/* true when the buffer was too small: the text was cut and is not valid JSON. */
+bool json_gen_overflowed(const json_gen_t *gen);
 void json_gen_append(json_gen_t *gen, const char *fmt, ...);
 void json_gen_start_object(json_gen_t *gen);
 void json_gen_end_object(json_gen_t *gen);

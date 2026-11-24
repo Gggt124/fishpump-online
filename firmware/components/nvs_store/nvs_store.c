@@ -2007,7 +2007,10 @@ static void dry_run_blob_decode(const uint8_t b[NVS_DRYRUN_BLOB_LEN], dry_run_co
   c->max_retries = b[9];
 }
 
-bool nvs_store_load_dry_run(dry_run_config_t *cfg, bool *locked) {
+bool nvs_store_load_dry_run(dry_run_config_t *cfg, bool *locked, dry_run_cfg_source_t *source) {
+  if (source) {
+    *source = DRY_RUN_CFG_DEFAULTS;
+  }
   if (!cfg || !locked) {
     return false;
   }
@@ -2021,6 +2024,9 @@ bool nvs_store_load_dry_run(dry_run_config_t *cfg, bool *locked) {
   }
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Open %s failed: %s", NVS_DRYRUN_NAMESPACE, esp_err_to_name(err));
+    if (source) {
+      *source = DRY_RUN_CFG_DEFAULTS_AFTER_ERROR;
+    }
     return false;
   }
 
@@ -2034,15 +2040,30 @@ bool nvs_store_load_dry_run(dry_run_config_t *cfg, bool *locked) {
       dry_run_blob_decode(buf, &loaded);
       if (dry_run_config_validate(&loaded, &bad)) {
         *cfg = loaded;
+        if (source) {
+          *source = DRY_RUN_CFG_STORED;
+        }
       } else {
-        ESP_LOGW(TAG, "Dry-run settings invalid (%s); using defaults", bad ? bad : "?");
+        /* Out of range: clamp and use the values instead of disabling protection. */
+        (void)dry_run_config_clamp(&loaded);
+        ESP_LOGW(TAG, "Dry-run settings out of range (%s); clamped", bad ? bad : "?");
+        *cfg = loaded;
+        if (source) {
+          *source = DRY_RUN_CFG_CLAMPED;
+        }
       }
     } else {
       ESP_LOGW(TAG, "Dry-run settings blob has wrong version/length (%u); using defaults",
                (unsigned)len);
+      if (source) {
+        *source = DRY_RUN_CFG_DEFAULTS_AFTER_ERROR;
+      }
     }
   } else if (err != ESP_ERR_NVS_NOT_FOUND) {
     ESP_LOGW(TAG, "Dry-run settings read failed (%s); using defaults", esp_err_to_name(err));
+    if (source) {
+      *source = DRY_RUN_CFG_DEFAULTS_AFTER_ERROR;
+    }
   }
 
   uint8_t lk = 0;

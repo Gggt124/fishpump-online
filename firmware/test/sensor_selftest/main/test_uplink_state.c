@@ -10,7 +10,7 @@
 static const char PUMP_JSON[] =
     "{\"ok\":true,\"system_water\":{\"running\":true,\"relay_energized\":false,\"float_state\":\"OFF\","
     "\"active_set\":1,\"phase\":\"OFF\",\"countdown_sec\":17,\"total_duration_sec\":60,"
-    "\"cooldown_remaining_sec\":0,\"auto_start\":true},\"system_wash\":{\"running\":false,"
+    "\"cooldown_remaining_sec\":0,\"auto_start\":true,\"resume_in_sec\":600},\"system_wash\":{\"running\":false,"
     "\"relay_energized\":false,\"phase\":\"IDLE\",\"countdown_sec\":0,\"total_duration_sec\":0,"
     "\"auto_start\":false},\"running\":true,\"initialized\":true,\"config_valid\":true,"
     "\"initial_stabilizing\":false,\"fault\":false,\"dry_run\":{\"enabled\":false,\"state\":\"disabled\","
@@ -193,6 +193,7 @@ void test_uplink_state(void)
         CHECK(cJSON_IsNumber(get(out, "heap_min_free_bytes")) && get(out, "heap_min_free_bytes")->valuedouble == 120372);
         CHECK(cJSON_IsTrue(get(out, "wifi_connected")));
         CHECK(cJSON_IsFalse(get(out, "pump_fault")));
+        CHECK(cJSON_IsNumber(get(out, "pump_resume_sec")) && get(out, "pump_resume_sec")->valuedouble == 600);
 
         /* a NULL pump source drops exactly the pump rows */
         int pump_rows = 0;
@@ -201,7 +202,7 @@ void test_uplink_state(void)
                 pump_rows++;
             }
         }
-        CHECK(pump_rows == 16);
+        CHECK(pump_rows == 17);
         const cJSON *nopump[UPLINK_SRC_COUNT] = {NULL, cool, stat};
         cJSON *out2 = cJSON_CreateObject();
         int n2 = uplink_status_flatten(nopump, out2, NULL);

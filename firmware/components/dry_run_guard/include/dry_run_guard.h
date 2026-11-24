@@ -27,6 +27,7 @@ typedef struct {
     uint32_t wait_remaining_sec;
     uint32_t dry_accum_sec;
     bool alarm_active;
+    uint8_t cfg_source;         /* dry_run_cfg_source_t */
 } dry_run_guard_status_t;
 
 typedef enum {
