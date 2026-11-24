@@ -20,6 +20,7 @@
 #include "nvs_store.h"
 #include "power_monitor.h"
 #include "pump_control.h"
+#include "pump_resume_service.h"
 #include "relay_safe_init.h"
 #include "session.h"
 #include "telemetry_hub.h"
@@ -1254,6 +1255,9 @@ void app_main(void) {
   if (tb_state_init() != ESP_OK) {
     ESP_LOGE(TAG, "tb_state init failed");
   }
+  /* Only creates an idle task; the minimum resume delay is 5 minutes, so it cannot
+   * fire before the HTTP server starts serving. */
+  pump_resume_service_init();
 
   /* 4. Start HTTP server. The ThingsBoard OTA boot state is resolved first: a fresh ThingsBoard image is marked
    * valid only after it reaches ThingsBoard. */
