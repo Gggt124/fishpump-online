@@ -834,18 +834,18 @@
                                 <span>เปิดการป้องกัน</span>
                             </label>
                             <div class="form-row">
-                                <label for="dry-run-prime">ช่วงผ่อนผันหลังปั๊มเปิด (วินาที, 1–600)</label>
-                                <input id="dry-run-prime" class="input-field" type="number" min="1" max="600" step="1" inputmode="numeric">
+                                <label for="dry-run-prime">ช่วงผ่อนผันหลังปั๊มเปิด (วินาที, 5–120)</label>
+                                <input id="dry-run-prime" class="input-field" type="number" min="5" max="120" step="1" inputmode="numeric">
                                 <div class="field-error" id="dry-run-prime-error" role="alert"></div>
                             </div>
                             <div class="form-row">
-                                <label for="dry-run-trip">เวลาไม่มีน้ำสะสมก่อนตัด (วินาที, 3–120)</label>
-                                <input id="dry-run-trip" class="input-field" type="number" min="3" max="120" step="1" inputmode="numeric">
+                                <label for="dry-run-trip">เวลาไม่มีน้ำสะสมก่อนตัด (วินาที, 3–30)</label>
+                                <input id="dry-run-trip" class="input-field" type="number" min="3" max="30" step="1" inputmode="numeric">
                                 <div class="field-error" id="dry-run-trip-error" role="alert"></div>
                             </div>
                             <div class="form-row">
-                                <label for="dry-run-wait">รอก่อนลองใหม่ (นาที, 1–240)</label>
-                                <input id="dry-run-wait" class="input-field" type="number" min="1" max="240" step="1" inputmode="numeric">
+                                <label for="dry-run-wait">รอก่อนลองใหม่ (นาที, 1–60)</label>
+                                <input id="dry-run-wait" class="input-field" type="number" min="1" max="60" step="1" inputmode="numeric">
                                 <div class="field-error" id="dry-run-wait-error" role="alert"></div>
                             </div>
                             <label class="toggle-row" for="dry-run-backoff">
