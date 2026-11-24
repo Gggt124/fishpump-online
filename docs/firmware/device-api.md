@@ -155,10 +155,27 @@ Source: `firmware/main/dapi_protection.c`. Macros: `PROTECTION_POST_BODY_BYTES` 
 
 | Method | Params | Reply keys on success | Errors |
 |---|---|---|---|
-| `protection.get` | none | `ok`, `pump{enabled, prime_sec, dry_trip_sec, retry_wait_min, retry_backoff, max_retries}`, `pump_status{runtime fields}` (from `dry_run_add_runtime_fields`) | 503 `unavailable` (guard not running) |
-| `protection.set` | `pump` (req, object) with `enabled` bool, `prime_sec` 0..65535, `dry_trip_sec` 0..65535, `retry_wait_min` 0..65535, `retry_backoff` bool, `max_retries` 0..255. All six are required. Numbers must be whole. | Same as `protection.get` (the new state) | 400 `missing_field`, `invalid_type`, `value_out_of_range` (message = field; the guard may also reject a combination, see `dry_run_guard_set_config`); 503 `unavailable`; 500 `storage_failed` |
+| `protection.get` | none | `ok`, `config_source` (`stored`, `clamped`, `defaults`, `defaults_after_error`), `limits{prime_sec:[min,max], dry_trip_sec:[min,max], retry_wait_min:[min,max], max_retries:[min,max]}`, `pump{enabled, prime_sec, dry_trip_sec, retry_wait_min, retry_backoff, max_retries}`, `pump_status{runtime fields}` (from `dry_run_add_runtime_fields`) | 503 `unavailable` (guard not running) |
+| `protection.set` | `pump` (req, object) with `enabled` bool, `prime_sec` 5..120, `dry_trip_sec` 3..30, `retry_wait_min` 1..60, `retry_backoff` bool, `max_retries` 0..5. All six are required. Numbers must be whole and not negative. | Same as `protection.get` (the new state) | 400 `missing_field`, `invalid_type`, `value_out_of_range` (message = field; the range check is in `dry_run_guard_set_config`); 503 `unavailable`; 500 `storage_failed` |
 | `protection.measure.get` | none | `ok`, `state` (idle/running/done/no_flow/stopped), `elapsed_ms`, `suggested_prime_sec` | 503 `unavailable` |
 | `protection.measure.set` | `action` (req) `"start"` or `"stop"` | Same as `protection.measure.get` | 400 `invalid_action`; 409 `flow_already_on`, `measure_unavailable` (start while the water pump runs); 503 `flow_unavailable`, `unavailable` |
+
+The accepted ranges are the macros in `firmware/components/dry_run_logic/include/dry_run_logic.h`. The board reports them in every `protection.get` reply, so a client reads them instead of hard-coding them:
+
+```json
+"limits": {"prime_sec":[5,120],"dry_trip_sec":[3,30],"retry_wait_min":[1,60],"max_retries":[0,5]}
+```
+
+The field reader takes a whole, non-negative uint first (`prime_sec`, `dry_trip_sec` and `retry_wait_min` up to 65535, `max_retries` up to 255), then `dry_run_config_validate` (called by `dry_run_guard_set_config`) refuses a value outside the ranges above with 400 `value_out_of_range` and the field name as the message.
+
+`config_source` says where the settings in `pump` came from:
+
+| Value | Meaning |
+|---|---|
+| `stored` | A saved blob, every value in range. Also set after any successful `protection.set`. |
+| `clamped` | A saved blob with at least one value out of range. Each such value was pulled to its nearest bound, and `enabled` and `retry_backoff` are kept as saved. `clamped` values are not written back, so the board keeps reporting `clamped` until the next save. |
+| `defaults` | Nothing was ever saved. |
+| `defaults_after_error` | The blob could not be read, or its version or length is wrong. |
 
 ## 4. Pump (6 methods)
 
@@ -177,10 +194,10 @@ Source: `firmware/main/dapi_pump.c`. Macros: `PUMP_CONFIG_BODY_BYTES` = 512, `PU
 
 | Method | Reply keys on success | Errors |
 |---|---|---|
-| `pump.status` | `ok`, `system_water{running, relay_energized, float_state, active_set, phase, countdown_sec, total_duration_sec, cooldown_remaining_sec, auto_start}`, `system_wash{...}`, flat legacy keys (`running`, `initialized`, `fault`, `phase`, `active_relay`, GPIO keys, `settings_status`, ...), `dry_run{...}`. Built in `api_pump_add_status_fields_gen`. | 409 `status_unavailable` |
+| `pump.status` | `ok`, `system_water{running, relay_energized, float_state, active_set, phase, countdown_sec, total_duration_sec, cooldown_remaining_sec, auto_start, resume_in_sec}`, `system_wash{...}`, flat legacy keys (`running`, `initialized`, `fault`, `phase`, `active_relay`, GPIO keys, `settings_status`, ...), `dry_run{...}`. Built in `api_pump_add_status_fields_gen`. `resume_in_sec` is the time left on a timed stop, 0 when none runs. | 409 `status_unavailable` |
 | `pump.config.get` | `ok`, config keys (timers, `auto_start`, `min_dwell_sec`, polarity, read-only GPIO keys, `hardware_map_status`, `settings_status`). Built in `api_pump_add_config_fields`. | 500 `settings_load_failed` |
 | `pump.config.set` | Same as `pump.config.get`, plus `status{...}` | 400 (below); 500 `settings_save_failed`, `settings_apply_failed` |
-| `pump.control` | `ok`, `status{...}`, `dry_run{...}` | 400 `invalid_action`, `invalid_system`; 409 `dry_run_waiting`, `dry_run_locked`, `measuring` (water start blocked); 500 `control_failed` (reply also has `status`, `dry_run`) |
+| `pump.control` | `ok`, `status{...}`, `dry_run{...}` | 400 `invalid_action`, `invalid_system`, `invalid_resume` (wrong combination of `resume_after_min`), `value_out_of_range` (message `resume_after_min`); 409 `dry_run_waiting`, `dry_run_locked`, `measuring` (water start blocked); 500 `control_failed` (reply also has `status`, `dry_run`) |
 | `pump.start` | `ok`, `already_running`, `status{...}`, `dry_run{...}` | 409 `status_unavailable`, `dry_run_waiting` (also `wait_remaining_sec`), `dry_run_locked`, `measuring`; 500 `start_failed` |
 | `pump.stop` | `ok`, `already_stopped`, `status{...}`, `dry_run{...}` | 409 `status_unavailable`, `stop_failed` (relay state not confirmed); 500 `stop_failed` |
 
@@ -203,6 +220,10 @@ Read-only keys (`float_gpio`, `relay_gpio`, `debounce_ms`, `pump_relay1_gpio`, `
 `pump.config.set` 400 codes: `read_only_field`, `missing_or_invalid_field` (a required timer or `auto_start`), `invalid_type`, `min_dwell_out_of_range`, `duration_out_of_range`, `missing_field`, `invalid_relay_polarity`, `invalid_start_phase`. The `message` names the field.
 
 `pump.control` params: `system` `"water"`, `"wash"` or `"all"` (default `"water"`); `action` `"start"` or `"stop"` (default `"start"`). A non-string value is ignored and the default is used. A water start runs the same block checks as `pump.start`.
+
+`resume_after_min` is optional: a whole number of minutes 5..120, accepted only with `action:"stop"` and `system:"water"` or `"all"`. Any other combination gets 400 `invalid_resume` with the message `resume_after_min needs action stop and system water or all`. In a valid stop/water request, a value that is not a whole number in 5..120 (a string or `null` included) gets 400 `value_out_of_range` with the message `resume_after_min`. Both checks run before the dry-run guard and before the pump is touched, so a refused request with the default action does not start the pump.
+
+A successful stop with `resume_after_min` arms a timer. `system_water.resume_in_sec` in `pump.status` counts it down (0 = no timed stop). When it reaches zero the board calls `pump.start` through `device_api` and logs `pump_resume: timed stop over: pump.start -> <status>`, so the same block checks apply as for a start from the app: a pump that is locked (dry-run) does not start and the rejection is not retried. The timer is in RAM only. `pump.start`, `pump.stop` and any water `pump.control` cancel it, and a restart drops it, after which the board follows `water_auto_start`.
 
 Always send `action`. A `pump.control` call without `action` (for example `{}` or `{"system":"water"}`) starts the water pump, because `"start"` is the default.
 
@@ -399,7 +420,7 @@ Notes:
 
 ### 11.2 Status telemetry
 
-One flat object. The first 28 rows come from `uplink_status_flatten` of the `pump.status`, `cooling.status` and `status.get` replies. A source whose read failed is skipped, so its keys are missing. A key whose path is missing or not a number, bool or string is skipped.
+One flat object. The first 29 rows come from `uplink_status_flatten` of the `pump.status`, `cooling.status` and `status.get` replies. A source whose read failed is skipped, so its keys are missing. A key whose path is missing or not a number, bool or string is skipped.
 
 | Key | Source | Path | Type | Watched |
 |---|---|---|---|---|
@@ -407,6 +428,7 @@ One flat object. The first 28 rows come from `uplink_status_flatten` of the `pum
 | `pump_countdown_sec` | `pump.status` | `system_water.countdown_sec` | number | no |
 | `pump_cycle_sec` | `pump.status` | `system_water.total_duration_sec` | number | no |
 | `pump_cooldown_sec` | `pump.status` | `system_water.cooldown_remaining_sec` | number | no |
+| `pump_resume_sec` | `pump.status` | `system_water.resume_in_sec` | number | no |
 | `pump_fault` | `pump.status` | `fault` | bool | yes |
 | `pump_stabilizing` | `pump.status` | `initial_stabilizing` | bool | yes |
 | `pump_config_valid` | `pump.status` | `config_valid` | bool | yes |
@@ -440,6 +462,8 @@ One flat object. The first 28 rows come from `uplink_status_flatten` of the `pum
 | `tb_failed` | firmware | `tb_link_get_status` `failed` | number | no |
 
 The status object is sent as telemetry. "Watched" keys are the ones whose change triggers an early send (see below).
+
+The identity payload (`uplink_format_identity`, sent as an attribute payload when the link connects and again after a reconnect) reports `contract_version: 2` (`UPLINK_CONTRACT_VERSION`), with `fw_type`, `fw_version` and `signals[]`. A client uses 2 or more to know that `resume_after_min` (section 4) exists; an older board has no such field.
 
 ### 11.3 Timing rules
 
