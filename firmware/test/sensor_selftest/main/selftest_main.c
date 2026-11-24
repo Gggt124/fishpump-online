@@ -19,6 +19,7 @@ void app_main(void)
     test_uplink_state();
     test_dry_run_config();
     test_dry_run_machine();
+    test_pump_resume();
     test_tb_link();
     test_tb_fw();
     test_device_api();
