@@ -6,6 +6,7 @@
 #include "api_json.h"
 #include "device_api.h"
 #include "dry_run_guard.h"
+#include "dry_run_logic.h"
 
 /* Dry-run protection methods: the code that used to run inside the
  * /api/protection handlers after the request body was parsed. Replies keep the
@@ -16,8 +17,30 @@ static dapi_status_t protection_unavailable(cJSON **out) {
   return DAPI_UNAVAILABLE;
 }
 
-/* The status document: {"ok":true,"config_source":...,"pump":{settings},"pump_status":{runtime}}.
- * 503 when the guard is not running. */
+/* Adds one {"name":[min,max]} pair of numbers. False when cJSON could not allocate. */
+static bool protection_add_limit(cJSON *limits, const char *name, double min, double max) {
+  cJSON *arr = cJSON_AddArrayToObject(limits, name);
+  if (!arr) {
+    return false;
+  }
+  cJSON *lo = cJSON_CreateNumber(min);
+  cJSON *hi = cJSON_CreateNumber(max);
+  if (!lo || !hi || !cJSON_AddItemToArray(arr, lo)) {
+    cJSON_Delete(lo);
+    cJSON_Delete(hi);
+    cJSON_DeleteItemFromObject(limits, name);
+    return false;
+  }
+  if (!cJSON_AddItemToArray(arr, hi)) {
+    cJSON_Delete(hi);
+    cJSON_DeleteItemFromObject(limits, name);
+    return false;
+  }
+  return true;
+}
+
+/* The status document: {"ok":true,"config_source":...,"limits":{...},"pump":{settings},
+ * "pump_status":{runtime}}. 503 when the guard is not running. */
 static dapi_status_t protection_status(cJSON **out) {
   dry_run_guard_status_t gs;
   if (!dry_run_guard_get_status(&gs)) {
@@ -32,6 +55,17 @@ static dapi_status_t protection_status(cJSON **out) {
   }
   cJSON_AddBoolToObject(root, "ok", true);
   cJSON_AddStringToObject(root, "config_source", dry_run_cfg_source_name(gs.cfg_source));
+  dry_run_limits_t L;
+  dry_run_limits(&L);
+  cJSON *limits = cJSON_AddObjectToObject(root, "limits");
+  if (!limits || !protection_add_limit(limits, "prime_sec", L.prime_min, L.prime_max) ||
+      !protection_add_limit(limits, "dry_trip_sec", L.trip_min, L.trip_max) ||
+      !protection_add_limit(limits, "retry_wait_min", L.wait_min_min, L.wait_min_max) ||
+      !protection_add_limit(limits, "max_retries", 0, L.retries_max)) {
+    cJSON_Delete(root);
+    *out = NULL;
+    return DAPI_INTERNAL;
+  }
   cJSON_AddBoolToObject(pump, "enabled", gs.cfg.enabled);
   cJSON_AddNumberToObject(pump, "prime_sec", gs.cfg.prime_sec);
   cJSON_AddNumberToObject(pump, "dry_trip_sec", gs.cfg.dry_trip_sec);

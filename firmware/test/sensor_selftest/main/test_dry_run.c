@@ -48,6 +48,11 @@ void test_dry_run_config(void)
     CHECK(strcmp(dry_run_cfg_source_name(DRY_RUN_CFG_CLAMPED), "clamped") == 0);
     CHECK(strcmp(dry_run_cfg_source_name(DRY_RUN_CFG_DEFAULTS_AFTER_ERROR), "defaults_after_error") == 0);
     CHECK(strcmp(dry_run_cfg_source_name(42), "?") == 0);
+
+    dry_run_limits_t L;
+    dry_run_limits(&L);
+    CHECK(L.prime_min == 5 && L.prime_max == 120 && L.trip_min == 3 && L.trip_max == 30 &&
+          L.wait_min_min == 1 && L.wait_min_max == 60 && L.retries_max == 5);
 }
 
 /* ---- state machine ---- */

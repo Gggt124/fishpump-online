@@ -31,6 +31,17 @@ bool dry_run_config_validate(const dry_run_config_t *cfg, const char **bad_field
     return true;
 }
 
+void dry_run_limits(dry_run_limits_t *out)
+{
+    out->prime_min = DRY_RUN_PRIME_SEC_MIN;
+    out->prime_max = DRY_RUN_PRIME_SEC_MAX;
+    out->trip_min = DRY_RUN_TRIP_SEC_MIN;
+    out->trip_max = DRY_RUN_TRIP_SEC_MAX;
+    out->wait_min_min = DRY_RUN_WAIT_MIN_MIN;
+    out->wait_min_max = DRY_RUN_WAIT_MIN_MAX;
+    out->retries_max = DRY_RUN_RETRIES_MAX;
+}
+
 bool dry_run_config_clamp(dry_run_config_t *cfg)
 {
     bool changed = false;

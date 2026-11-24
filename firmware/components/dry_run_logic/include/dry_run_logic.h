@@ -27,6 +27,14 @@ void dry_run_config_defaults(dry_run_config_t *out);
 /* false + *bad_field = JSON field name ("prime_sec", ...) on the first bad value */
 bool dry_run_config_validate(const dry_run_config_t *cfg, const char **bad_field);
 
+/* The accepted ranges, so the board can report its own limits. */
+typedef struct {
+    uint16_t prime_min, prime_max, trip_min, trip_max, wait_min_min, wait_min_max;
+    uint8_t retries_max;
+} dry_run_limits_t;
+
+void dry_run_limits(dry_run_limits_t *out);
+
 /* Where the loaded settings came from. */
 typedef enum {
     DRY_RUN_CFG_STORED = 0,
