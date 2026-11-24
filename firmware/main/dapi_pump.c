@@ -940,6 +940,12 @@ static dapi_status_t dapi_pump_control(const cJSON *params, dapi_source_t src, c
     return DAPI_BAD_REQUEST;
   }
 
+  /* Any water command replaces a pending timed stop, even a start that is refused below
+   * (pump.start does the same). A stop with resume_after_min re-arms after it succeeds. */
+  if (do_water) {
+    pump_resume_service_cancel();
+  }
+
   if (is_start && do_water) {
     dapi_status_t blocked_st = DAPI_CONFLICT;
     if (pump_start_blocked(out, &blocked_st)) {
@@ -950,7 +956,6 @@ static dapi_status_t dapi_pump_control(const cJSON *params, dapi_source_t src, c
   bool success = true;
   bool water_ok = false;
   if (do_water) {
-    pump_resume_service_cancel();
     if (is_start) {
       water_ok = pump_control_start_water();
     } else {

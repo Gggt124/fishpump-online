@@ -266,7 +266,7 @@ bool nvs_store_save_alarm_rules(const alarm_rule_set_t *set);
 /**
  * Pump dry-run protection. Namespace "dryrun_cfg": a versioned config blob and a separate
  * "locked" flag (so persisting LOCKED never rewrites the settings).
- * load: *cfg = defaults and *locked = false when missing, wrong version/length or invalid.
+ * load: *cfg = defaults and *locked = false when missing, wrong version/length or unreadable.
  * *source (may be NULL) reports where *cfg came from: an out-of-range stored blob is clamped,
  * used, and reported as DRY_RUN_CFG_CLAMPED without being written back.
  */

@@ -13,7 +13,9 @@
 
 static const char *TAG = "pump_resume";
 
-#define RESUME_TASK_STACK 3072
+/* pump.start runs through device_api_call (pump status JSON, telemetry_hub subscribers,
+ * the write hook): the same path as the tb_rpc task, so the same stack. */
+#define RESUME_TASK_STACK 6144
 #define RESUME_TASK_PRIORITY 2
 #define RESUME_TASK_CORE 1
 #define RESUME_TICK_MS 1000

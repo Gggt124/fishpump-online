@@ -493,6 +493,24 @@ def test_final_review_guards():
                 "app_main raises dapi_wifi to INFO")
 
 
+def test_timed_stop_guards():
+    print("\n--- firmware 0.5: timed pump stop service ---")
+    pump = read(MAIN_DIR / "dapi_pump.c")
+    svc = read(MAIN_DIR / "pump_resume_service.c")
+    link = read(FIRMWARE_DIR / "components" / "tb_link" / "tb_link.c")
+    ctl = function_body(pump, "dapi_pump_control")
+    cancel_at = ctl.find("pump_resume_service_cancel(")
+    blocked_at = ctl.find("pump_start_blocked(")
+    assert_test(cancel_at != -1 and blocked_at != -1 and cancel_at < blocked_at,
+                "pump.control cancels a timed stop before a water start can be refused (same as pump.start)")
+    # The resume task runs pump.start through device_api_call, the same path the tb_rpc task runs.
+    svc_stack = re.search(r"#define RESUME_TASK_STACK\s+(\d+)", svc)
+    rpc_stack = re.search(r"#define TB_RPC_TASK_STACK\s+(\d+)", link)
+    assert_test(svc_stack is not None and rpc_stack is not None
+                and int(svc_stack.group(1)) >= int(rpc_stack.group(1)),
+                "pump_resume task stack is at least the tb_rpc task stack")
+
+
 if __name__ == "__main__":
     test_component()
     test_logging_and_lock()
@@ -507,5 +525,6 @@ if __name__ == "__main__":
     test_status_group()
     test_hardware_group()
     test_final_review_guards()
+    test_timed_stop_guards()
     print(f"\nPassed: {passed_tests}  Failed: {failed_tests}")
     sys.exit(1 if failed_tests else 0)
