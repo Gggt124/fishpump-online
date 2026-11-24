@@ -12,6 +12,8 @@
 #include "hardware_map.h"
 #include "nvs_store.h"
 #include "pump_control.h"
+#include "pump_resume.h"
+#include "pump_resume_service.h"
 
 /* Pump methods: the code that used to run inside the /api/pump/ handlers after
  * the request body was parsed, plus the pump status and config documents.
@@ -252,6 +254,8 @@ bool api_pump_add_status_fields_gen(json_gen_t *gen) {
   json_gen_add_number(gen, "cooldown_remaining_sec",
                       (double)(status.water.cooldown_remaining_sec));
   json_gen_add_bool(gen, "auto_start", status.water.auto_start);
+  json_gen_add_number(gen, "resume_in_sec",
+                      (double)pump_resume_service_remaining_sec());
   json_gen_end_object(gen);
 
   /* system_wash JSON object */
@@ -367,6 +371,8 @@ static bool api_pump_add_status_fields(cJSON *root) {
     cJSON_AddNumberToObject(water_obj, "cooldown_remaining_sec",
                             status.water.cooldown_remaining_sec);
     cJSON_AddBoolToObject(water_obj, "auto_start", status.water.auto_start);
+    cJSON_AddNumberToObject(water_obj, "resume_in_sec",
+                            pump_resume_service_remaining_sec());
   }
 
   /* system_wash JSON object */
@@ -770,6 +776,11 @@ static dapi_status_t dapi_pump_status(const cJSON *params, dapi_source_t src, cJ
   dry_run_add_status_gen(&gen);
   json_gen_end_object(&gen);
 
+  if (json_gen_overflowed(&gen)) {
+    free(json_buf);
+    *out = dapi_error("document_too_large", "pump.status");
+    return DAPI_INTERNAL;
+  }
   *out = cJSON_CreateRaw(json_buf);
   free(json_buf);
   return *out ? DAPI_OK : DAPI_INTERNAL;
@@ -912,6 +923,34 @@ static dapi_status_t dapi_pump_control(const cJSON *params, dapi_source_t src, c
     return DAPI_BAD_REQUEST;
   }
 
+  /* resume_after_min is only valid with a water stop. Reject it before the dry-run
+   * guard and before any pump command: a request with the default action=start must
+   * not touch the pump. */
+  const cJSON *resume_item = cJSON_GetObjectItem(params, "resume_after_min");
+  bool resume_has_field = resume_item != NULL;
+  bool resume_is_number = cJSON_IsNumber(resume_item);
+  double resume_value = resume_is_number ? resume_item->valuedouble : 0.0;
+  uint16_t resume_minutes = 0;
+  pump_resume_param_t resume_param = pump_resume_check_param(
+      resume_has_field, resume_is_number, resume_value, is_stop, do_water,
+      &resume_minutes);
+  if (resume_param == PUMP_RESUME_PARAM_BAD_COMBO) {
+    *out = dapi_error(
+        "invalid_resume",
+        "resume_after_min needs action stop and system water or all");
+    return DAPI_BAD_REQUEST;
+  }
+  if (resume_param == PUMP_RESUME_PARAM_OUT_OF_RANGE) {
+    *out = dapi_error("value_out_of_range", "resume_after_min");
+    return DAPI_BAD_REQUEST;
+  }
+
+  /* Any water command replaces a pending timed stop, even a start that is refused below
+   * (pump.start does the same). A stop with resume_after_min re-arms after it succeeds. */
+  if (do_water) {
+    pump_resume_service_cancel();
+  }
+
   if (is_start && do_water) {
     dapi_status_t blocked_st = DAPI_CONFLICT;
     if (pump_start_blocked(out, &blocked_st)) {
@@ -920,12 +959,14 @@ static dapi_status_t dapi_pump_control(const cJSON *params, dapi_source_t src, c
   }
 
   bool success = true;
+  bool water_ok = false;
   if (do_water) {
     if (is_start) {
-      if (!pump_control_start_water()) success = false;
+      water_ok = pump_control_start_water();
     } else {
-      if (!pump_control_stop_water()) success = false;
+      water_ok = pump_control_stop_water();
     }
+    if (!water_ok) success = false;
   }
 
   if (do_wash) {
@@ -940,6 +981,10 @@ static dapi_status_t dapi_pump_control(const cJSON *params, dapi_source_t src, c
     return pump_error_with_status(out, DAPI_INTERNAL, "control_failed", "Pump control action failed");
   }
 
+  if (resume_param == PUMP_RESUME_PARAM_OK && is_stop && water_ok) {
+    pump_resume_service_arm(resume_minutes);
+  }
+
   return pump_ok_with_status(out, NULL, false);
 }
 
@@ -947,6 +992,7 @@ static dapi_status_t dapi_pump_control(const cJSON *params, dapi_source_t src, c
 static dapi_status_t dapi_pump_start(const cJSON *params, dapi_source_t src, cJSON **out) {
   (void)params;
   (void)src;
+  pump_resume_service_cancel();
   pump_control_status_t before_status = {0};
   if (!pump_control_get_status(&before_status)) {
     return pump_status_unavailable(out);
@@ -971,6 +1017,7 @@ static dapi_status_t dapi_pump_start(const cJSON *params, dapi_source_t src, cJS
 static dapi_status_t dapi_pump_stop(const cJSON *params, dapi_source_t src, cJSON **out) {
   (void)params;
   (void)src;
+  pump_resume_service_cancel();
   pump_control_status_t before_status = {0};
   if (!pump_control_get_status(&before_status)) {
     return pump_status_unavailable(out);

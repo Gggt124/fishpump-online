@@ -611,9 +611,9 @@ var dryRunSuggested = 0;
 var dryRunMeasureFails = 0;
 var dryRunMeasureGaveUp = false; /* poll stopped after repeated failures; re-sync on next good status */
 var DRY_RUN_RANGE = {
-    prime_sec: [1, 600],
-    dry_trip_sec: [3, 120],
-    retry_wait_min: [1, 240],
+    prime_sec: [5, 120],
+    dry_trip_sec: [3, 30],
+    retry_wait_min: [1, 60],
     max_retries: [0, 5]
 };
 var DRY_RUN_FIELDS = {

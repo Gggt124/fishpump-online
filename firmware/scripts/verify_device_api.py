@@ -493,6 +493,43 @@ def test_final_review_guards():
                 "app_main raises dapi_wifi to INFO")
 
 
+def test_timed_stop_guards():
+    print("\n--- firmware 0.5: timed pump stop service ---")
+    pump = read(MAIN_DIR / "dapi_pump.c")
+    svc = read(MAIN_DIR / "pump_resume_service.c")
+    link = read(FIRMWARE_DIR / "components" / "tb_link" / "tb_link.c")
+    ctl = function_body(pump, "dapi_pump_control")
+    cancel_at = ctl.find("pump_resume_service_cancel(")
+    blocked_at = ctl.find("pump_start_blocked(")
+    assert_test(cancel_at != -1 and blocked_at != -1 and cancel_at < blocked_at,
+                "pump.control cancels a timed stop before a water start can be refused (same as pump.start)")
+    # The resume task runs pump.start through device_api_call, the same path the tb_rpc task runs.
+    svc_stack = re.search(r"#define RESUME_TASK_STACK\s+(\d+)", svc)
+    rpc_stack = re.search(r"#define TB_RPC_TASK_STACK\s+(\d+)", link)
+    assert_test(svc_stack is not None and rpc_stack is not None
+                and int(svc_stack.group(1)) >= int(rpc_stack.group(1)),
+                "pump_resume task stack is at least the tb_rpc task stack")
+    app = read(MAIN_DIR / "app_main.c")
+    assert_test(re.search(r'esp_log_level_set\(\s*"pump_resume"\s*,\s*ESP_LOG_INFO\s*\)', app) is not None,
+                "app_main raises pump_resume to INFO so 'timed stop over' reaches the log")
+
+
+def test_json_gen_overflow():
+    print("\n--- bench 0.5: json_gen documents never go out cut short ---")
+    hdr = read(MAIN_DIR / "api_json.h")
+    assert_test("bool json_gen_overflowed(const json_gen_t *gen);" in hdr, "api_json.h declares json_gen_overflowed")
+    for file_name, fn in (("dapi_status.c", "dapi_status_get"), ("dapi_pump.c", "dapi_pump_status"),
+                          ("dapi_cooling.c", None)):
+        src = read(MAIN_DIR / file_name)
+        inits = len(re.findall(r"json_gen_init\(", src))
+        checks = len(re.findall(r"json_gen_overflowed\(", src))
+        assert_test(inits > 0 and checks >= inits, f"{file_name}: every json_gen_init has a json_gen_overflowed check")
+    status = function_body(read(MAIN_DIR / "dapi_status.c"), "dapi_status_get")
+    cap = re.search(r"#define STATUS_JSON_CAP\s+(\d+)", read(MAIN_DIR / "dapi_status.c"))
+    assert_test(cap is not None and int(cap.group(1)) >= 4096 and "2048" not in status,
+                "status.get builds into a STATUS_JSON_CAP (>= 4096) buffer")
+
+
 if __name__ == "__main__":
     test_component()
     test_logging_and_lock()
@@ -507,5 +544,7 @@ if __name__ == "__main__":
     test_status_group()
     test_hardware_group()
     test_final_review_guards()
+    test_timed_stop_guards()
+    test_json_gen_overflow()
     print(f"\nPassed: {passed_tests}  Failed: {failed_tests}")
     sys.exit(1 if failed_tests else 0)

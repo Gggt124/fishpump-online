@@ -29,6 +29,7 @@ void test_uplink_format(void);
 void test_uplink_state(void);
 void test_dry_run_config(void);
 void test_dry_run_machine(void);
+void test_pump_resume(void);
 void test_tb_link(void);
 void test_tb_fw(void);
 void test_device_api(void);

@@ -367,6 +367,7 @@ const uplink_status_field_t uplink_status_fields[] = {
     {UPLINK_SRC_PUMP, "system_water.countdown_sec", "pump_countdown_sec", false},
     {UPLINK_SRC_PUMP, "system_water.total_duration_sec", "pump_cycle_sec", false},
     {UPLINK_SRC_PUMP, "system_water.cooldown_remaining_sec", "pump_cooldown_sec", false},
+    {UPLINK_SRC_PUMP, "system_water.resume_in_sec", "pump_resume_sec", false},
     {UPLINK_SRC_PUMP, "fault", "pump_fault", true},
     {UPLINK_SRC_PUMP, "initial_stabilizing", "pump_stabilizing", true},
     {UPLINK_SRC_PUMP, "config_valid", "pump_config_valid", true},

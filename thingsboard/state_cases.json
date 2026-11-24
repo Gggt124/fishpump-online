@@ -41,6 +41,7 @@
     "pump_countdown_sec",
     "pump_cycle_sec",
     "pump_cooldown_sec",
+    "pump_resume_sec",
     "pump_fault",
     "pump_stabilizing",
     "pump_config_valid",

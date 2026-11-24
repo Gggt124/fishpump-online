@@ -129,7 +129,7 @@ void test_uplink_format(void)
     n = uplink_format_identity("0.2.0-dev", s_buf, UPLINK_IDENTITY_BUF);
     CHECK(n > 0 && n < UPLINK_IDENTITY_BUF);
     t = cJSON_Parse(s_buf);
-    CHECK(t != NULL && str_eq(t, "fw_type", "fishpump") && num_eq(t, "contract_version", 1)
+    CHECK(t != NULL && str_eq(t, "fw_type", "fishpump") && num_eq(t, "contract_version", 2)
           && str_eq(t, "fw_version", "0.2.0-dev"));
     const cJSON *sigs = t ? get(t, "signals") : NULL;
     CHECK(cJSON_IsArray(sigs) && cJSON_GetArraySize(sigs) == 37);

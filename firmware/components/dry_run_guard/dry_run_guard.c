@@ -46,6 +46,7 @@ static SemaphoreHandle_t s_apply;
 static SemaphoreHandle_t s_lock;
 static bool s_initialized;
 static dry_run_config_t s_cfg;
+static dry_run_cfg_source_t s_cfg_source;
 static dry_run_rt_t s_rt;
 static TaskHandle_t s_task;
 static measure_t s_meas;
@@ -318,7 +319,7 @@ esp_err_t dry_run_guard_init(void) {
 
     dry_run_config_t cfg;
     bool stored_locked = false;
-    (void)nvs_store_load_dry_run(&cfg, &stored_locked);
+    (void)nvs_store_load_dry_run(&cfg, &stored_locked, &s_cfg_source);
     if (stored_locked && !cfg.enabled) {
         /* Protection is off: a stale lock must not outlive it. Clear the stored flag once. */
         (void)nvs_store_save_dry_run_locked(false);
@@ -390,6 +391,7 @@ bool dry_run_guard_get_status(dry_run_guard_status_t *out) {
     out->wait_remaining_sec = dry_run_wait_remaining_sec(&s_rt, now);
     out->dry_accum_sec = s_rt.dry_accum_ms / 1000u;
     out->alarm_active = s_rt.alarm_active;
+    out->cfg_source = (uint8_t)s_cfg_source;
     xSemaphoreGive(s_lock);
     return true;
 }
@@ -413,6 +415,7 @@ esp_err_t dry_run_guard_set_config(const dry_run_config_t *cfg, const char **bad
     dry_run_config_t old_cfg = s_cfg;
     uint8_t old_state = s_rt.state;
     s_cfg = *cfg;
+    s_cfg_source = DRY_RUN_CFG_STORED;
     dry_run_config_changed(&old_cfg, &s_cfg, &s_rt, now, &out);
     capture_change(&ch, &out, old_state, now);
     xSemaphoreGive(s_lock);

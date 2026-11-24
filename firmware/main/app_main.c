@@ -20,6 +20,7 @@
 #include "nvs_store.h"
 #include "power_monitor.h"
 #include "pump_control.h"
+#include "pump_resume_service.h"
 #include "relay_safe_init.h"
 #include "session.h"
 #include "telemetry_hub.h"
@@ -835,6 +836,7 @@ void app_main(void) {
   esp_log_level_set("telemetry_hub", ESP_LOG_INFO);
   esp_log_level_set("flow_switch", ESP_LOG_INFO);
   esp_log_level_set("dry_run_guard", ESP_LOG_INFO); /* one line per state change */
+  esp_log_level_set("pump_resume", ESP_LOG_INFO);   /* one line when a timed stop ends */
   esp_log_level_set("alarm_engine", ESP_LOG_INFO);
   esp_log_level_set("uplink", ESP_LOG_INFO);
   esp_log_level_set("time_sync", ESP_LOG_INFO);
@@ -1111,7 +1113,7 @@ void app_main(void) {
    * lock is ignored when protection is off (dry_run_guard_init also clears the stored flag). */
   dry_run_config_t dry_run_cfg;
   bool dry_run_locked = false;
-  if (!nvs_store_load_dry_run(&dry_run_cfg, &dry_run_locked)) {
+  if (!nvs_store_load_dry_run(&dry_run_cfg, &dry_run_locked, NULL)) {
     ESP_LOGW(TAG, "Dry-run settings load failed; protection off");
     dry_run_locked = false;
   }
@@ -1254,6 +1256,9 @@ void app_main(void) {
   if (tb_state_init() != ESP_OK) {
     ESP_LOGE(TAG, "tb_state init failed");
   }
+  /* Only creates an idle task; the minimum resume delay is 5 minutes, so it cannot
+   * fire before the HTTP server starts serving. */
+  pump_resume_service_init();
 
   /* 4. Start HTTP server. The ThingsBoard OTA boot state is resolved first: a fresh ThingsBoard image is marked
    * valid only after it reaches ThingsBoard. */

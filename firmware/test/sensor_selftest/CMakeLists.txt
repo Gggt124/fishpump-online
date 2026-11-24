@@ -11,6 +11,7 @@ set(EXTRA_COMPONENT_DIRS
     ../../components/signal_registry
     ../../components/alarm_rules
     ../../components/dry_run_logic
+    ../../components/pump_resume
     ../../components/uplink_format
     ../../components/tb_link_logic
     ../../components/device_api

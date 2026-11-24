@@ -42,6 +42,7 @@ idf_component_register(
         "dapi_status.c"
         "dapi_hardware.c"
         "tb_state.c"
+        "pump_resume_service.c"
         "ota_lock.c"
         "tb_ota.c"
         "wifi_remote.c"
@@ -75,6 +76,7 @@ idf_component_register(
         nvs_store
         power_monitor
         pump_control
+        pump_resume
         relay_safe_init
         session
         telemetry_hub

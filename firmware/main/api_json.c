@@ -77,6 +77,10 @@ void json_gen_init(json_gen_t *gen, char *buf, size_t capacity) {
   }
 }
 
+bool json_gen_overflowed(const json_gen_t *gen) {
+  return !gen || !gen->buf || gen->len >= gen->capacity;
+}
+
 void json_gen_append(json_gen_t *gen, const char *fmt, ...) {
   if (!gen || !gen->buf || gen->len >= gen->capacity)
     return;
