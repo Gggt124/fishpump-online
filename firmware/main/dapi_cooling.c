@@ -791,6 +791,11 @@ static dapi_status_t dapi_cooling_status(const cJSON *params, dapi_source_t src,
   }
   json_gen_end_object(&gen);
 
+  if (json_gen_overflowed(&gen)) {
+    free(json_buf);
+    *out = dapi_error("document_too_large", "cooling.status");
+    return DAPI_INTERNAL;
+  }
   *out = cJSON_CreateRaw(json_buf);
   free(json_buf);
   return *out ? DAPI_OK : DAPI_INTERNAL;

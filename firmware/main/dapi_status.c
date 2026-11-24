@@ -223,23 +223,25 @@ static dapi_status_t dapi_uplink_preview(const cJSON *params, dapi_source_t src,
   return *out ? DAPI_OK : DAPI_INTERNAL;
 }
 
-/* status.get - the json_gen document, built on the heap and wrapped raw so the bytes are unchanged. */
+/* status.get - the json_gen document, built on the heap and wrapped raw so the bytes are unchanged.
+ * It was about 2 KB in 0.5.0; a cut document is reported as an error, never sent as broken JSON. */
+#define STATUS_JSON_CAP 4096
 static dapi_status_t dapi_status_get(const cJSON *params, dapi_source_t src, cJSON **out) {
   (void)params;
   (void)src;
   bool sta_conn = wifi_manager_is_sta_connected();
   bool ap_up = wifi_manager_is_ap_enabled();
 
-  char *json_buf = heap_caps_malloc(2048, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  char *json_buf = heap_caps_malloc(STATUS_JSON_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!json_buf) {
-    json_buf = malloc(2048);
+    json_buf = malloc(STATUS_JSON_CAP);
   }
   if (!json_buf) {
     *out = NULL;
     return DAPI_INTERNAL;
   }
   json_gen_t gen;
-  json_gen_init(&gen, json_buf, 2048);
+  json_gen_init(&gen, json_buf, STATUS_JSON_CAP);
   json_gen_start_object(&gen);
 
   json_gen_add_bool(&gen, "ok", true);
@@ -362,6 +364,11 @@ static dapi_status_t dapi_status_get(const cJSON *params, dapi_source_t src, cJS
 
   json_gen_end_object(&gen);
 
+  if (json_gen_overflowed(&gen)) {
+    free(json_buf);
+    *out = dapi_error("document_too_large", "status.get");
+    return DAPI_INTERNAL;
+  }
   *out = cJSON_CreateRaw(json_buf);
   free(json_buf);
   return *out ? DAPI_OK : DAPI_INTERNAL;
