@@ -105,7 +105,7 @@
           "timeoutInSeconds": 60
         },
         "additionalInfo": {
-          "layoutX": 330,
+          "layoutX": 1210,
           "layoutY": 540
         }
       },
@@ -367,6 +367,83 @@
           "layoutX": 2370,
           "layoutY": 200
         }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.metadata.TbGetRelatedAttributeNode",
+        "name": "Fetch bench_allow_direct",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 1,
+        "configuration": {
+          "relationsQuery": {
+            "direction": "TO",
+            "maxLevel": 1,
+            "fetchLastLevelOnly": false,
+            "filters": [
+              {
+                "relationType": "fishpump_board",
+                "entityTypes": [
+                  "ASSET"
+                ]
+              }
+            ]
+          },
+          "dataToFetch": "ATTRIBUTES",
+          "dataMapping": {
+            "bench_allow_direct": "fp_bench_allow_direct"
+          },
+          "fetchTo": "METADATA"
+        },
+        "additionalInfo": {
+          "layoutX": 620,
+          "layoutY": 540,
+          "description": "Reads bench_allow_direct of the shop asset related to this board into metadata. No shop asset goes out on Failure, which the filter treats as not allowed."
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.filter.TbJsFilterNode",
+        "name": "Direct RPC allowed?",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scriptLang": "TBEL",
+          "jsScript": "return true;",
+          "tbelScript": "var dangerous = [\"protection.set\", \"protection.measure.set\", \"cooling.config.set\", \"water.calibrate\", \"water.calibrate.cancel\", \"water.offset\", \"power.reset_energy\"];\nvar testModes = [\"test\", \"test_on\"];\nif (metadata.fp_bench_allow_direct == \"true\") {\n    return true;\n}\nvar m = msg.method;\nif (dangerous.contains(m)) {\n    return false;\n}\nif (m == \"cooling.mode.set\") {\n    var p = msg.params;\n    if (p != null && testModes.contains(p.mode)) {\n        return false;\n    }\n}\nreturn true;"
+        },
+        "additionalInfo": {
+          "layoutX": 920,
+          "layoutY": 540,
+          "description": "False for the dangerous methods of thingsboard/rpc_policy.json and cooling.mode.set in a test mode, unless the shop asset sets bench_allow_direct. The shop path uses the fishpump_shop rule chain instead."
+        }
+      },
+      {
+        "type": "org.thingsboard.rule.engine.action.TbLogNode",
+        "name": "Log dropped RPC",
+        "debugSettings": {
+          "failuresEnabled": true,
+          "allEnabled": false,
+          "allEnabledUntil": 0
+        },
+        "singletonMode": false,
+        "configurationVersion": 0,
+        "configuration": {
+          "scriptLang": "TBEL",
+          "jsScript": "return 'x';",
+          "tbelScript": "return \"Dropped dangerous RPC \" + msg.method + \" for \" + metadata.deviceName;"
+        },
+        "additionalInfo": {
+          "layoutX": 1210,
+          "layoutY": 640
+        }
       }
     ],
     "connections": [
@@ -387,7 +464,7 @@
       },
       {
         "fromIndex": 0,
-        "toIndex": 4,
+        "toIndex": 16,
         "type": "RPC Request to Device"
       },
       {
@@ -499,6 +576,31 @@
         "fromIndex": 14,
         "toIndex": 15,
         "type": "Success"
+      },
+      {
+        "fromIndex": 16,
+        "toIndex": 17,
+        "type": "Success"
+      },
+      {
+        "fromIndex": 16,
+        "toIndex": 17,
+        "type": "Failure"
+      },
+      {
+        "fromIndex": 17,
+        "toIndex": 4,
+        "type": "True"
+      },
+      {
+        "fromIndex": 17,
+        "toIndex": 18,
+        "type": "False"
+      },
+      {
+        "fromIndex": 17,
+        "toIndex": 18,
+        "type": "Failure"
       }
     ],
     "ruleChainConnections": null
