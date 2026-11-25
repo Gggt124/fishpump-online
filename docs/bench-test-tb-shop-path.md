@@ -83,3 +83,19 @@
 ---
 
 **หลังทดสอบ:** บอร์ดบนโต๊ะคงไว้ที่ `--allow-direct` ส่วนบอร์ดของลูกค้าต้องเป็นค่าเริ่มต้น (`bench_allow_direct` = false) เสมอ ถ้าข้อใดไม่ผ่าน ให้จดบรรทัดที่ไม่ผ่าน คำตอบ RPC และค่า `apply_result` ไว้ในบรรทัด "บันทึก"
+
+---
+
+## ผลรอบที่ 1 (2026-11-25, ThingsBoard CE 4.3.1 บนเครื่อง และบอร์ด fishpump-1de564 ที่รัน firmware 0.5.0)
+
+Claude รันสคริปต์ในแท็บเทอร์มินัล เจ้าของโปรเจกต์พิมพ์รหัสผ่านเอง ถอดไฟบอร์ด และเสียบไฟคืน
+
+| ข้อ | ผล | บันทึก |
+|---|---|---|
+| T1 | ผ่าน | ThingsBoard รับ rule chain `fishpump` ที่แก้แล้ว และสร้าง `fishpump_shop` กับ asset profile `fishpump_shop` ได้ รวมทั้ง node เปลี่ยนผู้ส่ง (`configurationVersion` 0) สร้าง `shop-fishpump-1de564` แล้วผูกกับบอร์ด ตั้ง `inactivityTimeout` 180000 และ `bench_allow_direct` = true |
+| T2 | ผ่าน | `summary: 16 PASS, 0 FAIL, 1 SKIP` คำสั่งอันตรายทางตรงทั้ง 7 ตัว รวม `cooling.mode.set` ที่เป็น `test`/`test_on` ได้ HTTP 408 และไม่ถึงบอร์ดปลอม ส่วน `cooling.mode.set auto` ถึงบอร์ด (ยืนยันการแก้เรื่อง params เป็นข้อความ) บอร์ดออฟไลน์ได้ `board_offline` ส่วน G7 ยังไม่ได้รัน เพราะยังไม่มีบัญชีผู้ใช้ของลูกค้าทดสอบ |
+| T3 | ผ่าน | รันด้วยสคริปต์แทนการกดใน dashboard ทางตรง `protection.set` ได้ HTTP 408 และค่าไม่เปลี่ยน ทางของร้านส่งค่าเดิมได้ `ok` บอร์ดปฏิเสธ `prime_sec` 121 ด้วย `value_out_of_range` ตอนจบค่ายังเป็น 15/10/5/backoff/3 (`stored`) ไม่ได้ดู serial log |
+| T4 | ผ่าน | `active` เป็น false หลังกิจกรรมล่าสุด 186 วินาที (16:04:31) เสียบไฟคืนแล้วกลับเป็น true ตอน 16:07:16 |
+| T5 | ผ่าน | `--allow-direct` แล้ว `parity_test.py` ได้ `summary: 130 PASS, 0 FAIL, 7 SKIP` เท่ากับรอบ firmware 0.5 คำสั่งอันตรายทุกตัวยังถึงบอร์ดบนโต๊ะ (SKIP ทั้ง 7 เป็นเคสเขียนค่าที่ต้องใช้ `--writes`) |
+
+**ยังค้าง:** G7 (สิทธิ์ของลูกค้า) ต้องมีผู้ใช้ของ customer `ลูกค้าทดสอบ` ก่อน แล้วรัน `rpc_guard_test.py --customer-user <อีเมล>`
