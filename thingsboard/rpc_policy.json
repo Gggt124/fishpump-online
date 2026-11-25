@@ -1,0 +1,25 @@
+{
+  "dangerous_methods": [
+    "protection.set",
+    "protection.measure.set",
+    "cooling.config.set",
+    "water.calibrate",
+    "water.calibrate.cancel",
+    "water.offset",
+    "power.reset_energy"
+  ],
+  "dangerous_cooling_modes": [
+    "test",
+    "test_on"
+  ],
+  "shop": {
+    "rule_chain": "fishpump_shop",
+    "asset_profile": "fishpump_shop",
+    "relation_type": "fishpump_board",
+    "asset_name_prefix": "shop-",
+    "request_key": "apply_request",
+    "result_key": "apply_result",
+    "bench_key": "bench_allow_direct"
+  },
+  "inactivity_timeout_ms": 180000
+}
