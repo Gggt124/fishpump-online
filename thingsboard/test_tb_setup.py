@@ -33,6 +33,10 @@ class FakeApi:
             if key in self.relations:
                 return {"type": params["relationType"]}
             return None if ok404 else {}
+        if path == getattr(tb_setup, "P_RELATIONS", None):
+            return [{"from": {"entityType": "ASSET", "id": f}, "to": {"entityType": "DEVICE", "id": t}, "type": typ}
+                    for f, t, typ in sorted(self.relations)
+                    if t == params["toId"] and typ == params["relationType"]]
         if path.startswith("/api/plugins/telemetry/"):
             _, _, _, _, etype, eid = path.split("/")[:6]
             vals = self.attrs.get((etype, eid), {})
@@ -57,6 +61,13 @@ class FakeApi:
             self.attrs.setdefault((parts[4], parts[5]), {}).update(body)
             return None
         raise AssertionError("unexpected POST %s" % path)
+
+    def request(self, method, path, body=None, params=None, **kw):
+        if method == "DELETE" and path == tb_setup.P_RELATION:
+            self.calls.append(("DELETE", path, dict(params)))
+            self.relations.discard((params["fromId"], params["toId"], params["relationType"]))
+            return None
+        raise AssertionError("unexpected %s %s" % (method, path))
 
     def delete(self, path, **kw):
         self.calls.append(("DELETE", path, None))
@@ -114,6 +125,18 @@ class ShopAssetTest(unittest.TestCase):
         tb_setup.ensure_shop_asset(api, device(), PROFILE)
         self.assertIn(("DELETE", "/api/customer/asset/%s" % a["id"]["id"], None), api.calls)
         self.assertEqual(a["customerId"]["id"], NULL_UUID)
+
+    def test_foreign_board_relation_removed(self):
+        # an asset that is not shop-<device> (e.g. one a customer owns) must not stay related as fishpump_board:
+        # the drop filter would read its bench_allow_direct
+        api = FakeApi()
+        a = tb_setup.ensure_shop_asset(api, device(), PROFILE)
+        api.relations.add(("asset-foreign", "dev-1", "fishpump_board"))
+        api.calls.clear()
+        tb_setup.ensure_shop_asset(api, device(), PROFILE)
+        self.assertNotIn(("asset-foreign", "dev-1", "fishpump_board"), api.relations)
+        self.assertIn((a["id"]["id"], "dev-1", "fishpump_board"), api.relations)
+        self.assertTrue(any(c[0] == "DELETE" and c[1] == tb_setup.P_RELATION for c in api.calls), api.calls)
 
     def test_set_bench_direct(self):
         api = FakeApi()

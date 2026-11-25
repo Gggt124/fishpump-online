@@ -66,12 +66,12 @@
         "configuration": {
           "scriptLang": "TBEL",
           "jsScript": "return {msg: msg, metadata: metadata, msgType: msgType};",
-          "tbelScript": "var r = msg.apply_request;\nmetadata.fp_request_id = \"\" + r.request_id;\nmetadata.fp_method = \"\" + r.method;\nvar params = r.params;\nif (params == null) {\n    params = {};\n}\nreturn {msg: {\"method\": metadata.fp_method, \"params\": params}, metadata: metadata, msgType: \"RPC_CALL_FROM_SERVER_TO_DEVICE\"};"
+          "tbelScript": "var r = msg.apply_request;\nmetadata.fp_request_id = \"\" + r.request_id;\nmetadata.fp_method = \"\" + r.method;\nvar params = r.params;\nif (params == null) {\n    params = {};\n}\nreturn {msg: {\"method\": metadata.fp_method, \"params\": params}, metadata: metadata, msgType: msgType};"
         },
         "additionalInfo": {
           "layoutX": 900,
           "layoutY": 60,
-          "description": "request_id and method go into metadata as fp_request_id and fp_method"
+          "description": "request_id and method go into metadata as fp_request_id and fp_method. The message type stays as it came in; RPC_CALL_FROM_SERVER_TO_DEVICE would make the RPC node treat it as a REST call"
         }
       },
       {

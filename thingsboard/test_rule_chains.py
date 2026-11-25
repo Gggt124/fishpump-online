@@ -76,6 +76,12 @@ class DeviceChainTest(unittest.TestCase):
         self.assertEqual(set(re.findall(r'"([^"]+)"', t.group(1))), set(self.policy["dangerous_cooling_modes"]))
         self.assertIn(self.policy["shop"]["bench_key"], json.dumps(self.meta["nodes"]))
 
+    def test_filter_reads_params_as_text(self):
+        # params is a JSON string on the REST path and a map elsewhere; reading p.mode breaks on a string
+        s = script(self.meta, "Direct RPC allowed?")
+        self.assertIn('("" + msg.params)', s)
+        self.assertNotRegex(s, r"params\.mode|\bp\.mode")
+
     def test_fetch_failure_goes_to_filter(self):
         fetch = node_index(self.meta, "Fetch bench_allow_direct")
         f = node_index(self.meta, "Direct RPC allowed?")
@@ -137,6 +143,12 @@ class ShopChainTest(unittest.TestCase):
         to_board = node_index(self.meta, "To board")
         self.assertIn((node_index(self.meta, "Result no_board"), "Failure"),
                       {(c["toIndex"], c["type"]) for c in self.meta["connections"] if c["fromIndex"] == to_board})
+
+    def test_shop_rpc_not_marked_as_rest_call(self):
+        # RPC_CALL_FROM_SERVER_TO_DEVICE makes TbSendRPCRequestNode treat it as a REST call and route the reply
+        # to a core service (originServiceId), which this message does not have
+        self.assertNotIn("RPC_CALL_FROM_SERVER_TO_DEVICE", script(self.meta, "Build RPC"))
+        self.assertIn("msgType: msgType", script(self.meta, "Build RPC"))
 
     def test_shop_save_does_not_loop(self):
         cfg = self.meta["nodes"][node_index(self.meta, "Save apply_result")]["configuration"]

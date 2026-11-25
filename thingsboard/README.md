@@ -55,6 +55,8 @@ telemetry ปกติถูกบันทึกเหมือนเดิม 
 - **ผู้ส่งเห็นอะไร:** เห็นแค่หมดเวลา (HTTP ไม่ใช่ 200) เพราะ CE ตอบแทนบอร์ดไม่ได้
 - **ข้อยกเว้น:** ถ้า asset ของร้านที่ผูกกับบอร์ดนั้นมี `bench_allow_direct = true` คำสั่งจะผ่าน ใช้กับบอร์ดบนโต๊ะเท่านั้น ตั้งด้วย `--allow-direct`
 - **บอร์ดที่ยังไม่มี asset:** ถูกทิ้งเหมือนกัน
+- **ห้ามมอบ asset ใดๆ ให้ลูกค้า:** filter อ่าน `bench_allow_direct` จาก asset ไหนก็ได้ที่มี relation `fishpump_board` ชี้มาที่บอร์ด ถ้าลูกค้ามี asset ของตัวเอง เขาอาจสร้าง relation ไปที่บอร์ดของตัวเองได้ ทุกครั้งที่รัน `tb_setup.py` สคริปต์จะลบ relation `fishpump_board` ที่ไม่ได้มาจาก `shop-<บอร์ด>` และพิมพ์ `WARN`
+- **ค่า `params` ของ RPC ทางตรง:** ThingsBoard ส่งต่อมาเป็นข้อความ JSON ไม่ใช่ object ดังนั้น filter ของ `cooling.mode.set` จึงทิ้งคำสั่งที่มีคำว่า `test` อยู่ใน params (ไม่มีทางปล่อยผ่านแบบผิดพลาด) ส่วน `auto` และ `force_off` ผ่านได้
 - **ผลกับเครื่องมืออื่น:** `parity_test.py` และปุ่มคำสั่งอันตรายใน dashboard ทดสอบใช้ได้เฉพาะบอร์ดที่ `--allow-direct`
 
 **ทางของร้าน (`fishpump_shop`):** คนของร้านเขียน server attribute `apply_request` บน asset `shop-<บอร์ด>`

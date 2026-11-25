@@ -32,6 +32,13 @@ class RpcPolicyTest(unittest.TestCase):
         self.assertFalse(rpc_policy.is_dangerous("protection.get", {}))
         self.assertFalse(rpc_policy.is_dangerous("pump.start", {}))
 
+    def test_is_dangerous_string_params(self):
+        # REST RPC reaches the rule chain with params as a JSON string, not an object
+        self.assertTrue(rpc_policy.is_dangerous("cooling.mode.set", '{"mode":"test_on","test_mv":5000}'))
+        self.assertTrue(rpc_policy.is_dangerous("cooling.mode.set", '{"mode":"test"}'))
+        self.assertFalse(rpc_policy.is_dangerous("cooling.mode.set", '{"mode":"auto"}'))
+        self.assertFalse(rpc_policy.is_dangerous("cooling.mode.set", '{"mode":"force_off"}'))
+
     def test_shop_names(self):
         shop = self.policy["shop"]
         self.assertEqual(shop["asset_name_prefix"], "shop-")

@@ -44,7 +44,8 @@ P_ASSET_PROFILE = "/api/assetProfile"
 P_TENANT_ASSETS = "/api/tenant/assets"          # ?assetName= -> one asset or 404
 P_ASSET = "/api/asset"
 P_UNASSIGN_ASSET = "/api/customer/asset/%s"     # DELETE: back to the tenant
-P_RELATION = "/api/relation"                    # GET ?fromId&fromType&relationType&toId&toType (404 if none), POST
+P_RELATION = "/api/relation"                    # GET ?fromId&fromType&relationType&toId&toType (404 if none), POST, DELETE
+P_RELATIONS = "/api/relations"                  # GET ?toId&toType&relationType -> list
 P_DEVICE_INFOS = "/api/tenant/deviceInfos"      # ?deviceProfileId= paged
 P_SERVER_ATTRS = "/api/plugins/telemetry/%s/%s/attributes/SERVER_SCOPE"
 P_SERVER_ATTR_VALUES = "/api/plugins/telemetry/%s/%s/values/attributes/SERVER_SCOPE"
@@ -270,6 +271,19 @@ def ensure_shop_asset(api, device, profile):
         api.post(P_RELATION, {"from": asset["id"], "to": device["id"], "type": SHOP["relation_type"],
                               "typeGroup": "COMMON"})
         notes.append("related")
+    # Only the shop asset may point at the board: the drop filter reads bench_allow_direct from whatever is
+    # related, and a customer who owns some asset could otherwise relate it to their own board.
+    for other in api.get(P_RELATIONS, {"toId": device["id"]["id"], "toType": "DEVICE",
+                                       "relationType": SHOP["relation_type"]}) or []:
+        src = other.get("from") or {}
+        if src.get("id") == asset["id"]["id"]:
+            continue
+        print("WARN        %s: removing foreign %s relation from %s %s" % (
+            device["name"], SHOP["relation_type"], src.get("entityType"), src.get("id")))
+        api.request("DELETE", P_RELATION, params={
+            "fromId": src.get("id"), "fromType": src.get("entityType"), "relationType": SHOP["relation_type"],
+            "toId": device["id"]["id"], "toType": "DEVICE"})
+        notes.append("foreign relation removed")
     bench = _server_attrs(api, asset["id"], [SHOP["bench_key"]])
     if SHOP["bench_key"] not in bench:
         _write_server_attrs(api, asset["id"], {SHOP["bench_key"]: False})

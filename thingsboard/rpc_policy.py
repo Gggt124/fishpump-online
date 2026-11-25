@@ -18,8 +18,11 @@ def is_dangerous(method, params, policy=None):
     policy = policy or load()
     if method in policy["dangerous_methods"]:
         return True
-    if method == "cooling.mode.set" and isinstance(params, dict):
-        return params.get("mode") in policy["dangerous_cooling_modes"]
+    if method == "cooling.mode.set" and params is not None:
+        # Same rule as the TBEL filter: params arrive as a JSON string over REST and as an object elsewhere,
+        # so look at the text. Any mention of a test mode is dropped (fail closed; auto/force_off never match).
+        text = params if isinstance(params, str) else json.dumps(params)
+        return any(mode in text for mode in policy["dangerous_cooling_modes"])
     return False
 
 

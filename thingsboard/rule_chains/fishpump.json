@@ -417,12 +417,12 @@
         "configuration": {
           "scriptLang": "TBEL",
           "jsScript": "return true;",
-          "tbelScript": "var dangerous = [\"protection.set\", \"protection.measure.set\", \"cooling.config.set\", \"water.calibrate\", \"water.calibrate.cancel\", \"water.offset\", \"power.reset_energy\"];\nvar testModes = [\"test\", \"test_on\"];\nif (metadata.fp_bench_allow_direct == \"true\") {\n    return true;\n}\nvar m = msg.method;\nif (dangerous.contains(m)) {\n    return false;\n}\nif (m == \"cooling.mode.set\") {\n    var p = msg.params;\n    if (p != null && testModes.contains(p.mode)) {\n        return false;\n    }\n}\nreturn true;"
+          "tbelScript": "var dangerous = [\"protection.set\", \"protection.measure.set\", \"cooling.config.set\", \"water.calibrate\", \"water.calibrate.cancel\", \"water.offset\", \"power.reset_energy\"];\nvar testModes = [\"test\", \"test_on\"];\nif (metadata.fp_bench_allow_direct == \"true\") {\n    return true;\n}\nvar m = msg.method;\nif (dangerous.contains(m)) {\n    return false;\n}\nif (m == \"cooling.mode.set\" && msg.params != null) {\n    var ps = (\"\" + msg.params);\n    for (var i = 0; i < testModes.size(); i++) {\n        if (ps.contains(testModes[i])) {\n            return false;\n        }\n    }\n}\nreturn true;"
         },
         "additionalInfo": {
           "layoutX": 920,
           "layoutY": 540,
-          "description": "False for the dangerous methods of thingsboard/rpc_policy.json and cooling.mode.set in a test mode, unless the shop asset sets bench_allow_direct. The shop path uses the fishpump_shop rule chain instead."
+          "description": "False for the dangerous methods of thingsboard/rpc_policy.json and cooling.mode.set in a test mode, unless the shop asset sets bench_allow_direct. The shop path uses the fishpump_shop rule chain instead. params arrive as a JSON string over REST, so the test-mode check reads them as text."
         }
       },
       {
