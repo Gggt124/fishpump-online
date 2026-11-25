@@ -38,6 +38,7 @@ jobs:
             python "$f" || exit 1
           done
           python -m unittest discover -s firmware/scripts -p "test_*.py" -v
+          python -m unittest discover -s thingsboard -p "test_*.py" -v
 
       - name: QEMU self-test
         run: |

@@ -390,6 +390,7 @@ Notes:
 - `wifi.scan` does not return a `scanning` flag (spec 6.1 suggested one). A scan in progress answers `scan_busy` (503). Poll again after a few seconds.
 - A method may run on the `tb_rpc` task (6144 B stack). Buffers over 256 B in method code live on the heap.
 - One method runs at a time. A caller that waits behind a slow one gets `busy` after 5 s.
+- The ThingsBoard rule chain `fishpump` drops the methods in `thingsboard/rpc_policy.json` when they are sent straight to a board, and also drops `cooling.mode.set` in a test mode. The board never sees them, and the caller only gets a timeout. They reach the board through the shop path: write `apply_request` on the board's shop asset, then read `apply_result`. See `thingsboard/README.md`. A bench board can allow them directly with `tb_setup.py --allow-direct`. The board's own HTTP API is not affected.
 
 ## 11. Client attributes and status telemetry (milestone 3)
 

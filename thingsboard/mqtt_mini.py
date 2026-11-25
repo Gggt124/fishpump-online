@@ -1,4 +1,5 @@
-"""Minimal MQTT 3.1.1 client (stdlib sockets): CONNECT with username, PUBLISH QoS 0, DISCONNECT.
+"""Minimal MQTT 3.1.1 client (stdlib sockets): CONNECT with username, PUBLISH QoS 0, SUBSCRIBE QoS 0 and
+receive PUBLISH (enough for a fake board answering RPCs), DISCONNECT.
 
 Enough to drive ThingsBoard device-API tests. Run `python mqtt_mini.py --selftest`
 to check the packet encoding offline.
@@ -64,6 +65,37 @@ def build_disconnect():
     return b"\xe0\x00"
 
 
+def build_subscribe(packet_id, topic):
+    """SUBSCRIBE one topic filter at QoS 0."""
+    body = packet_id.to_bytes(2, "big") + _utf8(topic) + b"\x00"
+    return b"\x82" + encode_remaining_length(len(body)) + body
+
+
+def read_packet(recv):
+    """Read one packet with recv(n) -> exactly n bytes. Returns (first_byte, body)."""
+    first = recv(1)[0]
+    n, shift = 0, 0
+    for _ in range(4):
+        b = recv(1)[0]
+        n |= (b & 0x7F) << shift
+        if not b & 0x80:
+            break
+        shift += 7
+    else:
+        raise MqttError("malformed remaining length")
+    return first, (recv(n) if n else b"")
+
+
+def parse_publish(first_byte, body):
+    """(topic, payload) of a PUBLISH body; QoS 1/2 packets carry a packet id after the topic, which is skipped."""
+    tlen = int.from_bytes(body[:2], "big")
+    topic = body[2:2 + tlen].decode("utf-8")
+    pos = 2 + tlen
+    if (first_byte >> 1) & 0x03:
+        pos += 2
+    return topic, bytes(body[pos:])
+
+
 def parse_connack(data):
     """Return the CONNACK return code; raise MqttError when it is not a CONNACK."""
     if len(data) != 4 or data[0] != 0x20 or data[1] != 2:
@@ -78,13 +110,12 @@ class MqttClient:
         self.client_id, self.username, self.password, self.keepalive = client_id, username, password, keepalive
         self.sock = None
 
-    def _recv_exact(self, n):
+    def _recv_exact(self, n, waiting_for="CONNACK (ThingsBoard closes the socket on a bad access token)"):
         buf = b""
         while len(buf) < n:
             chunk = self.sock.recv(n - len(buf))
             if not chunk:
-                raise MqttError("connection closed by broker while waiting for CONNACK "
-                                "(ThingsBoard closes the socket on a bad access token)")
+                raise MqttError("connection closed by broker while waiting for %s" % waiting_for)
             buf += chunk
         return buf
 
@@ -99,6 +130,45 @@ class MqttClient:
 
     def publish(self, topic, payload):
         self.sock.sendall(build_publish(topic, payload))
+
+    def _read_packet(self, waiting_for):
+        return read_packet(lambda n: self._recv_exact(n, waiting_for))
+
+    def subscribe(self, topic, packet_id=1):
+        """SUBSCRIBE at QoS 0 and wait for the SUBACK (PUBLISHes that arrive first are dropped)."""
+        self.sock.sendall(build_subscribe(packet_id, topic))
+        while True:
+            first, body = self._read_packet("SUBACK")
+            if first & 0xF0 == 0x90:
+                if body[2:3] == b"\x80":
+                    raise MqttError("SUBSCRIBE %s refused" % topic)
+                return
+
+    def recv_publish(self, timeout):
+        """Next PUBLISH as (topic, payload), or None when nothing arrives within timeout seconds.
+        Other packet types (PINGRESP...) are skipped."""
+        self.sock.settimeout(timeout)
+        try:
+            while True:
+                try:
+                    first = self.sock.recv(1)
+                except socket.timeout:
+                    return None
+                if not first:
+                    raise MqttError("connection closed by broker while waiting for PUBLISH")
+                pending = bytearray(first)
+
+                def recv(n):
+                    if pending:
+                        out = bytes(pending[:n])
+                        del pending[:n]
+                        return out + (self._recv_exact(n - len(out), "PUBLISH") if len(out) < n else b"")
+                    return self._recv_exact(n, "PUBLISH")
+                kind, body = read_packet(recv)
+                if kind & 0xF0 == 0x30:
+                    return parse_publish(kind, body)
+        finally:
+            self.sock.settimeout(self.timeout)
 
     def disconnect(self):
         try:
@@ -152,6 +222,25 @@ def selftest():
         check("CONNACK garbage rejected", False, True)
     except MqttError:
         check("CONNACK garbage rejected", True, True)
+
+    check("SUBSCRIBE rpc requests", build_subscribe(1, "v1/devices/me/rpc/request/+"),
+          b"\x82\x20\x00\x01\x00\x1bv1/devices/me/rpc/request/+\x00")
+    check("PUBLISH parse QoS0", parse_publish(0x30, b"\x00\x03a/b" + b"hi"), ("a/b", b"hi"))
+    check("PUBLISH parse QoS1 skips packet id", parse_publish(0x32, b"\x00\x03a/b\x00\x07" + b"hi"), ("a/b", b"hi"))
+
+    def feeder(data):
+        buf = bytearray(data)
+
+        def recv(n):
+            out = bytes(buf[:n])
+            del buf[:n]
+            return out
+        return recv
+
+    check("read SUBACK packet", read_packet(feeder(b"\x90\x03\x00\x01\x00")), (0x90, b"\x00\x01\x00"))
+    long_pub = build_publish("t", b"x" * 200)
+    check("read long PUBLISH packet", read_packet(feeder(long_pub)), (0x30, long_pub[3:]))
+    check("PUBLISH round trip", parse_publish(*read_packet(feeder(build_publish("a/b", b"hi")))), ("a/b", b"hi"))
 
     print("SELFTEST %s" % ("PASS" if not failures else "FAIL (%d)" % len(failures)))
     return 1 if failures else 0

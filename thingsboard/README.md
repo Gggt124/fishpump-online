@@ -8,7 +8,17 @@
 - `tb_setup.py` ตั้งค่าแบบ idempotent (รันซ้ำได้ ไม่สร้างซ้ำ): rule chain `fishpump`, device profile `fishpump`
   (provision แบบ ALLOW_CREATE_NEW_DEVICES), customer `ลูกค้าทดสอบ` แล้วพิมพ์ provision key/secret
   (เก็บใน `thingsboard/.local/provision.json` ซึ่งไม่เข้า git) เอาไปกรอกในหน้าการ์ดของบอร์ด
+- `tb_setup.py` ยังสร้าง rule chain `fishpump_shop`, asset profile `fishpump_shop` และ asset ของร้าน `shop-<ชื่อบอร์ด>` ให้ทุกบอร์ดของ profile `fishpump`
+  - asset เป็นของ tenant เสมอ ถ้ามีคนมอบให้ลูกค้า สคริปต์จะดึงกลับ
+  - asset ผูกกับบอร์ดด้วย relation `fishpump_board`
+  - ตั้ง server attribute `inactivityTimeout` = 180000 ms ให้บอร์ด เพื่อให้ `active` เป็น false ภายในราว 3 นาทีหลังบอร์ดหลุด
+  - บอร์ดที่เพิ่ง provision ต้องรัน `tb_setup.py` อีกรอบ
+- `rpc_policy.json` รายการคำสั่งที่ลูกค้าส่งตรงไม่ได้ และชื่อที่ทางของร้านใช้ ไฟล์นี้เป็นแหล่งความจริงเดียว rule chain, `tb_setup.py`, test และแอปอ่านจากที่นี่
+  - `rpc_policy.py` คือ `is_dangerous()` ที่ทำงานเหมือน filter ใน rule chain
 - `rule_chains/fishpump.json` rule chain ต้นฉบับ (แหล่งความจริงอยู่ในไฟล์นี้)
+- `rule_chains/fishpump_shop.json` ทางของร้าน (ดูหัวข้อ "คำสั่งอันตรายและทางของร้าน")
+- `rpc_guard_test.py` ทดสอบการทิ้งคำสั่งและทางของร้านกับ ThingsBoard จริงด้วยบอร์ดปลอมผ่าน MQTT (`fishpump-guardtest`) ไม่ต้องใช้บอร์ดจริง มี `--selftest` แบบออฟไลน์
+- `test_*.py` เป็น unittest แบบออฟไลน์ที่ CI รัน: `python -m unittest discover -s thingsboard -p "test_*.py"`
 - `tb_event_test.py` ทดสอบ rule chain: สร้างอุปกรณ์ `fishpump-ruletest` ส่ง alarm event ผ่าน MQTT แล้วเช็ค alarm ทาง REST
   พิมพ์ตาราง PASS/FAIL และคืนจำนวนที่ FAIL เป็น exit code
 - `mqtt_mini.py` MQTT 3.1.1 client ขนาดเล็ก (`python thingsboard/mqtt_mini.py --selftest` เช็ค packet แบบออฟไลน์)
@@ -22,7 +32,10 @@
 ```
 python thingsboard/tb_setup.py --user <อีเมล tenant admin>
 python thingsboard/tb_setup.py --user <อีเมล> --assign fishpump-a1b2c3   # หลังบอร์ด provision แล้ว
+python thingsboard/tb_setup.py --user <อีเมล> --allow-direct fishpump-1de564   # บอร์ดบนโต๊ะ: ให้คำสั่งอันตรายผ่านทางตรงได้
+python thingsboard/tb_setup.py --user <อีเมล> --block-direct fishpump-1de564   # กลับเป็นค่าเริ่มต้น (ทิ้ง)
 python thingsboard/tb_event_test.py --user <อีเมล> [--keep]
+python thingsboard/rpc_guard_test.py --user <อีเมล> [--customer-user <อีเมลลูกค้าทดสอบ>] [--keep]
 ```
 
 `--url` ค่าเริ่มต้น `http://192.168.1.51:8080` (หรือ env `TB_USER` แทน `--user`)
@@ -32,6 +45,33 @@ python thingsboard/tb_event_test.py --user <อีเมล> [--keep]
 telemetry ปกติถูกบันทึกเหมือนเดิม ส่วนข้อความที่มี `alarm_event` จะดึง `last_alarm_event` (`{boot_id, seq}`)
 มาตัดข้อมูลซ้ำ (boot_id เท่าเดิมและ seq น้อยกว่าหรือเท่ากับที่เก็บไว้ = ทิ้ง) แล้ว raised สร้าง alarm `rule_<rule_id>`
 (critical=CRITICAL, warning=WARNING, info=INDETERMINATE) / cleared เคลียร์ alarm นั้น จากนั้นบันทึก `last_alarm_event` ใหม่
+
+## คำสั่งอันตรายและทางของร้าน
+
+ที่มา: spec `docs/superpowers/specs/2026-11-24-frontend-app-design.md` ข้อ 6.3 ThingsBoard CE ไม่บอก rule chain ว่าใครเป็นคนส่ง RPC จึงกันแบบนี้
+
+**ทางตรงถูกทิ้ง:** ใน rule chain `fishpump` ขา "RPC Request to Device" ผ่าน node `Fetch bench_allow_direct` แล้วผ่าน `Direct RPC allowed?` ก่อนถึงบอร์ด
+- **คำสั่งที่ถูกทิ้ง:** method ใน `dangerous_methods` ของ `rpc_policy.json` และ `cooling.mode.set` ที่ `mode` เป็น `test` หรือ `test_on` ไม่ว่าใครส่ง แล้วจดลง log ว่า "Dropped dangerous RPC"
+- **ผู้ส่งเห็นอะไร:** เห็นแค่หมดเวลา (HTTP ไม่ใช่ 200) เพราะ CE ตอบแทนบอร์ดไม่ได้
+- **ข้อยกเว้น:** ถ้า asset ของร้านที่ผูกกับบอร์ดนั้นมี `bench_allow_direct = true` คำสั่งจะผ่าน ใช้กับบอร์ดบนโต๊ะเท่านั้น ตั้งด้วย `--allow-direct`
+- **บอร์ดที่ยังไม่มี asset:** ถูกทิ้งเหมือนกัน
+- **ห้ามมอบ asset ใดๆ ให้ลูกค้า:** filter อ่าน `bench_allow_direct` จาก asset ไหนก็ได้ที่มี relation `fishpump_board` ชี้มาที่บอร์ด ถ้าลูกค้ามี asset ของตัวเอง เขาอาจสร้าง relation ไปที่บอร์ดของตัวเองได้ ทุกครั้งที่รัน `tb_setup.py` สคริปต์จะลบ relation `fishpump_board` ที่ไม่ได้มาจาก `shop-<บอร์ด>` และพิมพ์ `WARN`
+- **ค่า `params` ของ RPC ทางตรง:** ThingsBoard ส่งต่อมาเป็นข้อความ JSON ไม่ใช่ object ดังนั้น filter ของ `cooling.mode.set` จึงทิ้งคำสั่งที่มีคำว่า `test` อยู่ใน params (ไม่มีทางปล่อยผ่านแบบผิดพลาด) ส่วน `auto` และ `force_off` ผ่านได้
+- **ผลกับเครื่องมืออื่น:** `parity_test.py` และปุ่มคำสั่งอันตรายใน dashboard ทดสอบใช้ได้เฉพาะบอร์ดที่ `--allow-direct`
+
+**ทางของร้าน (`fishpump_shop`):** คนของร้านเขียน server attribute `apply_request` บน asset `shop-<บอร์ด>`
+- **รูปแบบคำขอ:** เป็น JSON object `{"request_id": "...", "method": "...", "params": {...}}`
+- **การส่ง:** rule chain ส่งเป็น RPC แบบ two-way ไปที่บอร์ด (รอ 20 วินาที)
+- **ผล:** เขียน `apply_result` = `{"request_id", "method", "ok", "reply", "error"}` กลับลง asset ส่วน `reply` คือคำตอบเต็มของบอร์ด
+- **ค่า `error` ที่เป็นไปได้:**
+  - error code ของบอร์ด
+  - `bad_request`: คำขอไม่ใช่ object หรือไม่มี `request_id`/`method`
+  - `no_board`: asset ไม่ได้ผูกบอร์ด
+  - `board_offline`: บอร์ดไม่ได้ต่ออยู่
+  - `no_reply`: บอร์ดไม่ตอบใน 20 วินาที
+  - `rpc_failed`: ล้มด้วยเหตุอื่น
+- **การรอผล:** แอปรอ `apply_result` ที่ `request_id` ตรงกับที่ส่ง ห้ามส่งซ้ำเองเมื่อหมดเวลา
+- **ลูกค้าเข้าไม่ถึง:** ลูกค้าเห็นแค่บอร์ดที่มอบให้ จึงอ่านหรือเขียน asset นี้ไม่ได้
 
 ## Golden run: เช็คว่า web API ของบอร์ดตอบเหมือนเดิม
 
