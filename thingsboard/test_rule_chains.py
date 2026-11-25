@@ -100,5 +100,75 @@ class DeviceChainTest(unittest.TestCase):
         self.assertEqual(tb_setup.preflight(), [])
 
 
+class ShopChainTest(unittest.TestCase):
+    def setUp(self):
+        self.doc = chain("fishpump_shop")
+        self.meta = self.doc["metadata"]
+        self.policy = rpc_policy.load()
+        self.shop = self.policy["shop"]
+
+    def test_shop_chain_name(self):
+        self.assertEqual(self.doc["ruleChain"]["name"], self.shop["rule_chain"])
+
+    def test_shop_rpc_only_after_valid(self):
+        check = node_index(self.meta, "Check apply_request")
+        to_board = node_index(self.meta, "To board")
+        paths = paths_to(self.meta, 0, "TbSendRPCRequestNode")
+        self.assertTrue(paths)
+        for p in paths:
+            self.assertIn("valid", [t for f, _, t in p if f == check], p)
+            self.assertIn(to_board, [to for _, to, _ in p], p)
+
+    def test_shop_every_outcome_saves_result(self):
+        save = node_index(self.meta, "Save apply_result")
+        for name in ("Result from reply", "Result from RPC failure", "Result bad_request", "Result no_board",
+                     "Result bad_request (unreadable)"):
+            self.assertTrue(paths_to(self.meta, node_index(self.meta, name), "TbMsgAttributesNode"), name)
+            self.assertEqual(of_type(self.meta, "TbMsgAttributesNode"), [save])
+        check = node_index(self.meta, "Check apply_request")
+        bad = node_index(self.meta, "Result bad_request")
+        out = {(c["toIndex"], c["type"]) for c in self.meta["connections"] if c["fromIndex"] == check}
+        self.assertIn((bad, "invalid"), out)
+        self.assertIn((bad, "Failure"), out)
+        rpc = of_type(self.meta, "TbSendRPCRequestNode")[0]
+        rpc_out = {c["type"]: c["toIndex"] for c in self.meta["connections"] if c["fromIndex"] == rpc}
+        self.assertEqual(rpc_out, {"Success": node_index(self.meta, "Result from reply"),
+                                   "Failure": node_index(self.meta, "Result from RPC failure")})
+        to_board = node_index(self.meta, "To board")
+        self.assertIn((node_index(self.meta, "Result no_board"), "Failure"),
+                      {(c["toIndex"], c["type"]) for c in self.meta["connections"] if c["fromIndex"] == to_board})
+
+    def test_shop_save_does_not_loop(self):
+        cfg = self.meta["nodes"][node_index(self.meta, "Save apply_result")]["configuration"]
+        self.assertEqual(cfg["scope"], "SERVER_SCOPE")
+        self.assertIs(cfg["sendAttributesUpdatedNotification"], False)
+
+    def test_shop_relation_names(self):
+        for name, direction, etype in (("To board", "FROM", "DEVICE"), ("Back to shop asset", "TO", "ASSET")):
+            cfg = self.meta["nodes"][node_index(self.meta, name)]["configuration"]
+            self.assertEqual(cfg["originatorSource"], "RELATED", name)
+            q = cfg["relationsQuery"]
+            self.assertEqual(q["direction"], direction, name)
+            self.assertEqual(q["maxLevel"], 1, name)
+            self.assertEqual([(f["relationType"], f["entityTypes"]) for f in q["filters"]],
+                             [(self.shop["relation_type"], [etype])], name)
+
+    def test_shop_keys_match_policy(self):
+        self.assertIn('"%s"' % self.shop["request_key"], script(self.meta, "Check apply_request"))
+        for name in ("Result from reply", "Result from RPC failure", "Result bad_request", "Result no_board"):
+            self.assertIn('"%s"' % self.shop["result_key"], script(self.meta, name), name)
+
+    def test_shop_error_codes(self):
+        fail = script(self.meta, "Result from RPC failure")
+        for code in ("TIMEOUT", "NO_ACTIVE_CONNECTION", "no_reply", "board_offline", "rpc_failed"):
+            self.assertIn('"%s"' % code, fail)
+        self.assertIn('"bad_request"', script(self.meta, "Result bad_request"))
+        self.assertIn('"no_board"', script(self.meta, "Result no_board"))
+
+    def test_shop_preflight_clean(self):
+        self.assertEqual(tb_setup.check_text_fields(("ruleChain", self.doc["ruleChain"]),
+                                                    ("metadata", self.meta)), [])
+
+
 if __name__ == "__main__":
     unittest.main()
